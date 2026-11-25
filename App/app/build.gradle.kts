@@ -440,11 +440,18 @@ tasks.withType<Test>().configureEach {
                 includeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
                 includeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
                 includeTestsMatching("com.raddstream.app.ui.navigation.BottomNavLargeFontPaparazziTest")
+                // L5 (round 2, Library): the 1.3x-font My List shot is a
+                // Paparazzi-rule class too — without this line the record
+                // run never executes it and the plain run fails it on
+                // Bridge.init (Android 45539693673, same trap as APP-09's
+                // BottomNavLargeFont class above).
+                includeTestsMatching("com.raddstream.app.ui.screens.MyListLargeFontPaparazziTest")
             } else {
                 excludeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
                 excludeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.DownloadsPaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.navigation.BottomNavLargeFontPaparazziTest")
+                excludeTestsMatching("com.raddstream.app.ui.screens.MyListLargeFontPaparazziTest")
             }
         }
     }

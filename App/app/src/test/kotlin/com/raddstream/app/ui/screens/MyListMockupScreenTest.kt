@@ -140,12 +140,23 @@ class MyListMockupScreenTest {
 
     @Test
     fun tappingAFilterChipSelectsIt() {
+        // The setContent lambda must read the `selected` state itself —
+        // the first version passed it through filterRowContent's plain
+        // `filter` parameter, so the tap assigned a var nothing read and
+        // the chip never became selected (Android 45539693673).
         var selected by mutableStateOf(MyListFilter.ALL)
-        filterRowContent(
-            filter = selected,
-            sort = ListSort.RECENT,
-            onFilter = { selected = it },
-        )
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.width(600.dp)) {
+                    MyListFilterRow(
+                        filter = selected,
+                        sort = ListSort.RECENT,
+                        onFilter = { selected = it },
+                        onSort = {},
+                    )
+                }
+            }
+        }
         compose.onNodeWithTag("myListFilterChip_SERIES").performClick()
         compose.onNodeWithTag("myListFilterChip_SERIES").assertIsSelected()
         compose.onNodeWithTag("myListFilterChip_ALL").assertIsNotSelected()
@@ -156,13 +167,21 @@ class MyListMockupScreenTest {
     fun sortButtonCyclesTheOrder() {
         // L1 (round 2): the sort is a visible secondary control at the
         // row's right end — one tap cycles Recently added → Title A–Z →
-        // Unwatched first, no sheet.
+        // Unwatched first, no sheet. Same state-in-lambda rule as the
+        // filter tap above: the lambda reads `sort` itself.
         var sort by mutableStateOf(ListSort.RECENT)
-        filterRowContent(
-            filter = MyListFilter.ALL,
-            sort = sort,
-            onSort = { sort = it },
-        )
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.width(600.dp)) {
+                    MyListFilterRow(
+                        filter = MyListFilter.ALL,
+                        sort = sort,
+                        onFilter = {},
+                        onSort = { sort = it },
+                    )
+                }
+            }
+        }
         compose.onNodeWithTag(MyListSortButtonTag).assertIsDisplayed()
         compose.onNodeWithText("Recently added").assertIsDisplayed()
         compose.onNodeWithTag(MyListSortButtonTag).performClick()
@@ -338,11 +357,48 @@ class MyListMockupScreenTest {
         }
     }
 
-    // L1 (round 2): the filter taps below drive the row's onFilter the
-    // way the screen does — the state is re-set with the new filter, so
-    // the grid cross-fades to the filtered set. The clock advances past
-    // the cross-fade and the staggered entrance (400ms delay + 400ms
-    // duration at most) before any absence is asserted.
+    // L1 (round 2): the filter tests drive the grid through the row's
+    // onFilter the way the screen does — the state lives in a MutableState
+    // the setContent lambda reads, so assigning it re-composes the grid.
+    // A plain value closed over at setContent time never changes: the
+    // first version of these tests tapped the chip and the grid never
+    // moved (Android 45539693673 — four assertDoesNotExist failures).
+    private fun loadedContentFiltered(
+        favorites: List<Post>,
+        downloadedPostIds: Set<Int> = emptySet(),
+        popular: List<Post> = emptyList(),
+    ) {
+        var current by mutableStateOf(
+            loadedState(favorites, downloadedPostIds = downloadedPostIds, popular = popular),
+        )
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.width(390.dp).fillMaxSize()) {
+                    MyListLoadedContent(
+                        state = current,
+                        onPostClick = {},
+                        onPlayClick = {},
+                        onRemove = {},
+                        onSort = {},
+                        onFilter = {
+                            current = loadedState(
+                                favorites,
+                                downloadedPostIds = downloadedPostIds,
+                                popular = popular,
+                                filter = it,
+                            )
+                        },
+                        isFavorite = { false },
+                        onToggleFavorite = {},
+                    )
+                }
+            }
+        }
+    }
+
+    // The clock advances past the cross-fade and the staggered entrance
+    // (400ms delay + 400ms duration at most) before any absence is
+    // asserted.
     // The test's onFilter re-sets the content with the new filter (the
     // way the ViewModel emits a new state); the click already fired it,
     // so this only settles the cross-fade + entrance afterwards.
@@ -510,12 +566,12 @@ class MyListMockupScreenTest {
     fun filterMoviesHidesSeries() {
         // L1: the Movies chip scopes the grid to movies — the series tile
         // leaves, the movie tile stays, the count still names the whole list.
-        val favorites = listOf(
-            post(1, "Inception", "movie"),
-            post(2, "Gen V", "series"),
+        loadedContentFiltered(
+            listOf(
+                post(1, "Inception", "movie"),
+                post(2, "Gen V", "series"),
+            ),
         )
-        var current by mutableStateOf(loadedState(favorites))
-        loadedContent(current, onFilter = { current = loadedState(favorites, filter = it) })
         tapFilterAndSettle(MyListFilter.MOVIES)
         compose.onNodeWithContentDescription("Inception, 2024 · Movie").assertIsDisplayed()
         compose.onNodeWithContentDescription("Gen V, 2024 · Series").assertDoesNotExist()
@@ -526,13 +582,9 @@ class MyListMockupScreenTest {
     fun filterDownloadsShowsOnlyDownloaded() {
         // L1 + L2: the Downloads chip shows only titles with a verified
         // copy on the device.
-        val favorites = listOf(post(1, "Inception"), post(2, "Dune"))
-        var current by mutableStateOf(
-            loadedState(favorites, downloadedPostIds = setOf(2)),
-        )
-        loadedContent(
-            current,
-            onFilter = { current = loadedState(favorites, filter = it, downloadedPostIds = setOf(2)) },
+        loadedContentFiltered(
+            listOf(post(1, "Inception"), post(2, "Dune")),
+            downloadedPostIds = setOf(2),
         )
         tapFilterAndSettle(MyListFilter.DOWNLOADS)
         compose.onNodeWithContentDescription("Dune, 2024 · Movie, downloaded").assertIsDisplayed()
@@ -543,9 +595,7 @@ class MyListMockupScreenTest {
     fun filterWithNoMatchNamesTheFilter() {
         // L1: a filter that matches nothing says so in the grid instead of
         // leaving a blank screen — the line names the filter, not the list.
-        val favorites = listOf(post(1, "Inception"))
-        var current by mutableStateOf(loadedState(favorites))
-        loadedContent(current, onFilter = { current = loadedState(favorites, filter = it) })
+        loadedContentFiltered(listOf(post(1, "Inception")))
         tapFilterAndSettle(MyListFilter.SERIES)
         compose.onNodeWithText("No series saved yet").assertIsDisplayed()
         compose.onNodeWithText("1 title").assertIsDisplayed()
@@ -569,22 +619,9 @@ class MyListMockupScreenTest {
     fun starterShelfHidesUnderAFilter() {
         // L1: the shelf is a discovery footer for the whole list — under
         // a filter it would show titles the filter just hid.
-        val favorites = listOf(post(1, "Inception"))
-        var current by mutableStateOf(
-            loadedState(
-                favorites,
-                popular = listOf(post(2, "Dune"), post(3, "McLintock!")),
-            ),
-        )
-        loadedContent(
-            current,
-            onFilter = {
-                current = loadedState(
-                    favorites,
-                    popular = listOf(post(2, "Dune"), post(3, "McLintock!")),
-                    filter = it,
-                )
-            },
+        loadedContentFiltered(
+            listOf(post(1, "Inception")),
+            popular = listOf(post(2, "Dune"), post(3, "McLintock!")),
         )
         compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
         tapFilterAndSettle(MyListFilter.MOVIES)
@@ -601,7 +638,11 @@ class MyListMockupScreenTest {
             onRetryRails = { retried = true },
         )
         compose.onNodeWithText("Couldn't load suggestions").assertIsDisplayed()
-        compose.onNodeWithTag(MyListRailsRetryTag).assertIsDisplayed()
+        // The card is the grid's footer, below the saved tile — on the
+        // short Robolectric window its button sits below the fold (the
+        // shelf title, at the footer's top, is visible without scrolling;
+        // this button, at the card's bottom, is not). Scroll it in first.
+        compose.onNodeWithTag(MyListRailsRetryTag).performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag(MyListRailsRetryTag).performClick()
         assertTrue("retry tap did not fire", retried)
     }
