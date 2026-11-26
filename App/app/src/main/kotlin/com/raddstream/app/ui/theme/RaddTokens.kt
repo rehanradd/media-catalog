@@ -62,8 +62,10 @@ object RaddTokens {
         val Poster: Dp = 16.dp
         /** Thumbnails: 6-8. */
         val Thumb: Dp = 8.dp
-        /** Chips: 4. */
-        val Chip: Dp = 4.dp
+        /** Chips: fully round — one chip geometry, the same pill
+         * RaddChip ships (P2-2, B-14: the 4dp token was the outlier
+         * next to pills; a Chip shape built from it is a pill now). */
+        val Chip: Dp = 999.dp
         /** Inputs and buttons: 8-12. */
         val Input: Dp = 12.dp
         /** Cards: 12-16. */

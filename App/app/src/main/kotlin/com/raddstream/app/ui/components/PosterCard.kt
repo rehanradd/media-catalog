@@ -548,9 +548,11 @@ fun PosterCard(
                     modifier = Modifier
                         .align(newAlignment)
                         .padding(RaddTokens.Space.Xxs)
-                        // SE-4 (round 2): the pill wears the card radius too —
-                        // one radius language on the tile, not two.
-                        .clip(RaddTokens.Shape.Card)
+                        // P2-1 (B-12): the NEW pill is a true pill — the
+                        // same Shape.Pill geometry as the Downloaded badge,
+                        // not the 16dp card radius (two badge shapes side
+                        // by side read as two design languages).
+                        .clip(RaddTokens.Shape.Pill)
                         .background(RaddArtScrim)
                         .padding(horizontal = RaddTokens.Space.Sm, vertical = RaddTokens.Space.Micro)
                         .clearAndSetSemantics { },
