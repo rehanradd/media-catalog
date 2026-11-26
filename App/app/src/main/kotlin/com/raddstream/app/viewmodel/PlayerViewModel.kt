@@ -1740,9 +1740,34 @@ class PlayerViewModel @Inject constructor(
         seekTo(target)
     }
 
-    /** Double-tap ripple feedback for the screen (side + seconds, animated by nonce). */
+    /**
+     * Double-tap ripple feedback for the screen (side + seconds, animated by nonce).
+     *
+     * P2-3 (road to 100/100, audit B-20): double-tap accumulation. A second
+     * double-tap on the same side while the pill is still up adds to the
+     * seconds it shows (+10s, then +20s, then +30s …) instead of restarting
+     * it at +10s — the position already accumulated (each tap seeks), the
+     * readout now says so too. There is no triple-tap path to drop: no
+     * code ever handled a triple tap specially (grep: no onTripleTap /
+     * triple-tap branch anywhere in the player) — a third tap is just
+     * another double-tap through detectTapGestures, so it accumulates
+     * through this same branch. A tap on the other side, or one after the
+     * pill has cleared, replaces the pill. The 900 ms window matches the
+     * ripple lifetime PlayerScreen clears on.
+     */
     fun showRipple(zone: ScreenZone, deltaMs: Long) {
-        _ui.update { it.copy(ripple = RippleState(zone, deltaMs, System.nanoTime())) }
+        _ui.update { current ->
+            val previous = current.ripple
+            val accumulated = if (previous != null && previous.zone == zone &&
+                (previous.deltaMs >= 0) == (deltaMs >= 0) &&
+                System.nanoTime() - previous.nonce < RIPPLE_ACCUMULATION_WINDOW_NS
+            ) {
+                previous.deltaMs + deltaMs
+            } else {
+                deltaMs
+            }
+            current.copy(ripple = RippleState(zone, accumulated, System.nanoTime()))
+        }
     }
 
     fun clearRipple() {
@@ -3580,3 +3605,11 @@ data class HandleProbe(
 
 /** The only wording a refused successor may get. No title, no handle, no upstream address. */
 private const val NEXT_UNAVAILABLE = "The next episode is no longer offered by this server."
+
+/**
+ * P2-3 (audit B-20): how long a double-tap ripple stays accumulable — a
+ * second double-tap on the same side inside this window adds its seconds
+ * to the pill instead of replacing it. Matches the 900 ms lifetime
+ * PlayerScreen clears the ripple on.
+ */
+internal const val RIPPLE_ACCUMULATION_WINDOW_NS = 900_000_000L

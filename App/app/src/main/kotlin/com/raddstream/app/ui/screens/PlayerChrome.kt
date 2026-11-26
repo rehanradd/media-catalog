@@ -130,16 +130,19 @@ private fun playerChromeRail(): Dp {
 }
 
 @Composable
-internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit, scrimScale: Float = 1f) {
+internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit) {
     val print = state.activeRendition
     val rail = playerChromeRail()
-    // P3 (round 2): the scrim scales with the staged poster's luminance —
-    // bright art gets a stronger scrim, dark art a lighter one. The stops
-    // clamp at 1.0, and 1.0x is the long-standing scrim (no poster = 1.0x).
+    // P2-6 (road to 100/100, audit B-24): a standard gradient scrim — the
+    // luminance-staged scaling is gone. The top stops (0.82 → 0.35 →
+    // transparent) are the long-standing scrims, now fixed: bright art no
+    // longer strengthens them and dark art no longer lightens them, so the
+    // bar reads the same over every frame. The poster-luminance helpers
+    // (scrimScaleFor / rememberPosterLuminance) are deleted with it.
     val topGradient = Brush.verticalGradient(
         colors = listOf(
-            Color.Black.copy(alpha = (0.82f * scrimScale).coerceAtMost(1f)),
-            Color.Black.copy(alpha = (0.35f * scrimScale).coerceAtMost(1f)),
+            Color.Black.copy(alpha = 0.82f),
+            Color.Black.copy(alpha = 0.35f),
             Color.Transparent,
         )
     )
@@ -257,10 +260,20 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                 }
             }
         }
-        if (state.sleep.mode == SleepMode.COUNTDOWN) {
+        // P2-6 (road to 100/100, audit B-24): the sleep icon shows only
+        // while a sleep timer is actually running — COUNTDOWN (with the
+        // remaining time) or END_OF_VIDEO (sleep at the end of this video,
+        // which is a running timer too and previously showed nothing).
+        // OFF shows no icon: an inactive feature is never advertised.
+        if (state.sleep.mode != SleepMode.OFF) {
+            val sleepDescription = if (state.sleep.mode == SleepMode.COUNTDOWN) {
+                stringResource(R.string.player_sleep_remaining, state.sleep.remainingMs.formatTime())
+            } else {
+                stringResource(R.string.player_sleep_timer)
+            }
             Icon(
                 painter = painterResource(R.drawable.ic_player_bedtime),
-                contentDescription = stringResource(R.string.player_sleep_remaining, state.sleep.remainingMs.formatTime()),
+                contentDescription = sleepDescription,
                 tint = RaddCurrent500,
                 modifier = Modifier
                     .size(16.dp)
@@ -331,18 +344,22 @@ private fun PlayerCastButton() {
 }
 
 /**
- * The centre transport (mockup): a large frosted play button on the picture,
- * flanked by visible ±10s skip buttons — every rival shows them, and the
- * hidden double-tap alone was both undiscoverable and accident-prone
+ * The centre transport (mockup): a large frosted play/pause button on the
+ * picture, flanked by visible ±10s skip buttons — every rival shows them,
+ * and the hidden double-tap alone was both undiscoverable and accident-prone
  * (hate-audit H5/H13). The skips are VOD-only: a live channel has no
  * position to move, so on live the centre button stands alone.
  *
- * Review fix (16 Nov) — a deliberate-decision reversal: the centre button
- * now shows ONLY while paused. During playback it is gone: it duplicated the
- * bottom row's play/pause, and a big frosted circle over a moving picture
- * reads as a second transport, not a shortcut. The paused picture already
- * keeps its HUD up, so the button is the affordance that says "tap to
- * resume" — the bottom row stays the transport while playing.
+ * P2-3 (road to 100/100, audit B-20): the centre transport shows whenever
+ * the chrome is visible — playing as well as paused. The 16 Nov reversal
+ * (paused-only: "it duplicated the bottom row") is itself reversed:
+ * Netflix/YouTube show centre transport whenever chrome is visible, and
+ * hiding it while playing removed the largest pause target. While playing
+ * the button is the pause glyph; while paused it is the play glyph. The
+ * bottom row stays the transport too — two transports is the standard
+ * pattern, not a duplication, and the centre button announces "Play
+ * video"/"Pause video" (player_play_centre / player_pause_centre) so it
+ * never collides with the bottom row's bare "Play"/"Pause" (Robo run 4).
  *
  * Never over a start card (the card narrates the wait) and never over the
  * buffering spinner (the two would stack). A tap here toggles play/pause
@@ -364,10 +381,16 @@ internal fun CenterPlayPause(
     onSeekBy: (Long) -> Unit,
 ) {
     if (state.startPhase != StartPhase.NONE || state.isBuffering) return
-    // Review fix (16 Nov): paused-only. While playing the bottom row is the
-    // transport; the centre button would duplicate it over the picture.
-    if (state.isPlaying) return
-    val label = stringResource(R.string.player_play)
+    // P2-3 (audit B-20): no playing gate — the transport shows while
+    // playing as well as while paused, whenever the chrome is visible
+    // (PlayerScreen gates this composable on controlsVisible). The icon
+    // and the announcement follow the state: pause while playing, play
+    // while paused.
+    val label = if (state.isPlaying) {
+        stringResource(R.string.player_pause_centre)
+    } else {
+        stringResource(R.string.player_play_centre)
+    }
     var lastCentreToggleNs by remember { mutableLongStateOf(0L) }
     // Round 3: press spring + haptic tick on the centre transport
     // (PressFeedback) — the paused-state play button is a primary control,
@@ -410,7 +433,7 @@ internal fun CenterPlayPause(
                 PressHaptics(playSource)
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Icon(
-                        painter = painterResource(R.drawable.ic_player_play),
+                        painter = if (state.isPlaying) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play),
                         contentDescription = null,
                         tint = PlayerOnVideo.text,
                         modifier = Modifier.size(32.dp),
@@ -634,7 +657,10 @@ internal fun EdgeHud(
                     state.positionMs.formatTime()
                 },
                 color = PlayerOnVideo.mutedText,
-                fontSize = brandSp(11),
+                // P2-6 (audit B-24): 12sp — the Ghost-mode time is a player
+                // time too, so it reads at the same 12sp floor as the
+                // scrubber row's times.
+                fontSize = brandSp(12),
                 modifier = Modifier.padding(end = 8.dp),
             )
         }
@@ -691,9 +717,6 @@ internal fun BottomControls(
     // SC §3: tapping an actor on the pause strip searches them, the same
     // route the detail screen's cast chips take.
     onActorClick: (String) -> Unit = {},
-    // P3 (round 2): the scrim multiplier from the staged poster's
-    // luminance (1.0x = the long-standing scrim; no poster = 1.0x).
-    scrimScale: Float = 1f,
 ) {
     // P1-16 (road to 100/100, audit B-21): the pause X-Ray is one line
     // that expands on tap. A fresh pause always starts collapsed, and
@@ -713,12 +736,14 @@ internal fun BottomControls(
     val rail = playerChromeRail()
     // Review fix (16 Nov): the bottom scrim is a full-height gradient — the
     // old one went transparent exactly where the live mark sits, so the mark
-    // read over a bright ticker instead of over the dark.
+    // read over a bright ticker instead of over the dark. P2-6 (audit
+    // B-24): the stops are fixed now, not scaled by poster luminance —
+    // the standard gradient scrim, the same over every frame.
     val bottomGradient = Brush.verticalGradient(
         colors = listOf(
             Color.Transparent,
-            Color.Black.copy(alpha = (0.48f * scrimScale).coerceAtMost(1f)),
-            Color.Black.copy(alpha = (0.92f * scrimScale).coerceAtMost(1f)),
+            Color.Black.copy(alpha = 0.48f),
+            Color.Black.copy(alpha = 0.92f),
         )
     )
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
@@ -885,12 +910,15 @@ internal fun BottomControls(
                     Text(
                         text = state.positionMs.formatTime(),
                         color = PlayerOnVideo.text,
-                        // Cinema (Nov 2026): the time reads at 11sp, not 12sp.
-                        style = MaterialTheme.typography.labelSmall,
+                        // P2-6 (road to 100/100, audit B-24): the times read
+                        // at 12sp, not 11sp — 11sp is below the 12–14sp 2026
+                        // floor for player times. The labelSmall weight and
+                        // tracking stay; only the size moves.
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = brandSp(12)),
                     )
                     if (statusWord != null) {
                         Spacer(Modifier.width(8.dp))
-                        Text(statusWord, color = PlayerOnVideo.mutedText, style = MaterialTheme.typography.labelSmall)
+                        Text(statusWord, color = PlayerOnVideo.mutedText, style = MaterialTheme.typography.labelSmall.copy(fontSize = brandSp(12)))
                     }
                     Scrubber(
                         modifier = Modifier
@@ -910,8 +938,9 @@ internal fun BottomControls(
                     Text(
                         state.durationMs.takeIf { it > 0 }?.formatTime() ?: "--:--",
                         color = PlayerOnVideo.text,
-                        // Cinema (Nov 2026): the time reads at 11sp, not 12sp.
-                        style = MaterialTheme.typography.labelSmall,
+                        // P2-6 (audit B-24): 12sp, the same floor as the
+                        // position time — see the position Text above.
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = brandSp(12)),
                     )
                     // P1-16 (road to 100/100, audit B-21): the keep status
                     // rides this row now — the KeepChip row above the

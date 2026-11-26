@@ -1,14 +1,9 @@
 package com.raddstream.app.ui.theme
 
 import android.graphics.Bitmap
-import android.graphics.drawable.BitmapDrawable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
-import coil3.BitmapImage
-import coil3.DrawableImage
-import coil3.compose.AsyncImagePainter
-import coil3.compose.rememberAsyncImagePainter
 import kotlin.math.pow
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -146,12 +141,11 @@ fun rememberArtworkAccent(
 /**
  * P3 (round 2) — the poster's average WCAG luminance (0 = black,
  * 1 = white), from the same 9x9 grid [rememberArtworkAccent] samples.
- * The honest per-title contrast source the player can read: the video
- * frame itself is a SurfaceView with no frame-capture path, so per-frame
- * luminance does not exist — the key art is the title's brightness, and
- * the chrome scrims scale with it. Null when there is no bitmap, or it
- * cannot be read (hardware bitmaps throw on getPixel; the guard returns
- * null instead of crashing composition).
+ * Null when there is no bitmap, or it cannot be read (hardware bitmaps
+ * throw on getPixel; the guard returns null instead of crashing
+ * composition). P2-6 (audit B-24): the player scrims no longer scale
+ * with this — they are a standard fixed gradient now — so the luminance
+ * stays a pure measurement, not a scrim input.
  */
 fun posterLuminance(bitmap: Bitmap?): Float? {
     if (bitmap == null || bitmap.width < 4 || bitmap.height < 4) return null
@@ -179,37 +173,4 @@ fun posterLuminance(bitmap: Bitmap?): Float? {
     } catch (_: Exception) {
         null
     }
-}
-
-/**
- * P3 (round 2) — the scrim multiplier for a poster luminance. Bright art
- * needs a stronger scrim (up to 1.25x), dark art a lighter one (down to
- * 0.75x); a mid-gray poster (luminance 0.5) keeps the current scrim
- * exactly (1.0x), and no poster at all (null) is also 1.0x. The gradient
- * stops clamp their alphas at 1.0, so the scale can never over-darken.
- */
-fun scrimScaleFor(luminance: Float?): Float =
-    if (luminance == null) 1f else (0.75f + 0.5f * luminance).coerceIn(0.75f, 1.25f)
-
-/**
- * P3 (round 2) — the staged poster's luminance, loaded through Coil 3.
- * The poster's own CatalogImage load shares Coil's memory cache, so this
- * is a second read of the same decoded bitmap, not a second download.
- * Null until the load succeeds (or when there is no poster URL) — the
- * scrims read 1.0x meanwhile, which is the current behaviour.
- */
-@Composable
-fun rememberPosterLuminance(posterUrl: String?): Float? {
-    // The painter is remembered unconditionally: a null URL still creates
-    // one (Coil reports it Empty), so the remember-slot count never
-    // shifts when a poster arrives mid-composition. Coil 3 results carry
-    // an Image, not a Drawable: BitmapImage holds the bitmap directly,
-    // DrawableImage may wrap one.
-    val painter = rememberAsyncImagePainter(model = posterUrl)
-    val bitmap = if (posterUrl.isNullOrBlank()) null else when (val image = (painter.state as? AsyncImagePainter.State.Success)?.result?.image) {
-        is BitmapImage -> image.bitmap
-        is DrawableImage -> (image.drawable as? BitmapDrawable)?.bitmap
-        else -> null
-    }
-    return remember(bitmap) { posterLuminance(bitmap) }
 }

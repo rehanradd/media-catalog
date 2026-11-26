@@ -113,8 +113,6 @@ import com.raddstream.app.ui.theme.RaddNarrationPlate
 import com.raddstream.app.ui.theme.RaddPlayerSnackbarPlate
 import com.raddstream.app.ui.theme.RaddPlayerStage
 import com.raddstream.app.ui.theme.brandSp
-import com.raddstream.app.ui.theme.rememberPosterLuminance
-import com.raddstream.app.ui.theme.scrimScaleFor
 import com.raddstream.app.viewmodel.KidsLockViewModel
 import com.raddstream.app.viewmodel.KidsPinOutcome
 import com.raddstream.app.viewmodel.PlayerViewModel
@@ -238,10 +236,6 @@ private fun PlayerScreenContent(
     // transient overlays that take no state of their own; the stateful chrome
     // pieces resolve it from `state.playerTheme` themselves.
     val chrome = PlayerChromeTheme.forId(state.playerTheme)
-    // P3 (round 2): the staged poster's luminance drives the chrome scrims —
-    // bright art gets a stronger scrim, dark art a lighter one. Null (no
-    // poster, or not loaded yet) is 1.0x: the long-standing scrims.
-    val scrimScale = scrimScaleFor(rememberPosterLuminance(state.posterUrl))
 
     // BM rule 9: low-end devices get solid chrome, not frosted glass — the
     // blur is a cost they pay for nothing, and a solid plate reads the same.
@@ -681,7 +675,7 @@ private fun PlayerScreenContent(
                     enter = chromeEnter,
                     exit = chromeExit,
                 ) {
-                    TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, scrimScale = scrimScale)
+                    TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) })
                 }
                 // P10 (round 2): the zoom-reset chip — a visible way back
                 // to Fit while zoomed. It rides the chrome visibility, so
@@ -733,7 +727,6 @@ private fun PlayerScreenContent(
                             interactTick = System.nanoTime()
                         },
                         onActorClick = onActorClick,
-                        scrimScale = scrimScale,
                     )
                 }
             }

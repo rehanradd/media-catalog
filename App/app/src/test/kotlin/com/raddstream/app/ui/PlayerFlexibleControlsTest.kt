@@ -125,10 +125,12 @@ class PlayerFlexibleControlsTest {
 
     @Test
     fun `the plus-minus-10s skips are buttons not just gestures`() {
-        // Centre buttons while paused…
+        // Centre buttons in both states (P2-3, audit B-20: the centre
+        // transport shows whenever the chrome is visible, playing as well
+        // as paused)…
         assertTrue(read("PlayerChrome.kt").contains("CentreSkipButton("))
-        // …and More-sheet rows while playing (the centre button is
-        // paused-only by design, so the sheet is the playing equivalent).
+        // …and More-sheet rows (the sheet's ±10s rows are the
+        // thumb-reachable equivalent when the chrome is hidden).
         val more = read("PlayerSheets.kt")
         assertTrue(more.contains("vm.seekBy(-10_000)"))
         assertTrue(more.contains("vm.seekBy(10_000)"))

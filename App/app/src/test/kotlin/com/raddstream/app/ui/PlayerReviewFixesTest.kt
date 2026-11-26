@@ -33,10 +33,11 @@ import org.robolectric.RobolectricTestRunner
 /**
  * The 16 Nov player review fixes, pinned in code: the malformed pause/play
  * vectors lost their foot, the subtitles glyph is a caption card (no chat
- * bubble), the centre transport is paused-only, the bottom row carries the
- * single live mark, quality lives in More (P1-15, no pill to dim), the
- * control row is two groups on one shared rail, and the icons are one
- * outlined family.
+ * bubble), the centre transport shows whenever the chrome is visible
+ * (P2-3, audit B-20 — the 16 Nov paused-only rule is reversed), the bottom
+ * row carries the single live mark, quality lives in More (P1-15, no pill
+ * to dim), the control row is two groups on one shared rail, and the icons
+ * are one outlined family.
  */
 @RunWith(RobolectricTestRunner::class)
 class PlayerReviewFixesTest {
@@ -295,7 +296,7 @@ class PlayerReviewFixesTest {
                 )
             }
         }
-        compose.onNodeWithContentDescription(context.getString(R.string.player_play)).assertIsDisplayed()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_play_centre)).assertIsDisplayed()
         compose.onNodeWithContentDescription(context.getString(R.string.player_rewind_10))
             .assertDoesNotExist()
         compose.onNodeWithContentDescription(context.getString(R.string.player_forward_10))

@@ -45,8 +45,9 @@ import org.robolectric.RobolectricTestRunner
  * H16: the mockup's live seek bar is not copied), the VOD row prints
  * current + total, the quality control is a text pill showing the rung, and
  * the centre of the picture carries a play button while paused, flanked by
- * ±10s skip buttons — never while playing, where the bottom row is the
- * transport. Fixtures mirror PaparazziPreviewTest's playerBase so the two
+ * ±10s skip buttons — and, since P2-3 (audit B-20), the same centre
+ * transport while playing (pause glyph), whenever the chrome is visible.
+ * Fixtures mirror PaparazziPreviewTest's playerBase so the two
  * suites can never drift apart silently. The popups restyle (Stitch
  * sheets) is pinned the same way where a piece can be composed — the
  * switch-source row — and by its preset lists where it cannot: the
@@ -410,10 +411,12 @@ class PlayerMockupTest {
     }
 
     @Test
-    fun `centre button shows only while paused, never while playing`() {
-        // Review fix (16 Nov): the centre button is the paused-state
-        // affordance — during playback the bottom row is the transport and
-        // the centre is empty. One content, driven by state: a second
+    fun `centre transport shows while playing and while paused`() {
+        // P2-3 (road to 100/100, audit B-20): the centre transport shows
+        // whenever the chrome is visible — playing as well as paused. The
+        // 16 Nov paused-only rule is reversed: while playing the button is
+        // the pause glyph ("Pause video"), while paused it is the play glyph
+        // ("Play video"). One content, driven by state: a second
         // setContent in the same test throws (IllegalStateException), so the
         // playing→paused flip goes through a state holder instead.
         var playing by mutableStateOf(true)
@@ -427,10 +430,11 @@ class PlayerMockupTest {
                 )
             }
         }
-        compose.onNodeWithContentDescription(context.getString(R.string.player_pause)).assertDoesNotExist()
-        compose.onNodeWithContentDescription(context.getString(R.string.player_play)).assertDoesNotExist()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_pause_centre)).assertIsDisplayed()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_play_centre)).assertDoesNotExist()
         compose.runOnIdle { playing = false }
-        compose.onNodeWithContentDescription(context.getString(R.string.player_play)).assertIsDisplayed()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_play_centre)).assertIsDisplayed()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_pause_centre)).assertDoesNotExist()
     }
 
     @Test
@@ -455,9 +459,11 @@ class PlayerMockupTest {
 
     @Test
     fun `live centre shows no skip buttons`() {
-        // Review fix (16 Nov): while playing the centre is empty entirely —
-        // no skips on live, and no centre button either. The paused live
-        // centre (button, still no skips) is pinned in PlayerReviewFixesTest.
+        // P2-3 (audit B-20): a live channel has no position to move, so
+        // the centre has no skips — but the centre button itself shows
+        // while playing (pause glyph) as well as while paused. The paused
+        // live centre (play button, still no skips) is pinned in
+        // PlayerReviewFixesTest.
         compose.setContent {
             RaddStreamTheme {
                 CenterPlayPause(
@@ -472,8 +478,7 @@ class PlayerMockupTest {
             .assertDoesNotExist()
         compose.onNodeWithContentDescription(context.getString(R.string.player_forward_10))
             .assertDoesNotExist()
-        compose.onNodeWithContentDescription(context.getString(R.string.player_pause)).assertDoesNotExist()
-        compose.onNodeWithContentDescription(context.getString(R.string.player_play)).assertDoesNotExist()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_pause_centre)).assertIsDisplayed()
     }
 
     @Test
@@ -488,8 +493,8 @@ class PlayerMockupTest {
                 )
             }
         }
-        compose.onNodeWithContentDescription(context.getString(R.string.player_pause)).assertDoesNotExist()
-        compose.onNodeWithContentDescription(context.getString(R.string.player_play)).assertDoesNotExist()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_pause_centre)).assertDoesNotExist()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_play_centre)).assertDoesNotExist()
     }
 
     @Test

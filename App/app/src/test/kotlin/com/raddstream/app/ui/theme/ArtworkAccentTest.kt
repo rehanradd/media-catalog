@@ -10,10 +10,10 @@ import org.robolectric.RobolectricTestRunner
 
 /**
  * P3 (round 2) — the poster-luminance contrast source: the pure
- * luminance math and the scrim scale. Robolectric (Bitmaps need the
- * Android runtime shadows); no Compose runtime needed — the painter half
- * (rememberPosterLuminance) is covered by the render: a null luminance
- * reads the 1.0x scrims, which the goldens pin byte-identical.
+ * luminance math. Robolectric (Bitmaps need the Android runtime shadows);
+ * no Compose runtime needed. P2-6 (audit B-24): the scrim scale is gone
+ * — the player scrims are a standard fixed gradient now, so there is no
+ * scrimScaleFor to pin; the luminance math stays, tested here.
  */
 @RunWith(RobolectricTestRunner::class)
 class ArtworkAccentTest {
@@ -40,17 +40,5 @@ class ArtworkAccentTest {
     @Test
     fun `no bitmap is no luminance`() {
         assertNull(posterLuminance(null))
-    }
-
-    @Test
-    fun `no poster keeps the current scrim`() {
-        assertEquals(1f, scrimScaleFor(null), 0.001f)
-    }
-
-    @Test
-    fun `dark art lightens the scrim, bright art strengthens it`() {
-        assertEquals(0.75f, scrimScaleFor(0f), 0.001f)
-        assertEquals(1f, scrimScaleFor(0.5f), 0.001f)
-        assertEquals(1.25f, scrimScaleFor(1f), 0.001f)
     }
 }

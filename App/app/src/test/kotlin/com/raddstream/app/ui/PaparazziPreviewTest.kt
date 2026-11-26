@@ -42,6 +42,8 @@ import com.raddstream.app.player.PlaybackRendition
 import com.raddstream.app.player.PlayerUiState
 import com.raddstream.app.player.PrintInfo
 import com.raddstream.app.player.QualityOption
+import com.raddstream.app.player.SleepMode
+import com.raddstream.app.player.SleepTimerState
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.screens.DetailContent
@@ -1558,9 +1560,58 @@ class PaparazziPreviewTest {
         }
     }
 
-    // Review fix (16 Nov): the centre button exists only while paused, so
-    // there is no playing-centre shot to record — the subject is gone.
-    // playerCenterPaused below is the centre shot now.
+    // P2-6 (road to 100/100, audit B-24): the sleep icon shows only while
+    // a timer is active. The plain top bar (no timer) pins the OFF case —
+    // no icon — and these two shots pin the active cases: a running
+    // countdown (bedtime icon, jade) and sleep-at-end-of-video (same icon,
+    // which previously showed nothing while a timer was running).
+    @Test
+    fun playerTopBarSleepCountdown() {
+        paparazzi.snapshot {
+            themed {
+                TopBar(
+                    state = playerBase().copy(
+                        sleep = SleepTimerState(mode = SleepMode.COUNTDOWN, remainingMs = 900_000L),
+                    ),
+                    onBack = {},
+                    onLock = {},
+                )
+            }
+        }
+    }
+
+    @Test
+    fun playerTopBarSleepEndOfVideo() {
+        paparazzi.snapshot {
+            themed {
+                TopBar(
+                    state = playerBase().copy(
+                        sleep = SleepTimerState(mode = SleepMode.END_OF_VIDEO),
+                    ),
+                    onBack = {},
+                    onLock = {},
+                )
+            }
+        }
+    }
+
+    // P2-3 (road to 100/100, audit B-20): the centre transport shows
+    // whenever the chrome is visible, playing as well as paused — so
+    // there IS a playing-centre shot now, the pause glyph flanked by the
+    // ±10s skips. playerCenterPaused below is the paused shot.
+    @Test
+    fun playerCenterPlaying() {
+        paparazzi.snapshot {
+            themed {
+                CenterPlayPause(
+                    state = playerBase(isPlaying = true),
+                    onTogglePlayPause = {},
+                    onPlayFromStart = {},
+                    onSeekBy = {},
+                )
+            }
+        }
+    }
 
     @Test
     fun playerCenterPaused() {
