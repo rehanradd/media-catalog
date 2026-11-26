@@ -71,6 +71,7 @@ import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.rememberDelayedVisible
 import com.raddstream.app.viewmodel.LocalFilesViewModel
 import com.raddstream.app.viewmodel.formatTime
+import com.raddstream.app.ui.theme.RaddTokens
 
 /**
  * The phone's own videos as a Local Library — folders first, like MX
@@ -181,7 +182,7 @@ fun LocalFilesScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(16.dp))
-                Button(onClick = { permissionLauncher.launch(permission) }) {
+                Button(onClick = { permissionLauncher.launch(permission) }, shape = RaddTokens.Shape.Pill) {
                     Text(stringResource(R.string.local_library_permission_allow))
                 }
                 TextButton(onClick = {
@@ -206,7 +207,7 @@ fun LocalFilesScreen(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Spacer(Modifier.height(16.dp))
-                Button(onClick = { viewModel.refresh() }) {
+                Button(onClick = { viewModel.refresh() }, shape = RaddTokens.Shape.Pill) {
                     Text(stringResource(R.string.local_library_retry))
                 }
             }

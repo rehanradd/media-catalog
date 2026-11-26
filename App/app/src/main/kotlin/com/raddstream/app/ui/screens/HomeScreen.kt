@@ -1056,6 +1056,7 @@ internal fun HomeContent(
                         action = {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Button(
+                                    shape = RaddTokens.Shape.Pill,
                                     onClick = { onBrowseType(null, null) },
                                     modifier = Modifier.heightIn(min = 48.dp),
                                 ) {
@@ -2119,18 +2120,27 @@ internal fun browseFacetChips(facets: FacetsResponse?): List<FacetChip> {
  * you" header — one tap, one title, no decision tax. Same shape as the
  * [SeeAllButton] beside it (text button, primary, 48dp floor) so the
  * header reads as one row of actions, not a button and an afterthought.
- * Text-only on purpose: the shuffle icon lives in material-icons-extended,
- * which this module does not depend on, and the words say what the tap
- * does without one.
+ * The shuffle glyph is the house stroke icon (ic_action_shuffle, Feather
+ * style) — the old text-only form predated it; material-icons-extended,
+ * which this module does not depend on, was the reason it had no icon.
  */
 @Composable
 private fun PlaySomethingButton(onClick: () -> Unit) {
     Button(
+        shape = RaddTokens.Shape.Pill,
         onClick = onClick,
         colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary),
         contentPadding = PaddingValues(horizontal = RaddTokens.Space.Md, vertical = RaddTokens.Space.Xs),
         modifier = Modifier.heightIn(min = 48.dp),
     ) {
+        // P2-elementhunt: the leading shuffle icon — M3 Expressive buttons
+        // carry a leading icon for scannability.
+        Icon(
+            painter = painterResource(R.drawable.ic_action_shuffle),
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.size(8.dp))
         Text(
             stringResource(R.string.player_play_something),
             style = MaterialTheme.typography.labelLarge,

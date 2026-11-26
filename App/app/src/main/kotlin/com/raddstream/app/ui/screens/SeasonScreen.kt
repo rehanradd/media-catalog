@@ -73,6 +73,7 @@ import com.raddstream.app.viewmodel.DetailViewModel
 import com.raddstream.app.viewmodel.EpisodeDownloadRow
 import com.raddstream.app.viewmodel.EpisodeProgress
 import com.raddstream.app.viewmodel.SeasonGroup
+import com.raddstream.app.ui.theme.RaddTokens
 
 /**
  * One tile of the season grid: the episode number, whether it can play
@@ -366,6 +367,7 @@ fun SeasonScreen(
                     item {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Button(
+                                shape = RaddTokens.Shape.Pill,
                                 onClick = { viewModel.playSeason(season.number) },
                                 enabled = !state.playStarting,
                                 // Detail review (Nov 2026, P1): the 48dp touch-target floor.
@@ -745,6 +747,7 @@ internal fun EpisodeDownloadSheet(
             if (selected.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Button(
+                    shape = RaddTokens.Shape.Pill,
                     onClick = onDownloadSelected,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -794,6 +797,7 @@ internal fun SeasonPackRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Button(
+                shape = RaddTokens.Shape.Pill,
                 onClick = onPlay,
                 // Detail review (Nov 2026, P1): the 48dp touch-target floor.
                 modifier = Modifier.heightIn(min = 48.dp),

@@ -60,6 +60,7 @@ import com.raddstream.app.network.models.PassTier
 import com.raddstream.app.ui.theme.RaddCurrent500
 import com.raddstream.app.ui.theme.RaddInk950
 import com.raddstream.app.ui.theme.RaddSignalGold
+import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.viewmodel.RewardedVipPass
 import com.raddstream.app.viewmodel.VipPlan
 import com.raddstream.app.viewmodel.VipMethod
@@ -111,6 +112,7 @@ fun VipUpgradeScreen(
             },
             confirmButton = {
                 Button(
+                    shape = RaddTokens.Shape.Pill,
                     onClick = {
                         showCancelConfirmDialog = false
                         viewModel.cancelVipPass()
@@ -484,7 +486,7 @@ private fun RewardedVipSection(expiresAt: Long, onActivatePass: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Button(onClick = onActivatePass, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = onActivatePass, modifier = Modifier.fillMaxWidth(), shape = RaddTokens.Shape.Pill) {
                     Icon(
                         painterResource(R.drawable.ic_player_play),
                         contentDescription = null,
@@ -745,6 +747,7 @@ private fun VerificationSection(state: VipUiState, viewModel: VipViewModel) {
             modifier = Modifier.fillMaxWidth(),
         )
         Button(
+            shape = RaddTokens.Shape.Pill,
             onClick = viewModel::submitTransaction,
             enabled = state.canSubmit && state.transactionId.isNotBlank() &&
                 state.selectedMethod != null,

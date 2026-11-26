@@ -348,7 +348,7 @@ fun LinkHealthChip(
 fun RatingBadge(rating: String, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .background(RaddArtScrim, RoundedCornerShape(4.dp))
+            .background(RaddArtScrim, RoundedCornerShape(8.dp))
             .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
         Text(

@@ -917,6 +917,7 @@ internal fun MyListEmptyContent(
             modifier = Modifier.fillMaxWidth(),
             action = {
                 Button(
+                    shape = RaddTokens.Shape.Pill,
                     onClick = onBrowseClick,
                     // The primary way out gets the 48dp floor every other
                     // control on this screen already has, and the shared

@@ -691,6 +691,7 @@ internal fun SettingsContent(
                             style = settingsHelperStyle(),
                         )
                         Button(onClick = onOpenVipUpgrade, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        shape = RaddTokens.Shape.Pill,
                         ) {
                             Text(if (state.planIsVip) "View membership" else "Upgrade to VIP")
                         }
@@ -794,6 +795,7 @@ internal fun SettingsContent(
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
                                     Button(
+                                        shape = RaddTokens.Shape.Pill,
                                         onClick = { showSignInForm = true },
                                         enabled = !account.isBusy,
                                         modifier = Modifier.weight(1f).heightIn(min = 48.dp),
@@ -845,6 +847,7 @@ internal fun SettingsContent(
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
                                     Button(
+                                        shape = RaddTokens.Shape.Pill,
                                         onClick = actions.onQuickSignIn,
                                         enabled = !account.isBusy && account.quickInput.isNotBlank(),
                                         // Robo run 5: the disabled text on this button read
@@ -882,6 +885,7 @@ internal fun SettingsContent(
                             // sign-in and when this card opens, so the button was
                             // a tap the viewer should never have had to find.
                             Button(
+                                shape = RaddTokens.Shape.Pill,
                                 onClick = actions.onSignOut,
                                 enabled = !account.isBusy,
                                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
@@ -1686,6 +1690,7 @@ internal fun SettingsContent(
                                                 )
                                             }
                                             Button(
+                                                shape = RaddTokens.Shape.Pill,
                                                 onClick = actions.onTestAndSaveServer,
                                                 enabled = !state.isTesting && state.serverUrl.isNotBlank(),
                                                 // Robo run 5: the disabled text on this button read
@@ -1863,6 +1868,7 @@ internal fun SettingsContent(
                                 style = settingsHelperStyle(),
                             )
                             Button(
+                                shape = RaddTokens.Shape.Pill,
                                 onClick = actions.onRetryLoad,
                                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                             ) {
@@ -2631,6 +2637,7 @@ internal fun ProfileLinkDialog(account: AccountUiState, viewModel: SettingsViewM
         },
         confirmButton = {
             Button(
+                shape = RaddTokens.Shape.Pill,
                 modifier = Modifier.heightIn(min = 48.dp),
                 onClick = viewModel::linkProfile,
                 enabled = !account.isLinking &&
@@ -2759,6 +2766,7 @@ internal fun ContactDialog(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Button(
+                        shape = RaddTokens.Shape.Pill,
                         onClick = onDismiss,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -2771,6 +2779,7 @@ internal fun ContactDialog(
                         Text("Close")
                     }
                     Button(
+                        shape = RaddTokens.Shape.Pill,
                         onClick = {
                             runCatching { uriHandler.openUri("mailto:$shownEmail") }
                         },

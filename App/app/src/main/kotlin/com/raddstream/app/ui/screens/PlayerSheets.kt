@@ -70,6 +70,7 @@ import com.raddstream.app.player.SubtitleFont
 import com.raddstream.app.player.subtitles.SubtitleOffset
 import com.raddstream.app.player.qualityCostPerHour
 import com.raddstream.app.ui.theme.RaddCurrent500
+import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.brandSp
 import com.raddstream.app.viewmodel.PlayerViewModel
 import com.raddstream.app.viewmodel.formatTime
@@ -149,7 +150,15 @@ internal fun QualitySheet(state: PlayerUiState, vm: PlayerViewModel) {
                         fontSize = brandSp(12),
                     )
                 }
-                Switch(checked = state.dataSaver, onCheckedChange = { vm.toggleDataSaver() })
+                Switch(
+                    checked = state.dataSaver,
+                    onCheckedChange = { vm.toggleDataSaver() },
+                    // P2-elementhunt: the M3 Expressive thumb — a check in the
+                    // thumb when on, matching the other switches in this file.
+                    thumbContent = if (state.dataSaver) {
+                        { Icon(painter = painterResource(R.drawable.ic_action_check), contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
+                    } else null,
+                )
             }
             state.qualityRungs.forEach { rung ->
                 val selected = !state.qualityAuto && rung.band == state.qualityBand
@@ -434,6 +443,7 @@ internal fun SubtitleSettingsSheet(state: PlayerUiState, vm: PlayerViewModel) {
                 )
                 Spacer(Modifier.height(12.dp))
                 Button(
+                    shape = RaddTokens.Shape.Pill,
                     onClick = { picker.launch(arrayOf("*/*")) },
                     modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth().heightIn(min = 48.dp),
                 ) {

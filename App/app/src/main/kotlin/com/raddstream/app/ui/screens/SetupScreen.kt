@@ -41,6 +41,7 @@ import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.viewmodel.SetupUiState
 import com.raddstream.app.viewmodel.SetupViewModel
+import com.raddstream.app.ui.theme.RaddTokens
 
 /**
  * First-run server connection. [onConnected] receives whether the viewer still has to answer
@@ -183,6 +184,7 @@ internal fun SetupScreenContent(
 
         Spacer(Modifier.height(12.dp))
         Button(
+            shape = RaddTokens.Shape.Pill,
             onClick = onContinue,
             enabled = state.isConnected && !state.isChecking,
             modifier = Modifier.fillMaxWidth().height(56.dp),

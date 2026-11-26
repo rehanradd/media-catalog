@@ -68,6 +68,7 @@ import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.viewmodel.LiveTvViewModel
 import com.raddstream.app.viewmodel.formatCacheAge
 import kotlinx.coroutines.launch
+import com.raddstream.app.ui.theme.RaddTokens
 
 /**
  * The Live TV tab: a category-first channel grid, in the same shape as the
@@ -219,6 +220,7 @@ internal fun LiveTvContent(
                     // Live TV review D6: the empty state's only way out
                     // sits on the 48dp floor with every other control.
                     Button(
+                        shape = RaddTokens.Shape.Pill,
                         onClick = { onRefresh() },
                         modifier = Modifier.heightIn(min = 48.dp),
                     ) { Text("Retry") }
@@ -337,21 +339,25 @@ internal fun LiveTvContent(
                         action = {
                             if (noFavouritesYet) {
                                 Button(
+                                    shape = RaddTokens.Shape.Pill,
                                     onClick = { onFavouritesSelected(false) },
                                     modifier = Modifier.heightIn(min = 48.dp),
                                 ) { Text("Show all channels") }
                             } else if (state.query.isNotBlank()) {
                                 Button(
+                                    shape = RaddTokens.Shape.Pill,
                                     onClick = { onQueryChanged("") },
                                     modifier = Modifier.heightIn(min = 48.dp),
                                 ) { Text("Clear search") }
                             } else if (state.showFavoritesOnly) {
                                 Button(
+                                    shape = RaddTokens.Shape.Pill,
                                     onClick = { onFavouritesSelected(false) },
                                     modifier = Modifier.heightIn(min = 48.dp),
                                 ) { Text("Show all channels") }
                             } else if (state.selectedCategory != null) {
                                 Button(
+                                    shape = RaddTokens.Shape.Pill,
                                     onClick = { onCategorySelected(null) },
                                     modifier = Modifier.heightIn(min = 48.dp),
                                 ) { Text("Show all channels") }

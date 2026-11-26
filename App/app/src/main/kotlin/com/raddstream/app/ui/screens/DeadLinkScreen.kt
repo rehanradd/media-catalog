@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.R
+import com.raddstream.app.ui.theme.RaddTokens
 
 /**
  * NAV-4/NAV-5: the catch-all deep-link destination. A shared link that does not
@@ -98,6 +99,7 @@ fun DeadLinkScreen(onHomeClick: () -> Unit) {
             )
         }
         Button(
+            shape = RaddTokens.Shape.Pill,
             onClick = onHomeClick,
             modifier = Modifier
                 .fillMaxWidth()

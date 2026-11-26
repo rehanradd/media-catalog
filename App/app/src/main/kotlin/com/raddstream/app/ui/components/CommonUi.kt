@@ -238,6 +238,7 @@ fun CenteredMockupDialog(
                 ) {
                     if (secondaryLabel != null) {
                         Button(
+                            shape = RaddTokens.Shape.Pill,
                             onClick = { onSecondary?.invoke() },
                             enabled = secondaryEnabled,
                             colors = ButtonDefaults.buttonColors(
@@ -250,6 +251,7 @@ fun CenteredMockupDialog(
                         }
                     }
                     Button(
+                        shape = RaddTokens.Shape.Pill,
                         onClick = onPrimary,
                         enabled = primaryEnabled,
                         modifier = Modifier.weight(1f).heightIn(min = 48.dp),
@@ -1109,6 +1111,7 @@ fun ErrorState(
                 // read as a secondary action on a screen with nothing else
                 // to tap.
                 Button(
+                    shape = RaddTokens.Shape.Pill,
                     onClick = onRetry,
                     modifier = Modifier.heightIn(min = 48.dp),
                 ) {
@@ -1255,6 +1258,7 @@ fun SeeAllButton(
     contentDescription: String = label,
 ) {
     Button(
+        shape = RaddTokens.Shape.Pill,
         onClick = onClick,
         colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary),
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),

@@ -58,6 +58,7 @@ import com.raddstream.app.R
 import com.raddstream.app.viewmodel.EmbedPage
 import com.raddstream.app.viewmodel.EmbedWebViewModel
 import java.util.Locale
+import com.raddstream.app.ui.theme.RaddTokens
 
 /**
  * The provider's own page, shown to the viewer, for a source the server says is a page rather
@@ -431,7 +432,7 @@ private fun StatusPanel(
         )
         if (actionLabel != null && onAction != null) {
             Spacer(modifier = Modifier.height(20.dp))
-            Button(onClick = onAction) {
+            Button(onClick = onAction, shape = RaddTokens.Shape.Pill) {
                 Text(actionLabel)
             }
         }

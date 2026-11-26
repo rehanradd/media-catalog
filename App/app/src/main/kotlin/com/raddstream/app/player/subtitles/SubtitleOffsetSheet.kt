@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import com.raddstream.app.ui.screens.PlayerSheet
 import kotlin.math.abs
 import kotlin.math.roundToLong
+import com.raddstream.app.ui.theme.RaddTokens
 
 /**
  * The MX-style subtitle sync control: a live offset for both subtitle render paths.
@@ -328,6 +329,7 @@ private fun OffsetButton(label: String, onClick: () -> Unit) {
 @Composable
 private fun ResetButton(onClick: () -> Unit) {
     Button(
+        shape = RaddTokens.Shape.Pill,
         onClick = onClick,
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         colors = ButtonDefaults.buttonColors(

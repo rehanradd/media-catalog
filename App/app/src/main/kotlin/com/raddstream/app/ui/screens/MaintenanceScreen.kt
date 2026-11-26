@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
+import com.raddstream.app.ui.theme.RaddTokens
 
 /**
  * The full-screen notice shown while the operator's `maintenance_mode` switch is on.
@@ -109,6 +110,7 @@ fun MaintenanceScreen(
         }
         if (onRetry != null) {
             Button(
+                shape = RaddTokens.Shape.Pill,
                 onClick = onRetry,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,

@@ -43,6 +43,7 @@ import java.util.Locale
 import com.raddstream.app.R
 import com.raddstream.app.viewmodel.AccountOverviewUiState
 import com.raddstream.app.viewmodel.AccountViewModel
+import com.raddstream.app.ui.theme.RaddTokens
 
 /**
  * The profile: what this account is, on the catalog's own record. Session
@@ -264,6 +265,7 @@ fun ProfileContent(
             }
             if (state.signedIn) {
                 Button(
+                    shape = RaddTokens.Shape.Pill,
                     onClick = onSignOut,
                     modifier = Modifier.fillMaxWidth(),
                 ) {

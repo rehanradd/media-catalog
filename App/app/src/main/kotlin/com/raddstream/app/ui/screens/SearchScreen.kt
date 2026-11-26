@@ -1165,7 +1165,7 @@ private fun DirectVideoRow(url: String, title: String, onPlay: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Button(onClick = onPlay) {
+        Button(onClick = onPlay, shape = RaddTokens.Shape.Pill) {
             Text("Play")
         }
     }
@@ -2633,6 +2633,17 @@ internal fun FilterSheetBody(
                     onCheckedChange = { checked ->
                         onSelectType(if (checked) "complete_season" else "series")
                     },
+                    // P2-elementhunt: the M3 Expressive thumb — a check in the
+                    // thumb when on, matching the other 5 switches.
+                    thumbContent = if (state.filters.type == "complete_season") {
+                        {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_action_check),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    } else null,
                     modifier = Modifier.semantics { contentDescription = "Complete series only" },
                 )
             }
@@ -2767,6 +2778,7 @@ internal fun FilterSheetBody(
                 Text("Reset")
             }
             Button(
+                shape = RaddTokens.Shape.Pill,
                 onClick = onDone,
                 modifier = Modifier.heightIn(min = 48.dp),
             ) {

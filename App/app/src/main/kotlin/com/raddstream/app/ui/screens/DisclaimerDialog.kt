@@ -39,6 +39,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.raddstream.app.R
 import com.raddstream.app.network.models.PanelDisclaimer
 import com.raddstream.app.ui.components.RaddDialogTitle
+import com.raddstream.app.ui.theme.RaddTokens
 
 /**
  * The operator's disclaimer, in full.
@@ -202,6 +203,7 @@ internal fun DisclaimerDialog(
                         // dialog never dismissed (Robo run 2, action 2).
                         // No visual change: a test tag only.
                         Button(
+                            shape = RaddTokens.Shape.Pill,
                             onClick = onConfirm,
                             modifier = Modifier.fillMaxWidth().testTag("disclaimer_confirm"),
                         ) {
@@ -220,7 +222,7 @@ internal fun DisclaimerDialog(
                         horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Button(onClick = onConfirm) {
+                        Button(onClick = onConfirm, shape = RaddTokens.Shape.Pill) {
                             Text(confirmLabel)
                         }
                     }
