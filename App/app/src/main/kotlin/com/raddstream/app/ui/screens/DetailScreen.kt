@@ -1926,9 +1926,9 @@ private fun DetailCastButton() {
 }
 
 /**
- * P0-8 (Nov 2026): exactly ONE primary CTA. Play takes ~2/3 of the
- * row (filled jade) and Download sits beside it as a tonal pill at
- * ~1/3 (Disney+ shape) — the old two stacked full-width buttons made
+ * P0-8 (Nov 2026): exactly ONE primary CTA. Play takes the wider share
+ * of the row (filled jade) and Download sits beside it as a tonal pill
+ * (Disney+ shape) — the old two stacked full-width buttons made
  * two "primaries" and pushed the synopsis below the fold. Play morphs
  * while it resolves: Play → indeterminate spinner reading "Finding
  * the best stream…" → playback (Netflix-style). The fake determinate
@@ -1945,6 +1945,16 @@ private fun DetailCastButton() {
  * the top-bar overflow. The name stays `PrimaryActions` and both
  * buttons keep `heightIn(min = 48.dp)`: SkeletonParityTest reads the
  * source for both.
+ *
+ * P2 (Nov 2026): the Download pill is the narrow share of the row, so
+ * the full cost label ("Download · 1080p · 1.3 GB") never fits it — it
+ * wrapped mid-word ("Down / load…"). The pill shows the short verb
+ * only ("Download", or "Downloaded" once the file is on the device);
+ * the band and size already ride the Video row above, and the full
+ * label stays the button's spoken name, so TalkBack still hears the
+ * cost. The pill is widened a little (Play 1.75f / Download 1.25f)
+ * and its content padding tightened so the short label fits on one
+ * line at PIXEL_5 width and at 1.3x font scale.
  */
 @Composable
 private fun PrimaryActions(
@@ -1985,6 +1995,14 @@ private fun PrimaryActions(
         // UI-fix P1-X1: press scale + haptic on the primary action.
         val playSource = remember { MutableInteractionSource() }
         PressHaptics(playSource)
+        // P2 (Nov 2026): the pill shows the short verb only — the full
+        // cost label ("Download · 1080p · 1.3 GB", "Download S1:E2 · …")
+        // never fits the narrow pill and wrapped mid-word ("Down /
+        // load…"). The band and size already ride the Video row above;
+        // the full label stays the button's spoken name (below), so
+        // TalkBack still hears the cost.
+        val downloadDisplayLabel =
+            if (downloadLabel.startsWith("✓")) "Downloaded" else "Download"
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1995,7 +2013,7 @@ private fun PrimaryActions(
                 enabled = playEnabled && !playStarting,
                 interactionSource = playSource,
                 modifier = Modifier
-                    .weight(2f)
+                    .weight(1.75f)
                     .heightIn(min = 48.dp)
                     .pressScale(playSource),
                 shape = CircleShape,
@@ -2041,15 +2059,21 @@ private fun PrimaryActions(
                 onClick = onDownloadPrimary,
                 enabled = downloadEnabled,
                 modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 48.dp),
+                    .weight(1.25f)
+                    .heightIn(min = 48.dp)
+                    .semantics { contentDescription = downloadLabel },
                 shape = CircleShape,
+                // P2 (Nov 2026): the default button padding (24dp a side)
+                // leaves no room for the label in this narrow pill — the
+                // tighter padding plus the short verb is what fits.
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
             ) {
-                Icon(painterResource(R.drawable.ic_action_download), contentDescription = null, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
+                Icon(painterResource(R.drawable.ic_action_download), contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
                 Text(
-                    text = downloadLabel,
-                    maxLines = 2,
+                    text = downloadDisplayLabel,
+                    maxLines = 1,
+                    softWrap = false,
                     overflow = TextOverflow.Ellipsis,
                 )
             }

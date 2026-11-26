@@ -17,6 +17,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
@@ -105,12 +106,15 @@ class ScrollingChipRowTest {
 
     @Test
     fun fadeNodeExistsInANarrowBoxWithLongLabels() {
-        // The fade is unconditional (a conditional canScrollForward fade
-        // would risk SearchFilterRailTest.rightEdgeFadeMaskExists, which
-        // pins the fade's presence in a 360dp box where Robolectric's
-        // ~1px/char metrics may make the row fit). A 150dp box with long
-        // labels forces overflow deterministically, so the test pins
-        // presence + height, never a pixel measurement of the chips.
+        // P2 (Nov 2026): the fade is conditional on canScrollForward now
+        // (it vanishes at the end of the row, so the last chip reads
+        // whole) — but at rest in an overflowing row it must still exist,
+        // which is what this pins alongside
+        // SearchFilterRailTest.rightEdgeFadeMaskExists (a 360dp box where
+        // Robolectric's ~1px/char metrics may make the row fit). A 150dp
+        // box with long labels forces overflow deterministically, so the
+        // test pins presence + height, never a pixel measurement of the
+        // chips.
         compose.setContent {
             RaddStreamTheme {
                 Box(Modifier.width(150.dp)) {
@@ -130,6 +134,33 @@ class ScrollingChipRowTest {
         }
         compose.onNodeWithTag("test-fade").assertExists()
         compose.onNodeWithTag("test-fade").assertHeightIsEqualTo(48.dp)
+    }
+
+    @Test
+    fun fadeHiddenWhenRowFits() {
+        // P2 (Nov 2026): the fade is a "more to scroll" cue — when every
+        // chip fits there is nothing more to scroll to, so no fade. Two
+        // short chips in a 400dp box fit by a wide margin, so Robolectric's
+        // ~1px/char metrics cannot make them overflow.
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.width(400.dp)) {
+                    ScrollingChipRow(
+                        fadeTestTag = "test-fade-fits",
+                    ) {
+                        items(listOf("All", "Movies")) { label ->
+                            RaddChip(
+                                selected = false,
+                                onClick = {},
+                                label = { Text(label) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag("test-fade-fits").assertDoesNotExist()
     }
 
     @Test

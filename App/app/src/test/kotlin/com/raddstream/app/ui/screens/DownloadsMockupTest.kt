@@ -333,7 +333,9 @@ class DownloadsMockupTest {
         // D15: a finished row says so in words, with the jade check beside it.
         // P1-13: "saved on this device" — the old "plays here or in any
         // video player" is the engineer-facing copy the empty state dropped.
-        compose.onNodeWithText("Downloaded ✓ — saved on this device").assertIsDisplayed()
+        // P2 (Nov 2026): the full sentence wrapped to three lines in the
+        // narrow text column — one short line now.
+        compose.onNodeWithText("Downloaded ✓").assertIsDisplayed()
         compose.onNodeWithText("High bitrate").assertIsDisplayed()
         compose.onNodeWithText("1.3 GB").assertIsDisplayed()
     }
@@ -1194,6 +1196,8 @@ class DownloadsMockupTest {
     @Test
     fun finishedKeepRowSaysDownloaded() {
         // D15: a finished keep says so in words, with the jade check beside it.
+        // P2 (Nov 2026): the full sentence wrapped in the narrow text
+        // column, same as the device row — one short line now.
         compose.setContent {
             RaddStreamTheme {
                 KeptItemRow(
@@ -1212,6 +1216,6 @@ class DownloadsMockupTest {
                 )
             }
         }
-        compose.onNodeWithText("Downloaded ✓ — available offline").assertIsDisplayed()
+        compose.onNodeWithText("Downloaded ✓").assertIsDisplayed()
     }
 }

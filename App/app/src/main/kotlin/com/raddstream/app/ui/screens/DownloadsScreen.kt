@@ -895,7 +895,11 @@ private fun deviceStatusLine(item: DeviceDownload): String {
         // P1-13: "saved on this device" — the old "plays here or in any
         // video player" is the same engineer-facing copy the empty state
         // dropped; the file plays offline in RaddStream.
-        DeviceDownloadState.READY -> "Downloaded ✓ — saved on this device"
+        // P2 (Nov 2026): the full sentence wrapped to three lines in the
+        // narrow text column ("Downloaded ✓ — / saved on this / device").
+        // One short line now — the file's saved state is already carried
+        // by the bytes line below ("1.3 GB saved") and the empty state.
+        DeviceDownloadState.READY -> "Downloaded ✓"
         DeviceDownloadState.FAILED -> "Download failed — resume, or cancel and try again"
         // P1-13: no percent here — the saved-bytes line below already
         // carries it ("450 MB of 1.0 GB saved · 45%"), and the same
@@ -1361,7 +1365,10 @@ private fun statusLine(item: KeptItem): String {
         KeepState.NO_SPACE -> "Not enough space to finish — free room and retry"
         KeepState.GATED -> "Locked to VIP — this quality needs a VIP plan"
         // D15: a finished keep says so in words, with the jade check beside it.
-        KeepState.READY -> "Downloaded ✓ — available offline"
+        // P2 (Nov 2026): same three-line wrap as the device row in this
+        // narrow column — one short line now; "available offline" is
+        // already what the whole Downloads screen means.
+        KeepState.READY -> "Downloaded ✓"
         KeepState.EXPIRING -> "Kept — expires in ${formatRemaining(item.remainingMillis(System.currentTimeMillis()))}"
         KeepState.FAILED -> "Download failed — retry to resume"
     }

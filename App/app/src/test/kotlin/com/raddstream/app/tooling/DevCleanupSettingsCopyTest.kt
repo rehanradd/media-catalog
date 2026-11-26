@@ -303,7 +303,9 @@ class DevCleanupSettingsCopyTest {
         // Positive controls: the new words must actually be there, or the
         // refusals above pass on files that render nothing.
         assertTrue(settingsScreen.contains("Account code"))
-        assertTrue(settingsScreen.contains("Create account"))
+        // P2 (Nov 2026): the button reads "Sign up" now — "Create account"
+        // wrapped to two lines in its half-width button.
+        assertTrue(settingsScreen.contains("Sign up"))
         assertTrue(settingsScreen.contains("Your catalog"))
         assertTrue(settingsScreen.contains("Catalog address"))
         assertTrue(settingsScreen.contains("No catalog connected yet."))

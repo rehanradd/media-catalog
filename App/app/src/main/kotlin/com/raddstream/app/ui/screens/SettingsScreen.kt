@@ -781,7 +781,7 @@ internal fun SettingsContent(
                         }
 
                         // UI-fix P1-T1: progressive disclosure. A guest sees "Sign in"
-                        // and "Create account" only — the key field, the label and the
+                        // and "Sign up" only — the key field, the label and the
                         // long warnings wait behind the Sign in tap. A signed-in viewer
                         // sees Sync / Sign out, and the key hint, label and phone+PIN
                         // link wait behind "Account details".
@@ -805,7 +805,11 @@ internal fun SettingsContent(
                                         modifier = Modifier.weight(1f).heightIn(min = 48.dp),
 
                                     ) {
-                                        Text("Create account")
+                                        // P2 (Nov 2026): "Create account" wrapped to two
+                                        // lines ("Create / account") in this half-width
+                                        // button — "Sign up" is the same door
+                                        // (onCreateAccount), one line at any font scale.
+                                        Text("Sign up")
                                     }
                                 }
                             } else {
@@ -859,7 +863,9 @@ internal fun SettingsContent(
                                         modifier = Modifier.weight(1f).heightIn(min = 48.dp),
 
                                     ) {
-                                        Text("Create account")
+                                        // P2 (Nov 2026): see the guest row above —
+                                        // "Sign up" is the same door, one line.
+                                        Text("Sign up")
                                     }
                                 }
                                 TextButton(

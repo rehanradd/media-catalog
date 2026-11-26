@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -45,6 +47,8 @@ import com.raddstream.app.player.QualityOption
 import com.raddstream.app.player.SleepMode
 import com.raddstream.app.player.SleepTimerState
 import com.raddstream.app.ui.components.PosterCard
+import com.raddstream.app.ui.components.RaddChip
+import com.raddstream.app.ui.components.ScrollingChipRow
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.screens.DetailContent
 import com.raddstream.app.ui.screens.EpisodeRowSection
@@ -1700,6 +1704,35 @@ class PaparazziPreviewTest {
         paparazzi.snapshot {
             themed {
                 ZoomResetChip(onReset = {})
+            }
+        }
+    }
+
+    // P2 (Nov 2026): the chip-row end state — the last chip fully
+    // visible. The row carries the Home filter row's chip set,
+    // pre-scrolled to its end (KPOP first visible). Before this fix the
+    // unconditional end fade sat on top of the last chip even at max
+    // scroll, so it read as clipped at the right edge ("KPO…"). The
+    // fade is conditional on canScrollForward now, so at the end of the
+    // row the last chip renders whole, with no fade over it. The same
+    // shared row serves Home, Search and Live TV, so this one shot
+    // covers all three screens.
+    @Test
+    fun chipRowEndState() {
+        val labels = listOf("ALL", "MOVIES", "SERIES", "ANIME", "KPOP")
+        paparazzi.snapshot {
+            themed {
+                ScrollingChipRow(
+                    state = LazyListState(firstVisibleItemIndex = labels.lastIndex),
+                ) {
+                    items(labels) { label ->
+                        RaddChip(
+                            selected = label == "ALL",
+                            onClick = {},
+                            label = { Text(label) },
+                        )
+                    }
+                }
             }
         }
     }

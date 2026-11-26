@@ -47,11 +47,15 @@ import com.raddstream.app.ui.theme.pressScale
  * scrolling chip strip in the app rides this now, so the fade, the 8dp
  * gaps and the end padding can never drift apart again.
  *
- * The fade stays UNCONDITIONAL, exactly as the hand-rolled rows had it:
- * a conditional canScrollForward fade would risk
- * SearchFilterRailTest.rightEdgeFadeMaskExists, which pins the fade's
- * presence in a 360dp box where Robolectric's ~1px/char metrics may make
- * the row fit.
+ * The fade is shown only while the row can still scroll forward
+ * (P2, Nov 2026 — it used to be unconditional): at the end of the row
+ * the fade sat on top of the last chip even when the chip was fully in
+ * view, so the last chip read as clipped ("KPO…", "Thri…", "En…") on
+ * Home, Search and Live TV. A fade that says "more to scroll" must
+ * vanish when there is nothing more. At rest it still shows — the
+ * pinned fade tests (SearchFilterRailTest.rightEdgeFadeMaskExists,
+ * ScrollingChipRowTest.fadeNodeExistsInANarrowBoxWithLongLabels) render
+ * overflowing rows at rest, where canScrollForward is true.
  *
  * Screen audit (Nov 2026) #1: the row also snaps. A free fling used to
  * rest mid-chip ("Complete serie…" cut at the edge reads as broken, not
@@ -98,6 +102,14 @@ fun ScrollingChipRow(
     val snapLayoutInfoProvider = remember(state) {
         SnapLayoutInfoProvider(state, snapPosition = ChipRowSnapPosition)
     }
+    // P2 (Nov 2026): the end fade is a "more to scroll" cue — it must
+    // vanish once the row is scrolled to the end. Unconditional, it sat
+    // on top of the last chip even when the chip was fully in view, so
+    // the last chip read as clipped at the right edge on Home, Search
+    // and Live TV. Before the first layout there is no scroll info yet,
+    // so the fade stays on (a row is scrollable far more often than not,
+    // and the pinned fade tests render at rest, where it must exist).
+    val showEndFade = state.layoutInfo.totalItemsCount == 0 || state.canScrollForward
     Box(modifier = modifier.fillMaxWidth()) {
         var rowModifier = Modifier.fillMaxWidth()
         if (rowTestTag != null) rowModifier = rowModifier.testTag(rowTestTag)
@@ -111,9 +123,11 @@ fun ScrollingChipRow(
         ) {
             content()
         }
-        var fadeModifier = Modifier.align(Alignment.CenterEnd)
-        if (fadeTestTag != null) fadeModifier = fadeModifier.testTag(fadeTestTag)
-        RowEndFade(fadeModifier, height = fadeHeight)
+        if (showEndFade) {
+            var fadeModifier = Modifier.align(Alignment.CenterEnd)
+            if (fadeTestTag != null) fadeModifier = fadeModifier.testTag(fadeTestTag)
+            RowEndFade(fadeModifier, height = fadeHeight)
+        }
     }
 }
 
