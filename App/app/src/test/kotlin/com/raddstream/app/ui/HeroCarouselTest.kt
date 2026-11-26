@@ -21,8 +21,8 @@ import org.junit.Test
  * cap, dedupe, drop Unknown/N/A). They are gone with the pills — the hero
  * shows one meta line now, and the languages survive only in the slide's
  * spoken sentence, filtered by [isKnownLanguage] — so those tests went with
- * the pills, and the overlap tests went with the dots: the dots ride below
- * the card now, where no band math can put them over the buttons.
+ * the pills, and the overlap tests went with the dots: the dots ride on the
+ * art now, top-end (P1-5), where no band math can put them over the buttons.
  */
 class HeroCarouselTest {
 

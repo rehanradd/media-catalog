@@ -2,6 +2,7 @@ package com.raddstream.app.ui.screens
 
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -234,6 +235,10 @@ class HomeAuditFixesTest {
 
     // ── Audit #12: the three dismissals are 48dp, in the end corner ─────
 
+    // P1-5 (re-rate 6, evidence gap #6): the status strip is ONE row max —
+    // broadcast > offline > trial > sync, only the winner renders. With a
+    // broadcast AND a trial, only the broadcast's dismiss exists; the trial
+    // note's dismiss appears once the broadcast is gone.
     @Test
     fun dismissButtonsAre48dp() {
         val jawan = post(1, "Jawan", 2023, workRef = "work:jawan")
@@ -241,10 +246,8 @@ class HomeAuditFixesTest {
             RaddStreamTheme {
                 HomeContent(
                     state = HomeUiState(
-                        // No sections: the trial note is the 5th lazy item
-                        // (chips, Continue Watching, broadcast, trial — the
-                        // broadcasts ride below CW now, H1), so it is
-                        // composed in the first Robolectric viewport.
+                        // No sections: the strip is the first lazy item, so
+                        // it is composed in the first Robolectric viewport.
                         // With a hero + rail above it, the lazy column
                         // never composes it and the node does not exist.
                         sections = emptyList(),
@@ -267,8 +270,29 @@ class HomeAuditFixesTest {
             .assertHeightIsEqualTo(48.dp).assertWidthIsEqualTo(48.dp)
         compose.onNodeWithContentDescription("Remove Jawan from Continue Watching")
             .assertHeightIsEqualTo(48.dp).assertWidthIsEqualTo(48.dp)
+        // The trial note loses to the broadcast in the single strip: its
+        // dismiss must not exist while the broadcast is showing.
+        compose.onNodeWithContentDescription("Dismiss trial note").assertDoesNotExist()
+    }
+
+    @Test
+    fun trialNoteDismissIs48dpWhenItWinsTheStrip() {
+        val jawan = post(1, "Jawan", 2023, workRef = "work:jawan")
+        compose.setContent {
+            RaddStreamTheme {
+                HomeContent(
+                    state = HomeUiState(
+                        sections = emptyList(),
+                        continueWatching = listOf(resumeTile(jawan)),
+                        trialDaysRemaining = 5,
+                    ),
+                    heroAutoplay = false,
+                )
+            }
+        }
         compose.onNodeWithContentDescription("Dismiss trial note")
             .assertHeightIsEqualTo(48.dp).assertWidthIsEqualTo(48.dp)
+        compose.onNodeWithContentDescription("Dismiss announcement").assertDoesNotExist()
     }
 
     // ── H10 (2027 Home fix, round 2): the trending rail's "See all" ─────

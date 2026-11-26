@@ -32,7 +32,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -91,25 +91,29 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * The banner rail on Home: [heroHeight] tall, a rounded card floating on a soft
- * ambient glow, one work at a time, advancing on its own.
+ * The banner rail on Home: [heroHeight] tall, a full-bleed banner
+ * edge-to-edge (P1-5, Nov 2026 — the inset card is gone), one work at a
+ * time, advancing on its own. The ambient glow still tints the canvas the
+ * scrim fades into at the bottom.
  *
  * Layout of one slide, back to front:
  *  - the ambient glow ([HeroAmbientGlow]): two low-alpha radial blooms tinted from the
  *    theme, drifting to a new hue as the active page changes — light spilling into the
- *    inset around the card, which is what gives the banner depth instead of a pasted-on
+ *    canvas around the banner, which is what gives it depth instead of a pasted-on
  *    rectangle;
  *  - the widest artwork the row carries, cropped to fill;
  *  - a vertical scrim that goes from clear at the top to the page background at the
  *    bottom, so the title and buttons stay readable over any poster;
  *  - the title and one meta line (Season 1–2 · Reality · 2026);
  *  - page dots, which double as the manual affordance — tapping a dot jumps to that slide.
- *    They sit BELOW the card now, centred and bare (mockup, Nov 2026): they used to ride
- *    the top end in a contrast pill, and before that the bottom strip, where their 48dp
+ *    They ride ON the art now, top-end in a contrast pill (P1-5): they used to sit
+ *    below the card, centred and bare — and before that the bottom strip, where their 48dp
  *    hit boxes (declared after the pager, so on top in z-order) covered the Watch Now
  *    button's centre on a 6-dot hero — a centred tap hit a dot, which just re-selected
  *    the slide, so Watch Now looked dead while the banner tap (above the strip) worked.
- *    Below the card no dot can cover any control, so the band math is gone with them.
+ *    The top end is free art (the title and buttons sit at the bottom, the fallback
+ *    mark is centred), so on-art dots can cover no control — the band math is gone
+ *    with them.
  *  - a prominent Watch Now button, which starts the title (the slide's own tap target
  *    only opens the details — the button is the part that says "play"); beside it, a
  *    My List toggle, so saving a title does not need a trip to its details page;
@@ -232,10 +236,13 @@ fun HeroCarousel(
         }
     }
 
-    // Mockup (Nov 2026): the dots live BELOW the card, not on it — centred,
-    // bare, no pill. They cannot cover any control down here: the overlap
-    // that once ate Watch Now taps is structural now, not a band calculation
-    // ([heroIndicatorOverlapsActionRow] is gone with it).
+    // P1-5 (Nov 2026): full-bleed — the dots ride ON the art, top-end in
+    // the contrast pill, beside the pause control when autoplay is on.
+    // The top end is free art: the title and buttons sit at the bottom
+    // and the fallback mark is centred, so on-art dots can cover no
+    // control — the overlap that once ate Watch Now taps is structural
+    // now, not a band calculation ([heroIndicatorOverlapsActionRow] is
+    // gone with it).
     Column(modifier.fillMaxWidth()) {
     AnimatedVisibility(
         visible = heroVisible,
@@ -256,100 +263,96 @@ fun HeroCarousel(
             modifier = Modifier.fillMaxSize(),
         )
 
-        // Gemini home review (Nov 2026): the pager is sized to the inset
-        // card area — padding on the pager itself left the next slide's
-        // art painting in the 16dp margin (a brown/red sliver at the
-        // card's right edge, and a faint strip on the left). Sized to the
-        // card and clipped, the next slide is cut exactly at the card edge.
-        Box(Modifier.fillMaxSize().padding(heroInset)) {
-            HorizontalPager(
-                state = pagerState,
-                // F28 (Batch B): the pager composes only the current page by
-                // default, so every auto-advance started a fresh image load and
-                // the hero read as empty mid-load (the Batch 0/1 empty-hero
-                // shots). One page of lookahead keeps the next slide's art
-                // warm, so an advance lands on a painted slide.
-                beyondViewportPageCount = 1,
-                modifier = Modifier.fillMaxSize().clipToBounds(),
-            ) { page ->
-                val post = posts.getOrNull(page) ?: return@HorizontalPager
-                HeroSlide(
-                    post = post,
-                    backdropUrl = backdropFor(post),
-                    onClick = { onPostClick(post) },
-                    onWatchNow = { onWatchNow(post) },
-                    onWatchNowPressChange = { watchNowPressed = it },
-                    isFavorite = isFavorite(post),
-                    onToggleFavorite = { onToggleFavorite(post) },
-                    modifier = Modifier.clip(RoundedCornerShape(HERO_CORNER)),
-                    sharedTransitionScope = sharedTransitionScope,
-                    animatedVisibilityScope = animatedVisibilityScope,
+        // P1-5: edge-to-edge — no inset, square corners. The pager used
+        // to be sized to the inset card (16dp margins, 16dp corners);
+        // the next slide is cut exactly at the screen edge now, and the
+        // scrim's bottom fade blends the art into the page canvas.
+        HorizontalPager(
+            state = pagerState,
+            // F28 (Batch B): the pager composes only the current page by
+            // default, so every auto-advance started a fresh image load and
+            // the hero read as empty mid-load (the Batch 0/1 empty-hero
+            // shots). One page of lookahead keeps the next slide's art
+            // warm, so an advance lands on a painted slide.
+            beyondViewportPageCount = 1,
+            modifier = Modifier.fillMaxSize().clipToBounds(),
+        ) { page ->
+            val post = posts.getOrNull(page) ?: return@HorizontalPager
+            HeroSlide(
+                post = post,
+                backdropUrl = backdropFor(post),
+                onClick = { onPostClick(post) },
+                onWatchNow = { onWatchNow(post) },
+                onWatchNowPressChange = { watchNowPressed = it },
+                isFavorite = isFavorite(post),
+                onToggleFavorite = { onToggleFavorite(post) },
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+            )
+        }
+
+        if (posts.size > 1) {
+            // Home fix (Nov 2026): the pause control rides beside the dots —
+            // one row at the top end, 48dp tall — and only while autoplay is
+            // on. Manual-swipe (the default) has nothing to pause, so it shows
+            // no control at all. The toggle restarts the clock, so resuming
+            // gives a full interval on the slide in view.
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = RaddTokens.Space.Md, end = RaddTokens.Space.Md),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                HeroIndicator(
+                    count = posts.size,
+                    current = pagerState.currentPage,
+                    titles = posts.map { it.displayTitle },
+                    // Scrolling is a suspending pager call, so the dot's click launches it on the
+                    // composition's scope instead of pretending the tap can wait for it inline.
+                    // The tap also restarts the auto-advance clock outright: tapping the
+                    // current dot changes no page, so the page effect would not see it,
+                    // and without this the slide just chosen could still be yanked away
+                    // a beat later (Samsung RTL v1.1.2, Issue 3).
+                    onSelect = { index ->
+                        lastChangeMs = SystemClock.uptimeMillis()
+                        scrollScope.launch {
+                            pagerState.animateScrollToPage(index, animationSpec = RaddMotion.defaultSpatial())
+                        }
+                    },
+                    // On the art: the pill is contrast over bright artwork.
+                    // The dots row itself stays 48dp (the tap floor, pinned
+                    // by HeroIndicatorTest).
+                    background = true,
                 )
+                if (autoplay) {
+                    IconButton(
+                        onClick = {
+                            paused = !paused
+                            lastChangeMs = SystemClock.uptimeMillis()
+                        },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .background(
+                                color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.56f),
+                                shape = CircleShape,
+                            ),
+                    ) {
+                        Icon(
+                            painter = painterResource(if (paused) R.drawable.ic_player_play else R.drawable.ic_player_pause),
+                            contentDescription = if (paused) {
+                                "Resume banner rotation"
+                            } else {
+                                "Pause banner rotation"
+                            },
+                            tint = Color.White,
+                        )
+                    }
+                }
             }
         }
     }
     }
 
-    if (posts.size > 1) {
-        // Home fix (Nov 2026): the pause control rides beside the dots —
-        // one row, centred, 48dp tall — and only while autoplay is on.
-        // Manual-swipe (the default) has nothing to pause, so it shows
-        // no control at all. The toggle restarts the clock, so resuming
-        // gives a full interval on the slide in view.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = RaddTokens.Space.Xs),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            HeroIndicator(
-                count = posts.size,
-                current = pagerState.currentPage,
-                titles = posts.map { it.displayTitle },
-                // Scrolling is a suspending pager call, so the dot's click launches it on the
-                // composition's scope instead of pretending the tap can wait for it inline.
-                // The tap also restarts the auto-advance clock outright: tapping the
-                // current dot changes no page, so the page effect would not see it,
-                // and without this the slide just chosen could still be yanked away
-                // a beat later (Samsung RTL v1.1.2, Issue 3).
-                onSelect = { index ->
-                    lastChangeMs = SystemClock.uptimeMillis()
-                    scrollScope.launch {
-                        pagerState.animateScrollToPage(index, animationSpec = RaddMotion.defaultSpatial())
-                    }
-                },
-                // Below the card, on the page background: no pill behind the
-                // dots — the pill was contrast over bright artwork, and down
-                // here there is no artwork behind them.
-                // Screenshot-fix D7 (2026-11-16): 4dp above the dots, not
-                // 10dp — the dots sat in a dead gap between the hero card
-                // and the next row. The dots row itself stays 48dp (the tap
-                // floor, pinned by HeroIndicatorTest); only the dead padding
-                // around it shrinks.
-                background = false,
-            )
-            if (autoplay) {
-                IconButton(
-                    onClick = {
-                        paused = !paused
-                        lastChangeMs = SystemClock.uptimeMillis()
-                    },
-                    modifier = Modifier.size(48.dp),
-                ) {
-                    Icon(
-                        painter = painterResource(if (paused) R.drawable.ic_player_play else R.drawable.ic_player_pause),
-                        contentDescription = if (paused) {
-                            "Resume banner rotation"
-                        } else {
-                            "Pause banner rotation"
-                        },
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-    }
     }
 }
 
@@ -476,9 +479,8 @@ internal suspend fun prefetchHeroArt(context: Context, posts: List<Post>) {
  */
 @Composable
 fun HeroSkeleton(modifier: Modifier = Modifier) {
-    // Mockup (Nov 2026): the skeleton mirrors the real hero — inset card,
-    // then the dots BELOW it, bare. The dots used to shimmer inside the card
-    // at the top end; they ride under it now, like the real indicator.
+    // P1-5 (Nov 2026): the skeleton mirrors the real hero — full-bleed
+    // card, dots ON the art at the top end, like the real indicator.
     Column(
         modifier.fillMaxWidth().semantics {
             contentDescription = "Loading home"
@@ -486,7 +488,7 @@ fun HeroSkeleton(modifier: Modifier = Modifier) {
         },
     ) {
     Box(Modifier.fillMaxWidth().height(heroHeight())) {
-        Box(Modifier.fillMaxSize().padding(heroInset).clip(RoundedCornerShape(HERO_CORNER))) {
+        Box(Modifier.fillMaxSize()) {
             ShimmerBox(Modifier.fillMaxSize(), highlightAlpha = HERO_SKELETON_SHIMMER_ALPHA)
             // H4: no mark in the skeleton — the mark's two open arcs read as
             // a loading spinner in the hero centre. Pure shimmer instead.
@@ -526,44 +528,45 @@ fun HeroSkeleton(modifier: Modifier = Modifier) {
                     )
                 }
             }
-        }
-    }
-        // The page dots below the card: six 48dp cells, each with a small
-        // painted dot centred in it — the same footprint as the real
-        // indicator. Six dots is the hero's default count; a smaller hero
-        // shows no dots at all. The painted dots match the real ones
-        // (Audit #10): the first is the 24×6dp active dash, the rest 6dp
-        // circles.
-        Row(
-            modifier = Modifier
-                .align(Alignment.CenterHorizontally)
-                .padding(top = RaddTokens.Space.Md)
-                .height(48.dp),
-            horizontalArrangement = Arrangement.spacedBy(0.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            repeat(6) { index ->
-                Box(
-                    modifier = Modifier.size(48.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    ShimmerBox(
-                        Modifier
-                            .width(if (index == 0) 24.dp else 6.dp) // token-exempt: dot geometry, not spacing
-                            .height(6.dp), // token-exempt: dot geometry, not spacing
-                        shape = RaddTokens.Shape.Pill,
-                        highlightAlpha = HERO_SKELETON_SHIMMER_ALPHA,
-                    )
+            // P1-5: the page dots on the art, top-end — six 48dp cells, each
+            // with a small painted dot centred in it, the same footprint and
+            // position as the real indicator. Six dots is the hero's default
+            // count; a smaller hero shows no dots at all. The painted dots
+            // match the real ones (Audit #10): the first is the 24×6dp active
+            // dash, the rest 6dp circles.
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = RaddTokens.Space.Md, end = RaddTokens.Space.Md)
+                    .height(48.dp),
+                horizontalArrangement = Arrangement.spacedBy(0.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                repeat(6) { index ->
+                    Box(
+                        modifier = Modifier.size(48.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        ShimmerBox(
+                            Modifier
+                                .width(if (index == 0) 24.dp else 6.dp) // token-exempt: dot geometry, not spacing
+                                .height(6.dp), // token-exempt: dot geometry, not spacing
+                            shape = RaddTokens.Shape.Pill,
+                            highlightAlpha = HERO_SKELETON_SHIMMER_ALPHA,
+                        )
+                    }
                 }
             }
         }
+    }
     }
 }
 
 /**
  * Two soft radial blooms behind the banner, tinted from the theme's accent trio and
- * cross-fading to the next hue as the pager moves. The card is inset by [heroInset], so
- * this light spills out around it — depth without a single extra image.
+ * cross-fading to the next hue as the pager moves. The banner is full-bleed now (P1-5),
+ * so the blooms show through the scrim's bottom blend into the canvas, not around a
+ * card's margins — the depth without a single extra image.
  */
 @Composable
 private fun HeroAmbientGlow(currentPage: Int, modifier: Modifier = Modifier) {
@@ -659,10 +662,12 @@ private fun HeroSlide(
                     ),
                 ),
             ) {
+                // P1-5: the mark sits below the on-art indicator row (12dp top
+                // + 48dp row = 60dp) with a 12dp gap — 48dp + 24dp in tokens.
                 RaddStreamMark(
                     diameter = 48.dp, // token-exempt: fallback-mark size, not spacing
                     color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 48.dp),
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = RaddTokens.Space.Step48 + RaddTokens.Space.Xl),
                 )
             }
         } else {
@@ -695,7 +700,7 @@ private fun HeroSlide(
         // background (review redesign, Nov 2026). The old gradient faded
         // too late and too softly, so baked-in poster text bled behind
         // the title and buttons; this one is clear through the top half
-        // (nothing sits there now — the dots ride below the card) and
+        // (the dots ride the top end now, on the art) and
         // 0.78 at 67% before landing at 0.92 at the bottom. Gemini home
         // review (Nov 2026): the Dragon Ball Super title sat over bright
         // yellow/white art with only the button area scrimmed — the scrim
@@ -868,12 +873,10 @@ private fun HeroSlide(
  * minimum in both directions (the 24dp width it used to have failed Robo's 48dp touch-target
  * floor). Audit #10 (Nov 2026): the 16×4dp dash and 4dp dots at 50% were nearly invisible
  * on black — the active dash is 24×6dp in the accent now, the inactive dots 6dp at 85% (H7).
- * Mockup (Nov 2026): the row rides BELOW the card, centred and bare — it used to
- * ride the top end in a contrast pill, and before that the bottom strip, where its hit
- * boxes covered the Watch Now button's centre. Below the card no dot can cover any
- * control, and the pill is gone with the artwork behind it ([background] = false);
- * the pill stays for an overlay position, where the dots still need contrast over
- * bright artwork. The painted dots shrank twice — Batch B (active 18dp → 12dp, 7dp → 5dp
+ * P1-5 (Nov 2026): the row rides ON the art, top-end, in the contrast pill — it used to
+ * ride below the card, centred and bare, where its hit boxes could cover no control but
+ * the row read as generic chrome; on the art the pill stays, because the dots need
+ * contrast over bright artwork. The painted dots shrank twice — Batch B (active 18dp → 12dp, 7dp → 5dp
  * tall) and the review redesign (16×4dp pill, 4dp circles) — because the old capsules
  * read oversized next to the badges; audit #10 grew them back to 24×6dp because the
  * small ones were unreadable. The hit boxes stay 48dp: the review asked for a
@@ -891,10 +894,10 @@ internal fun HeroIndicator(
     titles: List<String> = emptyList(),
     modifier: Modifier = Modifier,
     /**
-     * Mockup (Nov 2026): below the card the dots sit on the page
-     * background, bare — the contrast pill behind them was for bright
-     * artwork, and there is none behind them down here. True keeps the
-     * pill (an overlay position); false draws bare dots.
+     * P1-5 (Nov 2026): on the art the dots sit over bright artwork, so the
+     * contrast pill stays — true keeps the pill (the on-art position);
+     * false draws bare dots (the old below-card position, where there was
+     * no artwork behind them).
      */
     background: Boolean = true,
 ) {
@@ -1061,7 +1064,7 @@ private const val HERO_HEIGHT_MIN_DP = 220f
 private const val HERO_HEIGHT_MAX_DP = 360f
 
 /**
- * The banner's height. A rounded, inset hero wants ~16:9 of a phone screen plus the text
+ * The banner's height. A full-bleed hero wants ~16:9 of a phone screen plus the text
  * block; 400dp keeps the first rail's posters peeking over the fold, so the page still
  * reads as a catalog and not as a single poster. UI-fix P1-H2: on a narrow phone
  * (360dp class) 400dp is 62% of the screen for one title — the hero caps at 320dp
@@ -1080,9 +1083,7 @@ private fun heroHeight(): Dp {
     return (width * 9f / 16f).dp.coerceIn(HERO_HEIGHT_MIN_DP.dp, HERO_HEIGHT_MAX_DP.dp)
 }
 
-/** Mockup (Nov 2026): the hero is a rounded inset card, 16dp in from the
- *  screen edges — not the full-bleed cinematic banner it used to be. The
- *  page background shows on both sides of the card. */
-private val heroInset = PaddingValues(horizontal = RaddTokens.Space.Gutter)
+// P1-5 (Nov 2026): the inset card is gone — the hero is full-bleed,
+// edge-to-edge with square corners, so there is no inset or corner
+// value left to own here.
 
-private val HERO_CORNER: Dp = RaddTokens.Radius.Card

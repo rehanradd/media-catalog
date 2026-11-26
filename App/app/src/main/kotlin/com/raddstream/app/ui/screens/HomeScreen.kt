@@ -609,45 +609,44 @@ internal fun HomeContent(
         // The strip and Continue Watching stay off the fatal screen: the
         // error owns that page, with the operator's broadcast above it.
         if (!isFatal) {
-            // The status strip — ops and billing messages as compact one-line
-            // rows, only when they matter, never as feed rows above Rail 1:
-            // broadcasts (operator announcements), the stale/offline sync
-            // line, the free-trial note, the offline banner. Each dismissible
-            // row keeps its 48dp dismiss (the pinned touch floor); the sync
-            // row dismisses for this visit, the offline row is live state and
-            // clears itself when the phone is back online.
-            state.broadcasts.forEach { broadcast ->
-                item(key = "status:broadcast:${broadcast.id}") {
-                    HomeStatusRow(
-                        text = broadcast.title,
-                        onDismiss = { onDismissBroadcast(broadcast.id) },
-                        dismissDescription = "Dismiss announcement",
-                    )
-                    Spacer(Modifier.height(RaddTokens.Space.Xs))
-                }
-            }
-            if (showSyncLine && !syncDismissed) {
-                item(key = "status:sync") {
-                    HomeStatusRow(
-                        text = syncLine ?: "",
-                        onDismiss = { syncDismissed = true },
-                        dismissDescription = "Dismiss sync notice",
-                    )
-                    Spacer(Modifier.height(RaddTokens.Space.Xs))
-                }
-            }
-            state.trialDaysRemaining?.let { days ->
-                item(key = "status:trial") {
-                    TrialNoteLine(
-                        daysRemaining = days,
-                        onDismiss = onDismissTrialNote,
-                    )
-                    Spacer(Modifier.height(RaddTokens.Space.Xs))
-                }
-            }
-            if (state.isOffline && hasSaved) {
-                item(key = "status:offline") {
-                    OfflineBanner()
+            // P1-5 (re-rate 6, evidence gap #6): ONE status strip, one row
+            // max — ops and billing messages as a single compact one-line
+            // row, only when it matters, never as feed rows above Rail 1.
+            // Priority: operator broadcast (outage/announcement) > offline
+            // > free-trial note > stale sync line. Only the winner renders;
+            // dismissing it reveals the next one on the next composition
+            // (each dismiss stays persistent per item, as before) — so
+            // "Live TV is here" + "Free VIP: 5 days left." can never stack
+            // above Continue Watching again. Each dismissible row keeps its
+            // 48dp dismiss (the pinned touch floor — the audit's 32dp visual
+            // ideal yields to it); the sync row dismisses for this visit,
+            // the offline row is live state and clears itself when the phone
+            // is back online.
+            val firstBroadcast = state.broadcasts.firstOrNull()
+            val trialDays = state.trialDaysRemaining
+            val showStatusStrip = firstBroadcast != null ||
+                (state.isOffline && hasSaved) ||
+                trialDays != null ||
+                (showSyncLine && !syncDismissed)
+            if (showStatusStrip) {
+                item(key = "statusStrip") {
+                    when {
+                        firstBroadcast != null -> HomeStatusRow(
+                            text = firstBroadcast.title,
+                            onDismiss = { onDismissBroadcast(firstBroadcast.id) },
+                            dismissDescription = "Dismiss announcement",
+                        )
+                        state.isOffline && hasSaved -> OfflineBanner()
+                        trialDays != null -> TrialNoteLine(
+                            daysRemaining = trialDays,
+                            onDismiss = onDismissTrialNote,
+                        )
+                        showSyncLine && !syncDismissed -> HomeStatusRow(
+                            text = syncLine ?: "",
+                            onDismiss = { syncDismissed = true },
+                            dismissDescription = "Dismiss sync notice",
+                        )
+                    }
                     Spacer(Modifier.height(RaddTokens.Space.Xs))
                 }
             }
@@ -1195,9 +1194,11 @@ private fun HomeCastButton() {
  * P0-5: one status-strip row — a compact one-line message on the tonal
  * surface with an explicit 48dp dismiss (the pinned touch floor; the
  * audit's 32dp visual ideal yields to it, see the strip comment in
- * [HomeContent]). The strip shows each row only when its message matters:
- * a broadcast, a stale/offline sync line, the trial note (which rides the
- * existing [TrialNoteLine] instead), the offline banner (live state, no
+ * [HomeContent]). P1-5: [HomeContent] renders only the highest-priority
+ * row (broadcast > offline > trial > sync) — one row max, never stacked.
+ * The strip shows each row only when its message matters: a broadcast,
+ * a stale/offline sync line, the trial note (which rides the existing
+ * [TrialNoteLine] instead), the offline banner (live state, no
  * dismiss — it clears when the phone is back online).
  */
 @Composable
