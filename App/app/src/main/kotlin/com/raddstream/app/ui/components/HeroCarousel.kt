@@ -817,7 +817,7 @@ private fun HeroSlide(
                         modifier = Modifier.size(18.dp), // token-exempt: icon size, not spacing
                     )
                     Spacer(Modifier.width(RaddTokens.Space.Sm))
-                    Text(Brand.copy("hero_watch_now", "Watch Now"), fontWeight = FontWeight.Bold)
+                    Text(Brand.copy("hero_watch_now", "Watch now"), fontWeight = FontWeight.Bold)
                 }
                 // Session 121 (P-26): My List on the hero, so saving a title does not
                 // need a trip to its details page first. The filled heart says saved.
@@ -837,8 +837,8 @@ private fun HeroSlide(
                     // the two buttons share the width, so they share the
                     // padding that keeps their labels on one line.
                     contentPadding = PaddingValues(horizontal = RaddTokens.Space.Md, vertical = RaddTokens.Space.Sm),
-                    // CL-6: the button's visible text is "My List", the same words
-                    // as the nav tab — so it announces what the tap does instead:
+                    // CL-6: the button's visible text is "My list", so it announces
+                    // what the tap does instead:
                     // "Save to My List", or "Saved to My List" once saved.
                     modifier = Modifier
                         .weight(1f)
@@ -851,7 +851,7 @@ private fun HeroSlide(
                         modifier = Modifier.size(18.dp), // token-exempt: icon size, not spacing
                     )
                     Spacer(Modifier.width(RaddTokens.Space.Sm))
-                    Text(if (isFavorite) "Saved" else "My List", fontWeight = FontWeight.Bold)
+                    Text(if (isFavorite) "Saved" else "My list", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -1018,7 +1018,7 @@ internal fun shouldAdvanceHero(
  * the hero action row was 56dp tall — M3's large button on a banner that
  * already eats 320–400dp of the first viewport. 40dp was M3's small button
  * and the size Netflix's Play button ships at; the review's 48dp touch
- * floor wins for these two — Watch Now and My List are the hero's only
+ * floor wins for these two — Watch now and My list are the hero's only
  * controls, and My List had no contained 48dp target at all. Both buttons
  * still span most of the hero's width, so the target stays large. The
  * skeleton placeholder reads this same constant.
