@@ -165,7 +165,7 @@
     <string name="detail_sheet_vip_only">VIP only</string>
     <string name="detail_sheet_no_working_link">No working link</string>
     <string name="detail_download_episode">Download an episode</string>
-    <string name="detail_download_episode_hint">Tap an episode to save it now. Tick more than one to save them all at the same quality.</string>
+    <string name="detail_download_episode_hint">Tap episodes to save them at the same quality.</string>
     <string name="detail_size_unknown">Size unknown</string>
     <string name="detail_latest_episode">Latest episode</string>
     <!-- DT-3 (round 2, Nov 2026): the episode-row / season-tile legend —
@@ -220,12 +220,12 @@
     <string name="player_playing">Playing</string>
     <string name="player_plays_in_this_app">plays in this app</string>
     <string name="player_plays_in_any_app">plays in any app</string>
-    <string name="player_quality_note">Switching keeps your position. Auto follows your connection and may move between these on its own.</string>
+    <string name="player_quality_note">Auto follows your connection.</string>
     <string name="player_sleep_fading">Fading out — %1$s left</string>
     <string name="player_sleep_minutes">%1$d minutes</string>
     <string name="player_sleep_at_end">At end of this video</string>
     <string name="player_off_label">Off</string>
-    <string name="player_sleep_note">Volume fades down over the last %1$ds, then playback pauses (MX behaviour).</string>
+    <string name="player_sleep_note">Volume fades down over the last %1$ds, then playback pauses.</string>
     <string name="player_external_subtitle">external subtitle</string>
     <string name="player_subtitles_title">Subtitles</string>
     <!-- Hate-audit H25: one sheet for both — the audio-language switch lives
@@ -249,7 +249,7 @@
     <string name="player_subtitle_colour">Colour</string>
     <string name="player_subtitle_load">Load external subtitle file (SRT / VTT / ASS)…</string>
     <string name="player_subtitle_remove">Remove “%1$s”</string>
-    <string name="player_subtitle_sync_note">Subtitle sync applies to this overlay and to every embedded track. Size, position and colour styling still come from the controls above.</string>
+    <string name="player_subtitle_sync_note">Sync applies to this overlay and every embedded track.</string>
     <string name="player_subtitle_font">Font</string>
     <string name="player_subtitle_edge">Edge</string>
     <string name="player_subtitle_embedded_styles">Use the file’s own subtitle styling</string>
@@ -263,7 +263,7 @@
     <string name="player_preferred_audio">Preferring %1$s — set on the Settings screen.</string>
     <string name="player_stereo_on">Stereo-only selection: ON</string>
     <string name="player_stereo_off">Stereo-only selection: off</string>
-    <string name="player_stereo_note">Note: this restricts track SELECTION to ≤2-channel tracks; 1.3.1 cannot downmix 5.1/Atmos to stereo.</string>
+    <string name="player_stereo_note">Stereo only — some tracks won't play in 5.1.</string>
     <string name="player_audio_only_on">Audio-only mode: ON (screen decoder off)</string>
     <string name="player_audio_only_off">Audio-only mode: off</string>
     <!-- MX idea #8 — equalizer (More sheet → EQ sheet). Every value is
@@ -293,7 +293,6 @@
     <string name="player_failover_log">Failover log</string>
     <string name="player_switch_keeps_place">Switching keeps your place.</string>
     <string name="player_failover_record">#%1$d %2$s: %3$s → %4$s</string>
-    <string name="player_failover_policy">Policy: retry same ×%1$d, backoff %2$d ms, then next rank, max %3$d ranks.</string>
     <string name="player_play_from_row">Play from a position…</string>
     <string name="player_change_quality">Change quality (%1$s)</string>
     <string name="player_calibrate_row">Mark current position as an episode start…</string>
@@ -307,7 +306,7 @@
          The screen that shows a hoster's own page for a link the server calls a page and not a
          file. Copy the viewer reads while watching somebody else's player. -->
     <string name="embed_loading">Opening the page…</string>
-    <string name="embed_hosted_notice">This source is hosted by the provider, in their player and under their conditions. We show their page; we do not take their video out of it.</string>
+    <string name="embed_hosted_notice">Hosted by the provider — their player, their rules.</string>
     <string name="embed_blocked_scheme">This page can\'t be opened here. Try another version.</string>
     <string name="embed_retry">Try again</string>
     <string name="embed_open_in_browser">Open in browser</string>
@@ -360,7 +359,7 @@
     <string name="local_library_back">Back</string>
     <string name="local_library_refresh">Refresh</string>
     <string name="local_library_permission_title">Allow access to your videos</string>
-    <string name="local_library_permission_message">Radd lists the videos on this phone, grouped by folder, so you can play them here. Nothing leaves the phone.</string>
+    <string name="local_library_permission_message">Your videos, grouped by folder. Nothing leaves this phone.</string>
     <string name="local_library_permission_allow">Allow access</string>
     <string name="local_library_open_settings">Open settings</string>
     <string name="local_library_load_failed">Couldn\'t list your videos.</string>

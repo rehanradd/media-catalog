@@ -338,7 +338,7 @@ fun HeroCarousel(
                             ),
                     ) {
                         Icon(
-                            painter = painterResource(if (paused) R.drawable.ic_player_play else R.drawable.ic_player_pause),
+                            painter = painterResource(if (paused) R.drawable.ic_player_play_filled else R.drawable.ic_player_pause),
                             contentDescription = if (paused) {
                                 "Resume banner rotation"
                             } else {
@@ -820,7 +820,7 @@ private fun HeroSlide(
                     modifier = Modifier.weight(2f).heightIn(min = HERO_BUTTON_HEIGHT_DP.dp).pressScale(watchNowSource),
                 ) {
                     Icon(
-                        painter = painterResource(R.drawable.ic_player_play),
+                        painter = painterResource(R.drawable.ic_player_play_filled),
                         contentDescription = null,
                         modifier = Modifier.size(18.dp), // token-exempt: icon size, not spacing
                     )

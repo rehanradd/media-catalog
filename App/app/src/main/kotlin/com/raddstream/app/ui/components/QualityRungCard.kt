@@ -244,7 +244,7 @@ private fun RungRow(
             if (option.playsHere) {
                 RungIconButton(onClick = onPlay) {
                     Icon(
-                        painter = painterResource(R.drawable.ic_player_play),
+                        painter = painterResource(R.drawable.ic_player_play_filled),
                         contentDescription = "Play in ${option.title}",
                         tint = MaterialTheme.colorScheme.primary,
                     )

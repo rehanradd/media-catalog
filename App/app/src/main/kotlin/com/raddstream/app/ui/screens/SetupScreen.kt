@@ -111,7 +111,7 @@ internal fun SetupScreenContent(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                painter = painterResource(R.drawable.ic_player_play),
+                painter = painterResource(R.drawable.ic_player_play_filled),
                 contentDescription = null,
                 modifier = Modifier.size(32.dp),
                 tint = MaterialTheme.colorScheme.primary,

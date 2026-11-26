@@ -378,8 +378,7 @@ fun DownloadsScreen(
                     // spare, whatever the message wraps to.
                     EmptyState(
                         title = "Nothing downloaded yet",
-                        message = "Use the Download button on a movie or episode. " +
-                            "Saved on this device. Play offline in RaddStream.",
+                        message = "Use the Download button on a movie or episode to watch offline.",
                         icon = {
                             Icon(
                                 painter = painterResource(R.drawable.ic_action_download),
@@ -827,7 +826,7 @@ internal fun DeviceDownloadRow(
                         .semantics { contentDescription = "Play $cleanTitle" },
                 ) {
                     Icon(
-                        painter = painterResource(R.drawable.ic_player_play),
+                        painter = painterResource(R.drawable.ic_player_play_filled),
                         contentDescription = null,
                     )
                 }
@@ -855,7 +854,7 @@ internal fun DeviceDownloadRow(
                         .semantics { contentDescription = "Resume $cleanTitle" },
                 ) {
                     Icon(
-                        painter = painterResource(R.drawable.ic_player_play),
+                        painter = painterResource(R.drawable.ic_player_play_filled),
                         contentDescription = null,
                     )
                 }
@@ -1192,7 +1191,7 @@ internal fun KeptItemRow(
                         .semantics { contentDescription = "Play $cleanTitle" },
                 ) {
                     Icon(
-                        painter = painterResource(R.drawable.ic_player_play),
+                        painter = painterResource(R.drawable.ic_player_play_filled),
                         contentDescription = null,
                     )
                 }
@@ -1654,7 +1653,7 @@ private fun downloadSwipeActions(row: DownloadRow, viewModel: DownloadsViewModel
                     DeviceDownloadState.DOWNLOADING -> R.drawable.ic_player_pause
                     DeviceDownloadState.PAUSED,
                     DeviceDownloadState.FAILED,
-                    DeviceDownloadState.PARTIAL -> R.drawable.ic_player_play
+                    DeviceDownloadState.PARTIAL -> R.drawable.ic_player_play_filled
                     else -> null
                 },
                 endToStart = { viewModel.removeDownload(item) },
@@ -1671,7 +1670,7 @@ private fun downloadSwipeActions(row: DownloadRow, viewModel: DownloadsViewModel
                 },
                 startIconRes = when (item.state) {
                     KeepState.DOWNLOADING -> R.drawable.ic_player_pause
-                    KeepState.PAUSED -> R.drawable.ic_player_play
+                    KeepState.PAUSED -> R.drawable.ic_player_play_filled
                     else -> null
                 },
                 endToStart = { viewModel.cancel(item) },

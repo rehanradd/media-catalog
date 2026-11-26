@@ -457,7 +457,7 @@ private fun RewardedVipSection(expiresAt: Long, onActivatePass: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(painterResource(R.drawable.ic_player_play), contentDescription = null, tint = RaddSignalGold)
+                Icon(painterResource(R.drawable.ic_player_play_filled), contentDescription = null, tint = RaddSignalGold)
                 Spacer(Modifier.width(10.dp))
                 Text(
                     if (active) "VIP pass active" else "Try VIP for 4 hours",
@@ -488,7 +488,7 @@ private fun RewardedVipSection(expiresAt: Long, onActivatePass: () -> Unit) {
                 )
                 Button(onClick = onActivatePass, modifier = Modifier.fillMaxWidth(), shape = RaddTokens.Shape.Pill) {
                     Icon(
-                        painterResource(R.drawable.ic_player_play),
+                        painterResource(R.drawable.ic_player_play_filled),
                         contentDescription = null,
                         modifier = Modifier.size(18.dp),
                     )

@@ -632,7 +632,7 @@ fun PosterCard(
                         ),
                 ) {
                     Icon(
-                        painter = painterResource(R.drawable.ic_player_play),
+                        painter = painterResource(R.drawable.ic_player_play_filled),
                         contentDescription = "Play $title",
                         tint = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.size(24.dp), // token-exempt: icon size, not spacing

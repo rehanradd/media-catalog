@@ -345,7 +345,7 @@ internal fun AutoplayCountdownCard(
                             shape = RoundedCornerShape(28.dp),
                             modifier = Modifier.weight(1f).heightIn(min = MinControlTarget),
                         ) {
-                            Icon(painter = painterResource(R.drawable.ic_player_play), contentDescription = null, tint = Color.Black, modifier = Modifier.size(18.dp))
+                            Icon(painter = painterResource(R.drawable.ic_player_play_filled), contentDescription = null, tint = Color.Black, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
                             Text(
                                 stringResource(R.string.player_autoplay_play_now),

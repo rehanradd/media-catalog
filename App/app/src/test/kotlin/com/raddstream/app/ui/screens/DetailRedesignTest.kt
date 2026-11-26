@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -331,10 +332,12 @@ class DetailRedesignTest {
         // — swipe until it composes, open the overflow, then the
         // Similar item is on the page.
         for (i in 0 until 5) {
-            if (compose.onAllNodesWithText("More").fetchSemanticsNodes().isNotEmpty()) break
+            // P2-iconfirst (Nov 2026): the row is icon-only — the "More"
+            // label is gone, so the row is found by its spoken name.
+            if (compose.onAllNodesWithContentDescription("More actions").fetchSemanticsNodes().isNotEmpty()) break
             compose.onRoot().performTouchInput { swipeUp() }
         }
-        compose.onNodeWithText("More").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("More actions").performScrollTo().assertIsDisplayed()
         compose.onNodeWithContentDescription("More actions").performClick()
         compose.onNodeWithText("Similar").assertIsDisplayed()
     }

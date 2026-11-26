@@ -376,7 +376,7 @@ fun SeasonScreen(
                                     .heightIn(min = 48.dp),
                             ) {
                                 Icon(
-                                    painterResource(R.drawable.ic_player_play),
+                                    painterResource(R.drawable.ic_player_play_filled),
                                     contentDescription = null,
                                     modifier = Modifier.size(18.dp),
                                 )
@@ -803,7 +803,7 @@ internal fun SeasonPackRow(
                 modifier = Modifier.heightIn(min = 48.dp),
             ) {
                 Icon(
-                    painterResource(R.drawable.ic_player_play),
+                    painterResource(R.drawable.ic_player_play_filled),
                     contentDescription = null,
                     modifier = Modifier.size(18.dp),
                 )

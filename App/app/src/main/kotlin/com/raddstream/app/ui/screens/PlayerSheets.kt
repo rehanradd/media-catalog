@@ -1026,16 +1026,6 @@ internal fun PrintLogSheet(state: PlayerUiState, vm: PlayerViewModel) {
                     )
                 }
             }
-            if (debugVisible) {
-                state.bundle?.failurePolicy?.let { p ->
-                    Text(
-                        stringResource(R.string.player_failover_policy, p.retrySame, p.backoffMs, p.maxRanks),
-                        color = Color.White.copy(alpha = 0.5f),
-                        fontSize = brandSp(11),
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                    )
-                }
-            }
             Spacer(Modifier.height(6.dp))
             SheetRow(label = stringResource(R.string.player_play_from_row)) { vm.showPlayFromDialog() }
             if (state.canSwitchQuality) {

@@ -407,7 +407,7 @@ internal fun LocalVideoRow(file: LocalVideoFile, onPlay: () -> Unit) {
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    painterResource(R.drawable.ic_player_play),
+                    painterResource(R.drawable.ic_player_play_filled),
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(28.dp),
@@ -449,7 +449,7 @@ internal fun LocalVideoRow(file: LocalVideoFile, onPlay: () -> Unit) {
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    painterResource(R.drawable.ic_player_play),
+                    painterResource(R.drawable.ic_player_play_filled),
                     contentDescription = stringResource(R.string.local_library_play_video, file.title),
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(22.dp),

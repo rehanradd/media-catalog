@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertContentDescriptionEquals
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -27,18 +28,22 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
 /**
- * P1-7 (Nov 2026): the utility row is four visible icon + label actions
+ * P1-7 (Nov 2026): the utility row is four visible icon-only actions
  * — Save · Rate (thumbs) · Share · Download — plus a More overflow
- * [Follow, Report, Similar]. These tests pin what the page itself can
- * pin: only the four are visible with the menu closed, the overflow
- * carries the rest and fires each one, Download mirrors the primary
- * Download (same tap, same enabled state, same spoken name), every
- * target is 48dp, and the labels hold at 200% font scale. The two
- * Download actions share the visible verb and the spoken name (P2,
- * Nov 2026 — the hero pill shows the short verb only, the full cost
- * label as its TalkBack name), so the Download queries scope to one
- * action by tag (UtilityDownloadTag / PrimaryDownloadPillTag) instead
- * of by text or spoken name. The scroll to
+ * [Follow, Report, Similar]. P2-iconfirst (Nov 2026): the visible
+ * labels are gone — they shrank to an 8sp floor to fit — so these tests
+ * pin what the page itself can pin: only the four are visible with the
+ * menu closed, the overflow carries the rest and fires each one,
+ * Download mirrors the primary Download (same tap, same enabled state,
+ * same spoken name), every target is 48dp, and the row holds at 200%
+ * font scale with no label text anywhere. The visible verbs are gone,
+ * so the actions are found by their spoken names (contentDescription),
+ * and the one "Download" text left on the page is the hero pill's —
+ * the utility mirror carries no text of its own. The two Download
+ * actions share the spoken name (P2, Nov 2026 — the hero pill shows the
+ * short verb only, the full cost label as its TalkBack name), so the
+ * Download queries scope to one action by tag (UtilityDownloadTag /
+ * PrimaryDownloadPillTag) instead of by text or spoken name. The scroll to
  * the "More Like This" rail behind Similar is the dead end's
  * bringIntoView, owned by DetailContent — this file pins the tap reaches
  * it (the menu closes), not the scroll itself.
@@ -129,11 +134,21 @@ class DetailUtilityRowTest {
     @Test
     fun fourVisibleActionsOnly() {
         content()
-        compose.onNodeWithText("Save").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Rate").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Share").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag(UtilityDownloadTag).performScrollTo().assertIsDisplayed().assertTextEquals("Download")
-        compose.onNodeWithText("More").performScrollTo().assertIsDisplayed()
+        // Icon-only (P2-iconfirst): the actions are found by their
+        // spoken names, and no visible label text exists for them —
+        // the one "Download" text on the page is the hero pill's.
+        compose.onNodeWithContentDescription("Save to My List").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Like this title").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Dislike this title").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Share").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag(UtilityDownloadTag).performScrollTo().assertIsDisplayed()
+            .assertContentDescriptionEquals("Download · 720p · 1.3 GB")
+        compose.onNodeWithContentDescription("More actions").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Save").assertDoesNotExist()
+        compose.onNodeWithText("Rate").assertDoesNotExist()
+        compose.onNodeWithText("Share").assertDoesNotExist()
+        compose.onNodeWithText("More").assertDoesNotExist()
+        compose.onAllNodesWithText("Download").assertCountEquals(1)
         // The overflow's actions are not on the page while the menu is
         // closed — Report never at icon parity with Save, Similar never
         // a visible icon at all, Follow never a sixth identical icon.
@@ -266,17 +281,23 @@ class DetailUtilityRowTest {
     }
 
     @Test
-    fun labelsHoldAt200PercentFontScale() {
+    fun iconsHoldAt200PercentFontScale() {
         // The round-6 clip: at 1.3x "Similar" silently dropped out of
         // the old row. At 2.0x every visible action is still on the
-        // page, still labelled, still 48dp — the labels shrink instead
-        // of truncating, and TalkBack still hears the full names.
+        // page, still 48dp — and still icon-only, with no label text
+        // for the font scale to shrink or clip. TalkBack still hears
+        // the full names.
         content(fontScale = 2f)
-        compose.onNodeWithText("Save").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Rate").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Share").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag(UtilityDownloadTag).performScrollTo().assertIsDisplayed().assertTextEquals("Download")
-        compose.onNodeWithText("More").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Save to My List").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Like this title").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Share").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag(UtilityDownloadTag).performScrollTo().assertIsDisplayed()
+            .assertContentDescriptionEquals("Download · 720p · 1.3 GB")
+        compose.onNodeWithContentDescription("More actions").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Save").assertDoesNotExist()
+        compose.onNodeWithText("Rate").assertDoesNotExist()
+        compose.onNodeWithText("Share").assertDoesNotExist()
+        compose.onNodeWithText("More").assertDoesNotExist()
         compose.onNodeWithContentDescription("Save to My List")
             .performScrollTo()
             .assertHeightIsAtLeast(48.dp)
@@ -295,10 +316,11 @@ class DetailUtilityRowTest {
         // vote could name the work by — the Rate group is gone, and the
         // row is Save · Share · Download + More.
         content(postDetail = moviePost, isSeries = false, similarTitles = emptyList())
-        compose.onNodeWithText("Save").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Save to My List").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Rate").assertDoesNotExist()
-        compose.onNodeWithText("Share").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag(UtilityDownloadTag).performScrollTo().assertIsDisplayed().assertTextEquals("Download")
-        compose.onNodeWithText("More").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Share").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag(UtilityDownloadTag).performScrollTo().assertIsDisplayed()
+            .assertContentDescriptionEquals("Download · 720p · 1.3 GB")
+        compose.onNodeWithContentDescription("More actions").performScrollTo().assertIsDisplayed()
     }
 }

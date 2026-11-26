@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- P2-iconfirst (Nov 2026): the FILLED download glyph — the Material
+         download path as a fill (compare ic_action_download, the Feather
+         strokes). Used on the primary Download pill, where the glyph is
+         18dp inside a filled button; the idle download icons elsewhere
+         stay the stroke. -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M5,20h14v-2H5v2zM19,9h-4V3H9v6H5l7,7 7,-7z"/>
+</vector>

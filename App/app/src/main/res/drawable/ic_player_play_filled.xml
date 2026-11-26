@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- P2-iconfirst (Nov 2026): the FILLED play triangle — the Material
+         play_arrow path as a fill (compare ic_player_play, the same
+         triangle as a 2px stroke). Play is the primary action everywhere
+         it appears (hero pill, player centre, poster overlay, resume),
+         so it is solid; pause stays the stroke pair. -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M8,5v14l11,-7z"/>
+</vector>

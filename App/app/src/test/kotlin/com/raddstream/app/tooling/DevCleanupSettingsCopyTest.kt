@@ -317,7 +317,9 @@ class DevCleanupSettingsCopyTest {
         assertTrue(setupScreen.contains("Catalog address"))
         assertTrue(maintenanceScreen.contains("Use a different catalog"))
         assertTrue(profileScreen.contains("Last opened:"))
-        assertTrue(profileScreen.contains("an account is just an account code"))
+        // P2-iconfirst (Nov 2026): the signed-out paragraph is one line now —
+        // the account-code reassurance lives at sign-in, not on Profile.
+        assertTrue(profileScreen.contains("No account yet — sign in from Settings."))
         assertTrue(syncContract.contains("takeLast(4)"))
         // MX idea #8: the ceiling sentence is gone on purpose — the
         // software gain stage applies the excess now, so the caption

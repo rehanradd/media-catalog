@@ -23,7 +23,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -157,7 +156,7 @@ fun ProfileContent(
             }
             if (!state.signedIn) {
                 Text(
-                    "No account on this device yet. Sign in from Settings — an account is just an account code, no name or phone needed.",
+                    "No account yet — sign in from Settings.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -213,14 +212,11 @@ fun ProfileContent(
                             }
                         }
                         Text(
-                            "This app collects no name, phone, location, titles or searches. Your account is a code the catalog recognises, nothing more.",
+                            "Private by design — no name, phone or location, just a code.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                }
-                OutlinedButton(onClick = onOpenDashboard, modifier = Modifier.fillMaxWidth()) {
-                    Text("Open dashboard")
                 }
             }
             // P0-1: the hub rows — every secondary destination lives one
@@ -228,6 +224,13 @@ fun ProfileContent(
             // the quality gate is OFF (nothing to sell — same rule as
             // Settings' VIP card); Downloads and VIP hide in kids mode.
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (state.signedIn) {
+                    ProfileHubRow(
+                        label = "Open dashboard",
+                        iconRes = R.drawable.ic_action_dashboard,
+                        onClick = onOpenDashboard,
+                    )
+                }
                 if (state.paywallVisible && !kidsMode) {
                     ProfileHubRow(
                         label = "VIP",

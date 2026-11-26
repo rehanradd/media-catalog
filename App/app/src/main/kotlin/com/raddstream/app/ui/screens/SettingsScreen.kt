@@ -1051,7 +1051,7 @@ internal fun SettingsContent(
                         // sheet write"). The Languages screen is the one place these
                         // change (audit #50) — the chips that duplicated it are gone.
                         Text(
-                            "Audio, subtitles and subtitle size, in one place. Changes here apply everywhere, including the player.",
+                            "Audio, subtitles and subtitle size, in one place.",
                             style = settingsHelperStyle(),
                         )
                     }

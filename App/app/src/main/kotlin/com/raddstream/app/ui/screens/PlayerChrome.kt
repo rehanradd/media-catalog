@@ -433,7 +433,7 @@ internal fun CenterPlayPause(
                 PressHaptics(playSource)
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Icon(
-                        painter = if (state.isPlaying) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play),
+                        painter = if (state.isPlaying) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play_filled),
                         contentDescription = null,
                         tint = PlayerOnVideo.text,
                         modifier = Modifier.size(32.dp),
@@ -635,7 +635,7 @@ internal fun EdgeHud(
                 onClick = { if (state.isEnded) onPlayFromStart() else onTogglePlayPause() },
             ) {
                 Icon(
-                    painter = if (state.isPlaying && !state.isBuffering) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play),
+                    painter = if (state.isPlaying && !state.isBuffering) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play_filled),
                     contentDescription = null,
                     tint = PlayerOnVideo.text,
                     modifier = Modifier.size(20.dp),
@@ -994,7 +994,7 @@ internal fun BottomControls(
                         iconSize = 36.dp,
                     ) {
                         Icon(
-                            painter = if (state.isPlaying) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play),
+                            painter = if (state.isPlaying) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play_filled),
                             contentDescription = null,
                             tint = PlayerOnVideo.text,
                         )

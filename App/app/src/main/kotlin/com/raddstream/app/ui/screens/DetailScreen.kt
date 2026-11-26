@@ -100,7 +100,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
@@ -156,7 +155,6 @@ import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.navigation.DeepLinks
 import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.RaddMotion
-import com.raddstream.app.ui.theme.brandSp
 import com.raddstream.app.ui.theme.pressScale
 import com.raddstream.app.ui.theme.rememberArtworkAccent
 import com.raddstream.app.viewmodel.DetailNavigationEvent
@@ -2059,7 +2057,7 @@ private fun PrimaryActions(
                         overflow = TextOverflow.Ellipsis,
                     )
                 } else {
-                    Icon(painterResource(R.drawable.ic_player_play), contentDescription = null, modifier = Modifier.size(20.dp))
+                    Icon(painterResource(R.drawable.ic_player_play_filled), contentDescription = null, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = playLabel,
@@ -2083,7 +2081,7 @@ private fun PrimaryActions(
                 // tighter padding plus the short verb is what fits.
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
             ) {
-                Icon(painterResource(R.drawable.ic_action_download), contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(painterResource(R.drawable.ic_action_download_filled), contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(
                     text = downloadDisplayLabel,
@@ -2597,19 +2595,20 @@ private fun DetailQualityBatchRow(
 
 /**
  * P1-7 (Nov 2026): the compact borderless utility row, directly under
- * the synopsis — four visible icon + label actions, rest in overflow:
+ * the synopsis — four visible icon-only actions, rest in overflow:
  * Save · Rate (thumbs) · Share · Download + More [Follow, Report,
- * Similar]. The old row carried six or seven peer actions at icon
- * parity; at 1.3x font scale "Similar" silently dropped out of it
- * (detailLargeFont golden, round 6) — a clip, not a fit. Report is trust
- * & safety, never a peer of Save; Similar is navigation to the "More Like
- * This" rail below, not a utility; Follow is series-critical but shares
- * Save's mental model, so it lives in the menu as a labelled row, not as
- * a sixth identical icon. Every visible target is 48dp; the labels shrink
- * in 15% steps (the bottom bar's pattern) instead of truncating at a
- * large font scale. Download mirrors the primary Download above — the
- * same tap, same enabled state, same spoken name — so the row and the
- * button can never disagree about this title.
+ * Similar]. P2-iconfirst (Nov 2026): the visible labels are gone — they
+ * shrank to an 8sp floor to fit and were the tiniest text in the app;
+ * every action keeps its full spoken name for TalkBack. The old row
+ * carried six or seven peer actions at icon parity; at 1.3x font scale
+ * "Similar" silently dropped out of it (detailLargeFont golden, round 6)
+ * — a clip, not a fit. Report is trust & safety, never a peer of Save;
+ * Similar is navigation to the "More Like This" rail below, not a
+ * utility; Follow is series-critical but shares Save's mental model, so
+ * it lives in the menu as a labelled row, not as a sixth identical icon.
+ * Every visible target is 48dp. Download mirrors the primary Download
+ * above — the same tap, same enabled state, same spoken name — so the
+ * row and the button can never disagree about this title.
  */
 @Composable
 private fun DetailUtilityRow(
@@ -2642,7 +2641,6 @@ private fun DetailUtilityRow(
     ) {
         UtilityAction(
             icon = if (isFavorite) painterResource(R.drawable.ic_action_favorite_filled) else painterResource(R.drawable.ic_action_favorite_border),
-            label = if (isFavorite) "Saved" else "Save",
             contentDescription = favoriteActionLabel(isFavorite),
             tint = if (isFavorite) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
             onClick = onToggleFavorite,
@@ -2662,13 +2660,12 @@ private fun DetailUtilityRow(
         }
         UtilityAction(
             icon = painterResource(R.drawable.ic_action_share),
-            label = "Share",
+            contentDescription = "Share",
             onClick = onShare,
             modifier = Modifier.weight(1f),
         )
         UtilityAction(
             icon = painterResource(R.drawable.ic_action_download),
-            label = "Download",
             contentDescription = downloadLabel,
             onClick = onDownloadPrimary,
             enabled = downloadEnabled,
@@ -2682,7 +2679,6 @@ private fun DetailUtilityRow(
         ) {
             UtilityAction(
                 icon = painterResource(R.drawable.ic_player_more),
-                label = "More",
                 contentDescription = "More actions",
                 onClick = { showOverflow = true },
                 modifier = Modifier.fillMaxWidth(),
@@ -2754,9 +2750,10 @@ private fun DetailUtilityRow(
 
 /**
  * P1-7: the "Rate" group — the thumbs are one of the four visible
- * actions, so the pair shares one label and one slot. Each thumb is
- * still its own 48dp target; the slot is twice a normal weight so the
- * pair fits without squeezing the other actions.
+ * actions, so the pair shares one slot (no label — P2-iconfirst, the
+ * row is icon-only). Each thumb is still its own 48dp target; the slot
+ * is twice a normal weight so the pair fits without squeezing the other
+ * actions.
  */
 @Composable
 private fun UtilityRateAction(
@@ -2801,56 +2798,21 @@ private fun UtilityRateAction(
                 )
             }
         }
-        Spacer(Modifier.height(2.dp))
-        UtilityLabel("Rate")
     }
 }
 
-/**
- * P1-7: a utility-row label that shrinks to fit its slot — the bottom
- * bar's pattern (15% steps, brandSp(8) floor, ellipsis as the last
- * resort), so a large font scale shrinks "Download" instead of
- * truncating it. The state is keyed on the label and the font scale, so
- * shrinking back down restores the design size. The floor is ~70% of the
- * 11sp base, the same ratio as the bar's 10sp floor on its 14sp label.
- */
-@Composable
-private fun UtilityLabel(text: String) {
-    val fontScale = LocalDensity.current.fontScale
-    val labelStyle = MaterialTheme.typography.labelSmall
-    var labelFontSize by remember(text, fontScale) { mutableStateOf(labelStyle.fontSize) }
-    Text(
-        text = text,
-        style = labelStyle,
-        fontSize = labelFontSize,
-        maxLines = 1,
-        softWrap = false,
-        overflow = TextOverflow.Ellipsis,
-        onTextLayout = { result ->
-            if (result.lineCount > 0 && result.isLineEllipsized(0) &&
-                labelFontSize > UtilityLabelMinFontSize
-            ) {
-                val shrunk = labelFontSize * 0.85f
-                labelFontSize = if (shrunk < UtilityLabelMinFontSize) {
-                    UtilityLabelMinFontSize
-                } else {
-                    shrunk
-                }
-            }
-        },
-    )
-}
-
-private val UtilityLabelMinFontSize = brandSp(8)
-
-/** One borderless icon + label action in the utility row. */
+/** One borderless icon-only action in the utility row (P2-iconfirst,
+ * Nov 2026): the visible label is gone — the labels shrank to an 8sp
+ * floor to fit their slots, so they were the tiniest text in the app.
+ * The spoken name carries the meaning: every call site passes the full
+ * contentDescription ("Save to My List", "Download · 720p · 1.3 GB"),
+ * so TalkBack hears exactly what the tap does. */
 @Composable
 private fun UtilityAction(
     icon: Painter,
-    label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    contentDescription: String? = null,
+    contentDescription: String,
     // Audit Detail #8: an explicit onSurfaceVariant tint — the old
     // Color.Unspecified left the vectors' baked-in black in place, so
     // the icons painted near-black on black while their labels read
@@ -2865,9 +2827,9 @@ private fun UtilityAction(
             .heightIn(min = 48.dp)
             .alpha(if (enabled) 1f else 0.38f)
             .clickable(enabled = enabled, onClick = onClick, role = Role.Button)
-            // The visible label is the short verb; the full phrase is the
-            // spoken name, so TalkBack still hears what the tap does.
-            .semantics { this.contentDescription = contentDescription ?: label },
+            // No visible label — the full phrase is the spoken name, so
+            // TalkBack still hears what the tap does.
+            .semantics { this.contentDescription = contentDescription },
     ) {
         Icon(
             painter = icon,
@@ -2875,8 +2837,6 @@ private fun UtilityAction(
             modifier = Modifier.size(24.dp),
             tint = tint,
         )
-        Spacer(Modifier.height(2.dp))
-        UtilityLabel(label)
     }
 }
 
@@ -3257,7 +3217,7 @@ private fun EpisodeCard(
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        painterResource(R.drawable.ic_action_check),
+                        painterResource(R.drawable.ic_action_check_filled),
                         contentDescription = null,
                         modifier = Modifier.size(14.dp),
                         tint = MaterialTheme.colorScheme.onPrimary,

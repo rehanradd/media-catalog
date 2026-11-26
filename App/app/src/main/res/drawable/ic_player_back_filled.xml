@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- P2-iconfirst (Nov 2026): the FILLED back arrow — the Material
+         arrow_back path as a fill (compare ic_player_back, the Feather
+         stroke). Kept for active/selected use; the top-bar back button
+         stays the stroke, per the filled = active rule. -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M20,11H7.83l5.59,-5.59L12,4l-8,8 8,8 1.41,-1.41L7.83,13H20v-2z"/>
+</vector>
