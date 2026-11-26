@@ -83,3 +83,7 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 ## Moved out (reference prose, verbatim)
 
 - ✍️ Incoming Agent Checklist → `../docs/SPEC_INCOMING_AGENT_CHECKLIST.md` (294 lines) — the onboarding procedure, unchanged
+
+## 2026-11-26 22:23 PKT - P2 cast BACKEND - GET /api/v1/person
+- TMDb person lookup: photo/bio/birthday/known_for; 24 h cache; 404/503. Tests: test_person_endpoint.py (19, offline). CI 224.
+- nginx location beside facets; WARP required for TMDb from Oracle VM. U2 49/50, U3 5/5. Detail: cast-backend-patch/.

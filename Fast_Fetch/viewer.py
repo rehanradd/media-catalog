@@ -51,6 +51,7 @@ import title_clean
 import mood_search
 import works
 import usage_stats
+import warp_proxy
 
 if sys.platform.startswith("win"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -2981,6 +2982,7 @@ PUBLIC_LANDING_HTML = """<!DOCTYPE html>
       <li><code>GET /api/v1/posts?q=&amp;type=&amp;page=&amp;limit=&amp;cursor=</code></li>
       <li><code>GET /api/v1/search/by-media?q=&amp;duration_s=&amp;resolution=&amp;language=</code></li>
       <li><code>GET /api/v1/posts/{id}</code></li>
+      <li><code>GET /api/v1/person?name=…</code></li>
       <li><code>GET /api/v1/stream?id=&amp;redirect=1</code></li>
       <li><code>GET /api/v1/stats</code></li>
     </ul>
@@ -6185,6 +6187,207 @@ def _facets_rebuild_async() -> bool:
     return True
 
 
+#: GET /api/v1/person — TMDb person lookup (cast photos + bios).
+#:
+#: Site metadata is primary; TMDb is the fallback for a photo and a bio
+#: only. A name with no TMDb match answers "not found" — never a wrong
+#: photo (the app shows an initials circle instead). The key never leaves
+#: the server: bearer token preferred, API key as a query param only when
+#: no bearer is configured, exactly like `metadata_backfill.TmdbSource`.
+#:
+#: Measured 2026-11-26 on the Oracle VM: direct egress to
+#: api.themoviedb.org gets its TLS handshake reset by the peer (14/50
+#: calls through, the rest transport errors), while the same calls through
+#: the WARP proxy (`RADD_WARP_PROXY`, already set on the live service)
+#: answer 200 every time — so the fetch goes through
+#: `warp_proxy.urllib_proxy_handler()` whenever it is configured, and
+#: direct only when it is not. image.tmdb.org (the photo CDN) answers
+#: direct with no trouble.
+TMDB_PERSON_API_ROOT = "https://api.themoviedb.org/3"
+TMDB_PERSON_IMAGE_ROOT = "https://image.tmdb.org/t/p/w185"
+#: A photo/bio barely moves, and a repeat tap on the same cast member is
+#: the common case — cache hits and misses alike for a day, bounded.
+TMDB_PERSON_CACHE_TTL_SECONDS = 86400.0
+TMDB_PERSON_CACHE_MAX_ENTRIES = 512
+_PERSON_CACHE: dict = {}
+_PERSON_CACHE_LOCK = threading.Lock()
+
+
+class PersonUnavailable(Exception):
+    """TMDb could not be reached, or no TMDb credential is configured."""
+
+
+def _tmdb_person_headers() -> dict:
+    """Bearer auth when configured, else no auth header (the API key, if
+    any, rides the query string — see `_tmdb_person_url`)."""
+    bearer = os.environ.get("TMDB_BEARER_TOKEN", "").strip()
+    if bearer:
+        return {"Authorization": "Bearer " + bearer}
+    return {}
+
+
+def _tmdb_person_url(path: str, **params) -> str:
+    """TMDb URL for `path`; the API key is a query param only when no
+    bearer token is configured (same rule as `metadata_backfill`)."""
+    params = {k: v for k, v in params.items() if v is not None}
+    if not os.environ.get("TMDB_BEARER_TOKEN", "").strip():
+        key = os.environ.get("TMDB_API_KEY", "").strip()
+        if key:
+            params["api_key"] = key
+    query = urllib.parse.urlencode(params)
+    return TMDB_PERSON_API_ROOT + path + ("?" + query if query else "")
+
+
+def _tmdb_person_http_get(url: str, timeout: float = 10.0):
+    """One TMDb GET, parsed. Returns the dict, or None on any failure
+    (transport error, non-200, unparsable body) — the caller decides
+    whether None means "unavailable" (this returned None) or "no match"
+    (this returned a dict with empty results)."""
+    handler = warp_proxy.urllib_proxy_handler()
+    opener = (urllib.request.build_opener(handler) if handler is not None
+              else urllib.request.build_opener())
+    request = urllib.request.Request(url, headers=_tmdb_person_headers())
+    try:
+        with opener.open(request,
+                         timeout=warp_proxy.capped_timeout(timeout)) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _tmdb_person_best_match(results: list, query: str):
+    """The result to show: an exact name match (case-insensitive) wins
+    over TMDb's first result, because a scraped string like "Ajay" must
+    not silently become whichever namesake TMDb ranks first — and when
+    nothing matches exactly, TMDb's own ranking is the best we have."""
+    if not results:
+        return None
+    folded = query.casefold()
+    for result in results:
+        if (isinstance(result, dict)
+                and str(result.get("name") or "").casefold() == folded):
+            return result
+    return results[0] if isinstance(results[0], dict) else None
+
+
+def _tmdb_person_known_for(detail: dict, limit: int = 8) -> list:
+    """`known_for` from `combined_credits.cast`, most popular first:
+    `[{"title", "media_type", "year"}]`. A credit without a title is
+    skipped, never invented."""
+    credits = (detail.get("combined_credits") or {}).get("cast") or []
+    scored = []
+    for credit in credits:
+        if not isinstance(credit, dict):
+            continue
+        title = str(credit.get("title") or credit.get("name") or "").strip()
+        if not title:
+            continue
+        media_type = credit.get("media_type") or ""
+        date = str(credit.get("release_date")
+                   or credit.get("first_air_date") or "")
+        year = None
+        if len(date) >= 4 and date[:4].isdigit():
+            year = int(date[:4])
+        try:
+            popularity = float(credit.get("popularity") or 0)
+        except (TypeError, ValueError):
+            popularity = 0.0
+        scored.append((popularity, {"title": title,
+                                    "media_type": media_type,
+                                    "year": year}))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [item[1] for item in scored[:limit]]
+
+
+def _person_cache_get(key: str):
+    entry = _PERSON_CACHE.get(key)
+    if entry is None:
+        return None, False
+    expires_at, value = entry
+    if time.monotonic() >= expires_at:
+        return None, False
+    return value, True
+
+
+def _person_cache_put(key: str, value) -> None:
+    if len(_PERSON_CACHE) >= TMDB_PERSON_CACHE_MAX_ENTRIES:
+        oldest = min(_PERSON_CACHE, key=lambda k: _PERSON_CACHE[k][0])
+        del _PERSON_CACHE[oldest]
+    _PERSON_CACHE[key] = (time.monotonic()
+                          + TMDB_PERSON_CACHE_TTL_SECONDS, value)
+
+
+def api_v1_get_person(name: str, _http_get=None):
+    """One person for the cast sheet: `{tmdb_person_id, name, photo_url,
+    biography, birthday, place_of_birth, known_for}`.
+
+    `name` is a scraped cast string; the `name` returned is TMDb's
+    canonical one, and the app must search works by that, not by the raw
+    string (a short query is noisy: `q=Dina` matches 601 works). Returns
+    None when TMDb knows nobody by that name — the app shows an initials
+    circle. Raises `PersonUnavailable` when TMDb cannot be reached or no
+    credential is configured, so the route can answer 503 instead of
+    dressing an outage up as "no such person".
+
+    `_http_get` is the seam the tests drive: a callable taking a URL and
+    returning the parsed TMDb dict (or None on failure). The live path
+    uses `_tmdb_person_http_get`.
+    """
+    query = (name or "").strip()
+    if not query:
+        return None
+    key = query.casefold()
+    http_get = _http_get or _tmdb_person_http_get
+    with _PERSON_CACHE_LOCK:
+        cached, found = _person_cache_get(key)
+        if found:
+            return cached
+    if _http_get is None and not (
+            os.environ.get("TMDB_BEARER_TOKEN", "").strip()
+            or os.environ.get("TMDB_API_KEY", "").strip()):
+        # No credential at all: fail without spending a request, and
+        # without caching — an operator may add the key and retry.
+        raise PersonUnavailable("no TMDB credential configured")
+    search = http_get(_tmdb_person_url("/search/person", query=query))
+    if search is None:
+        raise PersonUnavailable("TMDb search unreachable")
+    best = _tmdb_person_best_match(search.get("results") or [], query)
+    if best is None:
+        with _PERSON_CACHE_LOCK:
+            _person_cache_put(key, None)
+        return None
+    person_id = best.get("id")
+    detail = None
+    if isinstance(person_id, int):
+        detail = http_get(_tmdb_person_url(
+            "/person/%d" % person_id,
+            append_to_response="combined_credits"))
+    if not isinstance(detail, dict):
+        # The search hit but the detail did not come back: serve the
+        # search row rather than failing the tap outright. A photo from
+        # the search row is still TMDb's own photo for this person.
+        detail = best
+    profile_path = detail.get("profile_path") or best.get("profile_path") or ""
+    biography = str(detail.get("biography") or "")
+    # TMDb bios can open with a zero-width space (measured on Akshay
+    # Kumar, 2026-11-26): strip it, or the app renders a blank first line.
+    biography = biography.strip(" \t\r\n\u200b\ufeff").strip()
+    person = {
+        "tmdb_person_id": (detail.get("id") if isinstance(detail.get("id"), int)
+                           else person_id),
+        "name": detail.get("name") or best.get("name") or query,
+        "photo_url": (TMDB_PERSON_IMAGE_ROOT + profile_path
+                      if profile_path else None),
+        "biography": biography,
+        "birthday": detail.get("birthday") or None,
+        "place_of_birth": detail.get("place_of_birth") or None,
+        "known_for": _tmdb_person_known_for(detail),
+    }
+    with _PERSON_CACHE_LOCK:
+        _person_cache_put(key, person)
+    return person
+
 def api_v1_get_facets() -> dict:
     """GET /api/v1/facets — the browse jump-off chips, served from the
     cache above. A deep copy is returned so no caller can mutate the
@@ -8402,6 +8605,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
                                status=503)
                 return
             self.send_json(data)
+
+        elif path == "/api/v1/person":
+            # Cast photos + bios (see api_v1_get_person): TMDb is the
+            # fallback for a photo/bio only — site metadata stays primary,
+            # and a name with no TMDb match answers 404, never a wrong
+            # photo. The browse bucket covers it (`_bucket_for` falls
+            # through); nginx needs a `location = /api/v1/person` line or
+            # the public edge 403s it like any unlisted /api/v1 route.
+            raw_name = query_params.get("name", [""])[0]
+            if not raw_name.strip():
+                self.send_json({"success": False, "error": "missing name"},
+                               status=400)
+                return
+            try:
+                person = api_v1_get_person(raw_name)
+            except PersonUnavailable:
+                self.send_json({"success": False,
+                                "error": "person_unavailable"}, status=503)
+                return
+            if person is None:
+                self.send_json({"success": False,
+                                "error": "person_not_found"}, status=404)
+                return
+            self.send_json({"success": True, "data": person})
 
         elif path == "/api/v1/search/by-media":
             def number(name):

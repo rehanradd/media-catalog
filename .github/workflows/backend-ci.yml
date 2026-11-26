@@ -54,6 +54,10 @@ name: 🐍 Backend CI — Stdlib Python Tests
 #       window, the no-SQL floor on short tokens, EXPLAIN QUERY PLAN assertions)
 #     - Fast_Fetch/test_home_rails.py        (Home rails: /api/v1/trending,
 #       /api/v1/related, /api/v1/facets, and the genre/language filters)
+#     - Fast_Fetch/test_person_endpoint.py   (Cast lookup: GET /api/v1/person
+#       — TMDb person search + detail behind an injected fake HTTP layer,
+#       and the route's 400/404/503/200 mapping over a real loopback
+#       server. Offline, stdlib, no network, no key.)
 #     - Fast_Fetch/test_works_api.py         (the work-centric API: /api/v1/works
 #       list/detail — read-time grouping of posts into one work per
 #       movie/series, season/episode normalisation, the episode guide
@@ -817,6 +821,13 @@ jobs:
       # ones that matter: a chip must never promise a count its tap cannot keep.
       - name: 🧪 test_home_rails.py
         run: python3 -S Fast_Fetch/test_home_rails.py
+
+      # Cast photos + bios (P2, 2026-11-26): GET /api/v1/person — TMDb
+      # person search + detail behind an injectable fake HTTP layer, the
+      # route's 400/404/503/200 mapping over a real loopback server.
+      # Offline, stdlib, fake TMDb + temp fixtures, no network, no key.
+      - name: 🧪 test_person_endpoint.py
+        run: python3 -S Fast_Fetch/test_person_endpoint.py
 
       # The index migration, against a throwaway fixture catalog in a temp directory.
       # It never opens a real database; the target path is required on the command line.
