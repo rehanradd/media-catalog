@@ -4,6 +4,8 @@ import androidx.compose.ui.graphics.Color
 import com.raddstream.app.ui.theme.RaddChipBorderSoft
 import com.raddstream.app.ui.theme.RaddInk850
 import com.raddstream.app.ui.theme.RaddInk950
+import com.raddstream.app.ui.theme.RaddPaperContainer
+import com.raddstream.app.ui.theme.RaddPaperDay
 import com.raddstream.app.ui.theme.contrastRatio
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -28,11 +30,23 @@ class SettingsAuditFixesTest {
      */
     @Test
     fun unselectedChipBorderClearsComponentBarOnGroupSurface() {
-        val ratio = contrastRatio(RaddChipBorderSoft, RaddInk850)
-        assertTrue(
-            "unselected chip border is only $ratio:1 vs the group surface, under the M3 3:1 component bar",
-            ratio >= 3f,
+        // P1-14: the groups are flat now — the border sits on the group
+        // surfaceContainer and the bare background, not a card fill.
+        // P2-10: pinned in both schemes — dark 4.10:1/4.49:1, light
+        // 3.55:1/3.91:1, all clear of the M3 3:1 component bar.
+        val fills = mapOf(
+            "dark surfaceContainer" to RaddInk850,
+            "dark background" to RaddInk950,
+            "light surfaceContainer" to RaddPaperContainer,
+            "light background" to RaddPaperDay,
         )
+        for ((name, fill) in fills) {
+            val ratio = contrastRatio(RaddChipBorderSoft, fill)
+            assertTrue(
+                "unselected chip border is only $ratio:1 vs $name, under the M3 3:1 component bar",
+                ratio >= 3f,
+            )
+        }
     }
 
     @Test

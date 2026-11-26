@@ -33,8 +33,12 @@ import com.raddstream.app.player.SubtitleColor
 //  Token naming: `Radd*` values are BRAND ROLES (raw paint).
 //  MaterialTheme.colorScheme maps them to M3 ROLES in Theme.kt — screens should
 //  prefer `MaterialTheme.colorScheme.<role>` over importing these vals directly.
-//  The `Legacy alias` section at the bottom keeps every name that existed in
-//  Color.kt v1 so files outside ui/theme keep compiling while they migrate.
+//  P2-10 (26 Nov 2026): the legacy-alias block that used to sit at the bottom
+//  of this file is deleted. It kept every v1 name so files outside ui/theme
+//  kept compiling while they migrated — at deletion time zero files anywhere
+//  in the app imported one, so the dark-pinning mechanism it carried is gone
+//  with it. A screen that needs a fixed paint now documents why (over-video
+//  chrome, over-artwork badges) instead of aliasing a dark ramp value.
 // ═════════════════════════════════════════════════════════════════════════════
 
 // ── 0. BRAND HEX PARSER (single source: brand.properties -> BuildConfig) ─────
@@ -216,13 +220,21 @@ val RaddWarning          = brandColor(BuildConfig.BRAND_COLORS_DARK_WARNING)
 
 // ── 11b. SETTINGS REVIEW (Gemini 5.5/10, 2026-11-16) ────────────────────────
 // The review's exact values, as named roles — raw paint lives here and
-// nowhere else (BrandDriftTest). Dark-screen values: the Settings screen
-// is reviewed in dark, and these greys are fixed, like the pill paints
-// above; a light scheme shows the same fixed greys.
-// P1-14 (B-39): the flat #1A1A1A card fill (RaddSettingsCard) is retired
-// with the inner cards — rows sit on the group's surfaceContainer now.
-/** Helper text: 13sp Regular, 1.4 line-height. 7.4:1 vs #1A1A1A. */
-val RaddSettingsHelper   = Color(0xFFA3ABA8)
+// nowhere else (BrandDriftTest). What remains of it is the unselected
+// chip border below: one mid-grey that clears the M3 3:1 component bar
+// on both schemes' group fills, so it is scheme-independent by measurement,
+// not by being dark-only.
+//
+// P2-10 (26 Nov 2026, light mode COMPLETED): the fixed Settings paints
+// that pinned the screen dark are gone — the helper text and unselected
+// chip label are scheme roles now (onSurfaceVariant in SettingsScreen.kt),
+// the card fill is gone entirely (P1-14 flat cards sit on the group's
+// surfaceContainer), and the legacy-alias block at the bottom of this
+// file was deleted with them (zero usages anywhere in the app at
+// deletion time). What stays fixed here is only the chip BORDER:
+// #7C7C7C clears the M3 3:1 component bar on surfaceContainer and
+// background in both schemes (dark 4.10:1/4.49:1, light 3.55:1/3.91:1),
+// so one border paint serves both schemes.
 /**
  * Unselected chip border. UI audit (Nov 2026, Settings #1): #333333 was
  * 1.38:1 vs the settings card — below the M3 3:1 component bar, so the
@@ -236,8 +248,6 @@ val RaddSettingsHelper   = Color(0xFFA3ABA8)
  * state's jade border + tint, so the selection keeps its emphasis.
  */
 val RaddChipBorderSoft   = Color(0xFF7C7C7C)
-/** Unselected chip label. 8.3:1 vs #1A1A1A. */
-val RaddChipLabelSoft    = Color(0xFFB3B3B3)
 
 // ── 12. DAYBREAK — light scheme neutrals + primaries ────────────────────────
 // Light mode is "the same water at noon": warm-cool paper, same jade current
@@ -399,25 +409,3 @@ val RaddPlayerSnackbarPlate = RaddInk800.copy(alpha = 0.9f)
 val RaddKeepStored         = RaddSuccess.copy(alpha = 0.4f)
 val RaddKeepBlocked        = RaddDanger.copy(alpha = 0.4f)
 val RaddKeepKeeping        = RaddTideIndigo.copy(alpha = 0.4f)
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  LEGACY ALIASES — do not use in new code.
-//  These keep files outside ui/theme compiling while screens migrate to
-//  MaterialTheme.colorScheme roles. When a screen still imports one of these,
-//  it is pinned to the DARK scheme; light mode needs colorScheme roles instead
-//  (tracked in docs/HANDOFF_apptime.md).
-// ═════════════════════════════════════════════════════════════════════════════
-val BackgroundDark      = RaddInk950
-val SurfaceDark         = RaddInk850
-val SurfaceVariantDark  = RaddInk800
-val OnBackground        = RaddPaperOnInk
-val OnSurface           = RaddPaperOnInk
-val OnSurfaceMuted      = RaddWhisperOnInk
-/** ⚠ Buttons that set containerColor = AccentPrimary must set their label to
- *  RaddDeepCurrentInk (7.4:1). White text on this paint is 2.2:1 — see
- *  docs/HANDOFF_apptime.md §"button labels". */
-val AccentPrimary       = RaddCurrent500
-val AccentSecondary     = RaddCoral400
-val AccentGold          = RaddSignalGold
-val AccentGreen         = RaddSuccess
-val AccentRed           = RaddDanger

@@ -138,8 +138,6 @@ import com.raddstream.app.ui.components.PinPadDialog
 import com.raddstream.app.ui.components.RaddDialogTitle
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.theme.RaddChipBorderSoft
-import com.raddstream.app.ui.theme.RaddChipLabelSoft
-import com.raddstream.app.ui.theme.RaddSettingsHelper
 import com.raddstream.app.ui.theme.RaddTextFamily
 import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.brandSp
@@ -179,11 +177,16 @@ internal const val DisabledButtonContentAlpha = 0.65f
  * titles — the section headings — are 16sp SemiBold (M3 titleMedium
  * 16/24); sub-section and in-card row titles — card titles,
  * [PreferenceRowTitle] — are 14sp Medium (M3 titleSmall 14/20).
- * Helpers stay 12sp Regular in #A3ABA8 at 16sp line-height (the M3
+ * Helpers stay 12sp Regular at 16sp line-height (the M3
  * bodySmall/labelSmall 12/16 pair). All three go through brandSp so
  * typography.scale still reaches them. A4-F7: 13sp/18sp → 12sp/16sp —
  * 13 and 18 are off the M3 scale (Type.kt).
  * Internal so the round-2 test can pin the scale directly.
+ * P2-10 (26 Nov 2026): the helper colour is the scheme's onSurfaceVariant,
+ * not a fixed paint — the old fixed #A3ABA8 measured 1.75:1 on the light
+ * card fill and was unreadable in light mode. onSurfaceVariant is 8.62:1
+ * dark / 5.79:1 light on surfaceContainer (P1-14 flat cards; was 6.54:1 /
+ * 5.09:1 on the retired surfaceContainerHighest card fill).
  */
 internal val settingsGroupTitleStyle = TextStyle(
     fontFamily = RaddTextFamily,
@@ -200,12 +203,14 @@ internal val settingsRowTitleStyle = TextStyle(
     lineHeight = brandSp(20),
 )
 
-internal val settingsHelperStyle = TextStyle(
+@Composable
+internal fun settingsHelperStyle(): TextStyle = TextStyle(
     fontFamily = RaddTextFamily,
     fontWeight = FontWeight.Normal,
     fontSize = brandSp(12),
     lineHeight = brandSp(16),
-    color = RaddSettingsHelper,
+    // P2-10: scheme role, not a fixed paint — see the comment above.
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
 )
 
 /**
@@ -638,7 +643,7 @@ internal fun SettingsContent(
                         } else {
                             "No account needed — everything works without one."
                         },
-                        style = settingsHelperStyle,
+                        style = settingsHelperStyle(),
                     )
                 }
                 if (showVip) {
@@ -683,7 +688,7 @@ internal fun SettingsContent(
                             "Support the catalog with a monthly or yearly membership. Pay through " +
                                 "JazzCash, EasyPaisa or Raast, then submit the transaction ID from " +
                                 "your confirmation.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
                         Button(onClick = onOpenVipUpgrade, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                         ) {
@@ -705,7 +710,7 @@ internal fun SettingsContent(
                                     "list, watch history and resume points stay on this device. Sign in only " +
                                     "if you want them on another device."
                             },
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
 
                         // Free launch: the Dashboard / Profile doors hide while the
@@ -731,7 +736,7 @@ internal fun SettingsContent(
                             if (daysLeft > 0) {
                                 Text(
                                     AccountCardCopy.TRIAL_HONESTY,
-                                    style = settingsHelperStyle,
+                                    style = settingsHelperStyle(),
                                 )
                             }
                         }
@@ -828,7 +833,7 @@ internal fun SettingsContent(
                                         "someone's number gets them nowhere. An account is only as strong as " +
                                         "its code, so keep the code somewhere safe, and sign out on any device " +
                                         "that is not yours.",
-                                    style = settingsHelperStyle,
+                                    style = settingsHelperStyle(),
                                 )
                                 AccountLabelField(
                                     value = account.labelInput,
@@ -910,7 +915,7 @@ internal fun SettingsContent(
                                     Text(
                                         "Account code on this device: ${account.keyHint}. The full code was shown once, when it " +
                                             "was created, and is not stored anywhere it can be shown again.",
-                                        style = settingsHelperStyle,
+                                        style = settingsHelperStyle(),
                                     )
                                 }
                                 AccountLabelField(
@@ -931,11 +936,11 @@ internal fun SettingsContent(
                                 )
                                 Text(
                                     AccountCardCopy.LINK_BONUS,
-                                    style = settingsHelperStyle,
+                                    style = settingsHelperStyle(),
                                 )
                                 Text(
                                     AccountCardCopy.LINK_PIN_MEANING,
-                                    style = settingsHelperStyle,
+                                    style = settingsHelperStyle(),
                                 )
                                 OutlinedButton(
                                     onClick = actions.onOpenLinkForm,
@@ -1043,7 +1048,7 @@ internal fun SettingsContent(
                         // change (audit #50) — the chips that duplicated it are gone.
                         Text(
                             "Audio, subtitles and subtitle size, in one place. Changes here apply everywhere, including the player.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
                     }
 
@@ -1062,7 +1067,7 @@ internal fun SettingsContent(
                         // 400px Medium — smaller posters, less data and battery.
                         Text(
                             "Battery saver loads smaller posters to save data and battery.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
 
                         Spacer(Modifier.height(12.dp))
@@ -1079,7 +1084,7 @@ internal fun SettingsContent(
                         // not by this one — this switch only ever governed the thumbnails.
                         Text(
                             "Only poster thumbnails use mobile data. Downloads follow the Wi-Fi-only switch.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
 
                         Spacer(Modifier.height(12.dp))
@@ -1094,7 +1099,7 @@ internal fun SettingsContent(
                         )
                         Text(
                             "On mobile data, titles start at 480p. You can still switch up in the player.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
 
                         Spacer(Modifier.height(12.dp))
@@ -1108,7 +1113,7 @@ internal fun SettingsContent(
                         // auto-deleted) — so the label says what it is, plainly.
                         Text(
                             "Only files the app fetched on its own. Downloads you kept are never removed.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
 
                     }
@@ -1143,7 +1148,7 @@ internal fun SettingsContent(
                             // app's own playback volume, riding on the device volume.
                             Text(
                                 "In-app playback volume, relative to your device volume.",
-                                style = settingsHelperStyle,
+                                style = settingsHelperStyle(),
                             )
                             // Review fix: the thumb at 100% used to sit ~16dp from
                             // the screen edge, inside the back-gesture zone. The
@@ -1173,18 +1178,18 @@ internal fun SettingsContent(
                         // enhancement processor.
                         Text(
                             AudioBoostUi.honestSummary(state.prefs.audioBoost, 1f),
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
                         if (state.prefs.audioBoost > 1f) {
                             Text(
                                 "Above 100% can distort the sound and may damage your hearing. Turn it down if the sound crackles.",
-                                style = settingsHelperStyle,
+                                style = settingsHelperStyle(),
                             )
                         }
 
                         Text(
                             "Saved on this device.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
                     }
                 }
@@ -1202,7 +1207,7 @@ internal fun SettingsContent(
                         )
                         Text(
                             "When this is off, an episode ends on the Next Episode button instead of moving on by itself.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
                         SwitchRow(
                             checked = state.prefs.autoplayPreviews,
@@ -1211,7 +1216,7 @@ internal fun SettingsContent(
                         )
                         Text(
                             "When this is off, the Home hero stays on the first poster until you swipe it.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
                         // P2-5 (B-23): auto-enter picture-in-picture, on by
                         // default for VOD. The system setting still wins at
@@ -1223,7 +1228,7 @@ internal fun SettingsContent(
                         )
                         Text(
                             "When this is on, leaving the player while a title is playing keeps it playing in a small window.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
 
                         Spacer(Modifier.height(12.dp))
@@ -1241,7 +1246,7 @@ internal fun SettingsContent(
                         // band exactly.
                         Text(
                             "The quality a new title starts on. Auto starts low and steps up as your connection allows; a fixed choice starts there and stays.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
 
                         Spacer(Modifier.height(12.dp))
@@ -1281,7 +1286,7 @@ internal fun SettingsContent(
                         }
                         Text(
                             "The same size the player sheet offers while watching; it applies from the next playback.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
                     }
 
@@ -1299,7 +1304,7 @@ internal fun SettingsContent(
                     SettingsCard(title = "Watch history") {
                         Text(
                             "Everything you watched on this phone, newest first — including titles you finished.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
                         OutlinedButton(
                             onClick = onOpenWatchHistory,
@@ -1323,7 +1328,7 @@ internal fun SettingsContent(
                         SettingsCard(title = "Offline") {
                             Text(
                                 "Manage downloaded titles, view storage use and expiry.",
-                                style = settingsHelperStyle,
+                                style = settingsHelperStyle(),
                             )
                             Spacer(Modifier.height(12.dp))
                             SwitchRow(
@@ -1333,7 +1338,7 @@ internal fun SettingsContent(
                             )
                             Text(
                                 "Downloads happen only when this phone is on Wi-Fi. Turn it off to download on mobile data too.",
-                                style = settingsHelperStyle,
+                                style = settingsHelperStyle(),
                             )
                             Spacer(Modifier.height(12.dp))
                             SwitchRow(
@@ -1343,7 +1348,7 @@ internal fun SettingsContent(
                             )
                             Text(
                                 "A finished download deletes itself to free space. A finished series episode deletes its own download too — only the episode you just watched, never the rest of the season.",
-                                style = settingsHelperStyle,
+                                style = settingsHelperStyle(),
                             )
                             Spacer(Modifier.height(12.dp))
                             SwitchRow(
@@ -1353,7 +1358,7 @@ internal fun SettingsContent(
                             )
                             Text(
                                 "When on, the next episode of a series you're watching downloads itself on Wi-Fi, so it's ready offline. Only one episode per series at a time, and only while this phone has free space.",
-                                style = settingsHelperStyle,
+                                style = settingsHelperStyle(),
                             )
                             Spacer(Modifier.height(12.dp))
                             // REA #5 (Netflix, Nov 2026): the Downloads For You
@@ -1376,7 +1381,7 @@ internal fun SettingsContent(
                             )
                             Text(
                                 "When the budget is full, the next episode waits — delete a downloaded episode or raise the limit.",
-                                style = settingsHelperStyle,
+                                style = settingsHelperStyle(),
                             )
                             Spacer(Modifier.height(12.dp))
                             OutlinedButton(onClick = onOpenDownloads, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
@@ -1401,11 +1406,11 @@ internal fun SettingsContent(
                             )
                             Text(
                                 lanShareStatusLine(state.lanShareStatus),
-                                style = settingsHelperStyle,
+                                style = settingsHelperStyle(),
                             )
                             Text(
                                 "Only devices on your Wi-Fi can see them.",
-                                style = settingsHelperStyle,
+                                style = settingsHelperStyle(),
                             )
                         }
                     }
@@ -1434,7 +1439,7 @@ internal fun SettingsContent(
                         // card says so instead of offering a control that does nothing.
                         Text(
                             "Jade is the app's colour — your wallpaper doesn't change it.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
                     }
                 }
@@ -1457,7 +1462,7 @@ internal fun SettingsContent(
                             // would sell a door that is not on this screen.
                             if (state.paywallVisible) "How to watch, download, and use VIP."
                             else "How to watch and download.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
                         OutlinedButton(
                             onClick = onOpenHelp,
@@ -1480,7 +1485,7 @@ internal fun SettingsContent(
                     ) {
                         Text(
                             "Report a problem, ask about a payment, or ask for a title to be taken down. No account needed.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
                         OutlinedButton(
                             onClick = actions.onOpenContactForm,
@@ -1524,7 +1529,7 @@ internal fun SettingsContent(
                         // a viewer can act on.
                         Text(
                             "What this app is, and what it is not.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
                         OutlinedButton(
                             onClick = actions.onOpenDisclaimer,
@@ -1554,7 +1559,7 @@ internal fun SettingsContent(
                             "Share anonymous totals with ${Brand.name}: plays, " +
                                 "playback failures, and crashes. Nothing that can " +
                                 "identify you or what you watch is ever sent.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
                         SwitchRow(
                             checked = state.analyticsConsent == true,
@@ -1573,7 +1578,7 @@ internal fun SettingsContent(
                                 "settings_about_body",
                                 "${Brand.shortName} finds movies and shows from public catalogs and plays them in one place.",
                             ),
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
                         // B5: the painted line is the version name only. The build
                         // number and theme name sit behind a tap on the line —
@@ -1591,7 +1596,7 @@ internal fun SettingsContent(
                         // sign-off, not a setting.
                         Text(
                             "Made for watching.",
-                            style = settingsHelperStyle,
+                            style = settingsHelperStyle(),
                         )
                         // Round 6: the build details expand/collapse with
                         // AnimatedVisibility — fade + vertical expand on the
@@ -1734,7 +1739,7 @@ internal fun SettingsContent(
                 SettingsCard(title = stringResource(R.string.resolve_test_title)) {
                     Text(
                         stringResource(R.string.resolve_test_intro),
-                        style = settingsHelperStyle,
+                        style = settingsHelperStyle(),
                     )
                     OutlinedButton(
                         onClick = onOpenResolveTest,
@@ -1778,7 +1783,7 @@ internal fun SettingsContent(
                 SettingsCard(title = "No results", animateSize = false) {
                     Text(
                         "Nothing in Settings matches \"$searchQuery\".",
-                        style = settingsHelperStyle,
+                        style = settingsHelperStyle(),
                     )
                     TextButton(
                         onClick = { onSearchQueryChange("") },
@@ -1855,7 +1860,7 @@ internal fun SettingsContent(
                             )
                             Text(
                                 state.loadError ?: "",
-                                style = settingsHelperStyle,
+                                style = settingsHelperStyle(),
                             )
                             Button(
                                 onClick = actions.onRetryLoad,
@@ -2081,11 +2086,11 @@ private fun KidsLockCard(viewModel: KidsLockViewModel) {
                 pinSet -> "Kids Lock is set up. Kids Mode is off — the full catalog shows."
                 else -> "Hand the phone to a child without handing them the catalog: Kids Mode shows only family-friendly titles and locks Settings, Downloads and purchases behind a 4-digit PIN."
             },
-            style = settingsHelperStyle,
+            style = settingsHelperStyle(),
         )
         Text(
             "If you forget your PIN, the only reset is clearing the app's data — write it down.",
-            style = settingsHelperStyle,
+            style = settingsHelperStyle(),
         )
         Spacer(Modifier.height(12.dp))
         if (!pinSet) {
@@ -2292,7 +2297,7 @@ internal fun AccountLabelField(
     )
     Text(
         "Only so you can tell your own account apart. This stays on the device and is never sent.",
-        style = settingsHelperStyle,
+        style = settingsHelperStyle(),
     )
     if (onSave != null) {
         TextButton(
@@ -2510,7 +2515,10 @@ private fun SettingsChip(
     FilterChip(
         colors = FilterChipDefaults.filterChipColors(
             containerColor = Color.Transparent,
-            labelColor = RaddChipLabelSoft,
+            // P2-10: scheme role, not a fixed paint — the old fixed #B3B3B3
+            // measured 1.57:1 on the light card fill (unreadable in light).
+            // onSurfaceVariant is 6.54:1 dark / 5.09:1 light on the card.
+            labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
             selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
             selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
         ),

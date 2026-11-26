@@ -72,10 +72,35 @@ private val RaddDarkScheme = darkColorScheme(
 )
 
 // ── LIGHT ("daybreak") — same water at noon ─────────────────────────────────
-// Currently under-leveraged: several screens hard-paint dark tokens via legacy
-// aliases (docs/HANDOFF_apptime.md tracks migration). Until migrated the app
-// stays dark-forced (see RaddStreamTheme default) so light mode never half-
-// applies and looks broken.
+// P2-10 DECISION (26 Nov 2026): light mode is COMPLETE, not dark-only.
+// Evidence counted at the decision (main 79527b28):
+//  * The scheme itself was already complete: every M3 role mapped here,
+//    22 [colors.light] keys in brand.properties, WCAG pairs verified
+//    inline (16.1:1 text, 5.8:1 primary), features.light_scheme=true,
+//    operator panel mode "light"/"system" resolved by resolveThemeDark
+//    and wired in MainActivity (status-bar icons flip with the theme).
+//  * The legacy aliases that used to pin screens dark had ZERO usages
+//    anywhere in the app (main + test) — that migration had already
+//    finished, so the audit's "several screens hard-paint via legacy
+//    aliases" premise was stale. The alias block is deleted (Color.kt).
+//  * Direct Radd* paints outside ui/theme: 118 lines, but all except
+//    Settings were correctly scheme-independent — player chrome over
+//    video (PlayerOnVideo / RaddHud* / RaddPlayer*, dark in both modes,
+//    as on YouTube/Netflix players) and badges/placeholders over
+//    artwork (documented dark-pill treatment, Color.kt §12). Home,
+//    Search, My List, Downloads, Detail, Live TV and Browse use
+//    colorScheme roles only (0 direct Radd* usages) and adapt for free.
+//  * The ONE screen that broke in light was Settings: helper #A3ABA8
+//    measured 1.75:1 on the light card fill, chip label #B3B3B3 1.57:1,
+//    the card default fill was a fixed dark #1A1A1A slab, and the
+//    Appearance header coral icon was 2.38:1 (below the 3:1 graphics
+//    bar). All four are scheme roles now (onSurfaceVariant /
+//    surfaceContainerHighest / primary); the fixed paints are deleted.
+//  * The app stays dark-first (scheme.default_dark=true): light is
+//    opt-in via the operator panel or the system setting, never the
+//    default. No user-facing theme picker was added — mode selection
+//    stays operator-controlled; that is a product decision for later,
+//    not a rendering gap.
 private val RaddLightScheme = lightColorScheme(
     primary = RaddCurrent700,               // 5.8:1 on paper; white label 6.2:1
     onPrimary = RaddLightOnPrimary,          // brand colors.light.on_primary

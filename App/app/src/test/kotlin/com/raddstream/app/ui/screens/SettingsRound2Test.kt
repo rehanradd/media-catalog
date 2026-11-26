@@ -19,15 +19,21 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.raddstream.app.data.RemoteFeatures
 import com.raddstream.app.ui.theme.RaddChipBorderSoft
 import com.raddstream.app.ui.theme.RaddCurrent500
+import com.raddstream.app.ui.theme.RaddCurrent700
 import com.raddstream.app.ui.theme.RaddInk850
 import com.raddstream.app.ui.theme.RaddInk950
+import com.raddstream.app.ui.theme.RaddMistOnInk
+import com.raddstream.app.ui.theme.RaddMistOnPaper
 import com.raddstream.app.ui.theme.RaddOnCurrentContainer
-import com.raddstream.app.ui.theme.RaddSettingsHelper
+import com.raddstream.app.ui.theme.RaddOnCurrentContainerLight
+import com.raddstream.app.ui.theme.RaddPaperContainer
+import com.raddstream.app.ui.theme.RaddPaperDay
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.ui.theme.contrastRatio
 import com.raddstream.app.viewmodel.SettingsUiState
@@ -196,8 +202,17 @@ class SettingsRound2Test {
         assertEquals(FontWeight.SemiBold, settingsGroupTitleStyle.fontWeight)
         assertEquals(14.sp, settingsRowTitleStyle.fontSize)
         assertEquals(FontWeight.Medium, settingsRowTitleStyle.fontWeight)
-        assertEquals(12.sp, settingsHelperStyle.fontSize)
-        assertEquals(FontWeight.Normal, settingsHelperStyle.fontWeight)
+        // P2-10: the helper style is a @Composable now — its colour is the
+        // scheme's onSurfaceVariant — so its scale is pinned inside a
+        // composition rather than read off a static val.
+        var captured: TextStyle? = null
+        compose.setContent {
+            RaddStreamTheme(darkTheme = true) { captured = settingsHelperStyle() }
+        }
+        compose.waitForIdle()
+        val helper = requireNotNull(captured) { "settingsHelperStyle() produced no style" }
+        assertEquals(12.sp, helper.fontSize)
+        assertEquals(FontWeight.Normal, helper.fontWeight)
     }
 
     @Test
@@ -205,17 +220,20 @@ class SettingsRound2Test {
         // ST3: the selected chip's label is onPrimaryContainer on the 16%
         // jade tint composite over the group fill — never under 4.5:1.
         // P1-14: the groups are flat now — one surfaceContainer surface
-        // (RaddInk850, 8.77:1) and the bare background for the out-of-group
-        // rows (RaddInk950, 9.86:1). No more surfaceContainerHighest.
-        val fills = mapOf(
-            "surfaceContainer" to RaddInk850,
-            "background" to RaddInk950,
+        // and the bare background for the out-of-group rows.
+        // P2-10: pinned in both schemes — dark 8.77:1/9.86:1, light
+        // 9.59:1/10.43:1.
+        val cases = listOf(
+            SelectedChipCase("dark surfaceContainer", RaddCurrent500, RaddOnCurrentContainer, RaddInk850),
+            SelectedChipCase("dark background", RaddCurrent500, RaddOnCurrentContainer, RaddInk950),
+            SelectedChipCase("light surfaceContainer", RaddCurrent700, RaddOnCurrentContainerLight, RaddPaperContainer),
+            SelectedChipCase("light background", RaddCurrent700, RaddOnCurrentContainerLight, RaddPaperDay),
         )
-        for ((name, fill) in fills) {
-            val composite = over(RaddCurrent500, fill, 0.16f)
-            val ratio = contrastRatio(RaddOnCurrentContainer, composite)
+        for (case in cases) {
+            val composite = over(case.primary, case.fill, 0.16f)
+            val ratio = contrastRatio(case.label, composite)
             assertTrue(
-                "selected chip label is only $ratio:1 on $name, under the 4.5:1 text bar",
+                "selected chip label is only $ratio:1 on ${case.name}, under the 4.5:1 text bar",
                 ratio >= 4.5f,
             )
         }
@@ -224,11 +242,13 @@ class SettingsRound2Test {
     @Test
     fun chipBorderClearsComponentBarOnEveryGroupFill() {
         // ST1: the same border must clear 3:1 on the tonal fill, not just
-        // the old flat card. P1-14: the flat fills now (surfaceContainer
-        // 4.10:1, background 4.49:1 with the #7C7C7C border).
+        // the old flat card. P1-14: the flat fills now. P2-10: pinned in
+        // both schemes — dark 4.10:1/4.49:1, light 3.55:1/3.91:1.
         val fills = mapOf(
-            "surfaceContainer" to RaddInk850,
-            "background" to RaddInk950,
+            "dark surfaceContainer" to RaddInk850,
+            "dark background" to RaddInk950,
+            "light surfaceContainer" to RaddPaperContainer,
+            "light background" to RaddPaperDay,
         )
         for ((name, fill) in fills) {
             val ratio = contrastRatio(RaddChipBorderSoft, fill)
@@ -241,17 +261,20 @@ class SettingsRound2Test {
 
     @Test
     fun helperTextClearsTextBarOnEveryGroupFill() {
-        // P1-14: the flat fills now (surfaceContainer helper 7.30:1,
-        // background 7.98:1) — flatter and darker than the old
-        // surfaceContainerHighest (5.53:1), so the helper reads better.
-        val fills = listOf(
-            RaddInk850,
-            RaddInk950,
+        // P1-14: the flat fills now. P2-10: the helper colour is the
+        // scheme's onSurfaceVariant, so the pair is pinned in both
+        // schemes — dark 8.62:1/9.43:1, light 5.79:1/6.38:1.
+        val pairs = mapOf(
+            "dark surfaceContainer" to (RaddMistOnInk to RaddInk850),
+            "dark background" to (RaddMistOnInk to RaddInk950),
+            "light surfaceContainer" to (RaddMistOnPaper to RaddPaperContainer),
+            "light background" to (RaddMistOnPaper to RaddPaperDay),
         )
-        for (fill in fills) {
+        for ((name, pair) in pairs) {
+            val (text, fill) = pair
             assertTrue(
-                "helper text is under 4.5:1 on $fill",
-                contrastRatio(RaddSettingsHelper, fill) >= 4.5f,
+                "helper text is under 4.5:1 on $name $fill",
+                contrastRatio(text, fill) >= 4.5f,
             )
         }
     }
@@ -290,6 +313,15 @@ class SettingsRound2Test {
     fun settingsQueryMatchesNoMatchReturnsFalse() {
         assertFalse(settingsQueryMatches("zzznope", "Content preference", "region"))
     }
+
+    /** One selected-chip colour case: the scheme's primary at 16% over the
+     *  card fill, with the scheme's onPrimaryContainer label on top. */
+    private data class SelectedChipCase(
+        val name: String,
+        val primary: Color,
+        val label: Color,
+        val fill: Color,
+    )
 
     /** Standard src-over alpha compositing: fg at [alpha] over opaque bg. */
     private fun over(fg: Color, bg: Color, alpha: Float): Color = Color(
