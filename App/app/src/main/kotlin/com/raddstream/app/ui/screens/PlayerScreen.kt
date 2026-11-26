@@ -8,6 +8,7 @@ import android.content.res.Configuration
 import android.graphics.Typeface
 import android.os.Build
 import android.provider.Settings
+import android.view.SurfaceView
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -481,7 +482,10 @@ private fun PlayerScreenContent(
         if (!ScrubThumbnails.isSupported()) return@LaunchedEffect
         val bucket = ScrubThumbnails.bucketIndex(state.positionMs, state.durationMs)
         if (bucket < 0 || spriteCache.isFilled(bucket) || spriteCaptureInFlight) return@LaunchedEffect
-        val surface = playerView?.videoSurfaceView?.holder?.surface?.takeIf { it.isValid }
+        // getVideoSurfaceView() returns a plain View in current Media3 —
+        // the surface view is a SurfaceView by default, so cast; any other
+        // surface type silently skips the capture.
+        val surface = (playerView?.videoSurfaceView as? SurfaceView)?.holder?.surface?.takeIf { it.isValid }
             ?: return@LaunchedEffect
         spriteCaptureInFlight = true
         requestSpriteCapture(surface) { frame ->
