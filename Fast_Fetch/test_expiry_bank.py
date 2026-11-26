@@ -474,10 +474,13 @@ class ResolveBankingTests(unittest.TestCase):
         unwrap.assert_not_called()
         self.assertAlmostEqual(res["expires_in"], 600, delta=5)
 
-    def test_hubcloud_sibling_10g_banks_window(self):
-        """One gamerxyt page banks the 10Gbps sibling's Google URL
-        with 900 s; the FSL sibling keeps its parsed R2 expiry and
-        the PixelServer sibling stays NULL (permanent)."""
+    def test_hubcloud_sibling_10g_is_not_banked(self):
+        """Drop-10g (2026-11-24): the 10Gbps leg is dead, so one
+        gamerxyt page banks only the FSL + PixelServer siblings — the
+        10Gbps row is left untouched even when a 10g candidate is
+        offered (``_HUBCLOUD_SIBLING_SERVICES`` no longer contains
+        it). The FSL sibling keeps its parsed R2 expiry and the
+        PixelServer sibling stays NULL (permanent)."""
         drive_url = "https://hubcloud.ist/drive/abc123"
         media = self._media("hubcloud", drive_url, drive_url, 0)
         media["releases"][0]["sources"] = [
@@ -502,7 +505,6 @@ class ResolveBankingTests(unittest.TestCase):
                 "SELECT * FROM download_sources").fetchall()}
             release_id = conn.execute(
                 "SELECT id FROM releases LIMIT 1").fetchone()[0]
-        before = int(time.time())
         candidates = [
             {"service": "fsl_r2", "final_url": _r2_url(18000),
              "is_temporary": 1, "expires_at": NOW + 18000},
@@ -514,15 +516,15 @@ class ResolveBankingTests(unittest.TestCase):
         banked = fast_fetch._bank_hubcloud_siblings(
             release_id=release_id, pressed_id=rows["hubcloud"]["id"],
             candidates=candidates)
-        after = int(time.time())
-        self.assertEqual(banked, 3)
+        self.assertEqual(banked, 2)
         fsl = self._row(rows["fsl_r2"]["id"])
         self.assertEqual(fsl["expires_at"], NOW + 18000)
         self.assertEqual(fsl["ttl_source"], "signed_params")
         ten_g = self._row(rows["hubcloud_10g"]["id"])
-        self.assertGreaterEqual(ten_g["expires_at"], before + 900)
-        self.assertLessEqual(ten_g["expires_at"], after + 900)
-        self.assertEqual(ten_g["ttl_source"], "measured_window")
+        self.assertEqual(ten_g["final_url"],
+                         "https://gpdl.hubcloud.mov/?id=stale")
+        self.assertIsNone(ten_g["expires_at"])
+        self.assertIsNone(ten_g["ttl_source"])
         pixel = self._row(rows["pixeldrain"]["id"])
         self.assertIsNone(pixel["expires_at"])
 
