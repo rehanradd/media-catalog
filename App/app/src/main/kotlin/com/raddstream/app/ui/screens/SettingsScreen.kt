@@ -1767,8 +1767,15 @@ internal fun SettingsContent(
 
             // ST5: a query that matches nothing says so, with a way back —
             // a dead end with no exit is worse than no search at all.
+            // P1-14 fixup: the no-results card does NOT animate its size.
+            // It is a filter result, and the filter is instant — the card
+            // appears the moment the query matches nothing. A SettingsCard
+            // grows from 0 via animateContentSize, and the Robolectric
+            // test clock never drives that spring to completion (diag:
+            // the node exists with 0x0 bounds after waitForIdle +
+            // advanceTimeBy(2000)), so the state reads as absent.
             if (searchQuery.isNotBlank() && !anyCardVisible) {
-                SettingsCard(title = "No results") {
+                SettingsCard(title = "No results", animateSize = false) {
                     Text(
                         "Nothing in Settings matches \"$searchQuery\".",
                         style = settingsHelperStyle,
@@ -1981,6 +1988,11 @@ private fun SettingsGroup(
 private fun SettingsCard(
     title: String,
     modifier: Modifier = Modifier,
+    // P1-14 fixup: filter results appear instantly, so the no-results
+    // card opts out of the size spring (see the ST5 call site). Every
+    // other card keeps it — it is what grows a card smoothly when a door
+    // inside it opens (sign-in form, account details, build details).
+    animateSize: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     // P1-14 (B-39): the inner card is flat now — no fill, no radius, no
@@ -1995,7 +2007,15 @@ private fun SettingsCard(
             // (sign-in form, account details, build details, contact
             // form, server field) — the size change is a spring, not a jump.
             // Round 6: the spring is the theme's motionScheme spatial spec.
-            .animateContentSize(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()),
+            .then(
+                if (animateSize) {
+                    Modifier.animateContentSize(
+                        animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
+                    )
+                } else {
+                    Modifier
+                },
+            ),
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         HorizontalDivider(
