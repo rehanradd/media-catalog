@@ -1767,13 +1767,13 @@ internal fun SettingsContent(
 
             // ST5: a query that matches nothing says so, with a way back —
             // a dead end with no exit is worse than no search at all.
-            // P1-14 fixup: the no-results card does NOT animate its size.
-            // It is a filter result, and the filter is instant — the card
-            // appears the moment the query matches nothing. A SettingsCard
-            // grows from 0 via animateContentSize, and the Robolectric
-            // test clock never drives that spring to completion (diag:
-            // the node exists with 0x0 bounds after waitForIdle +
-            // advanceTimeBy(2000)), so the state reads as absent.
+            // The card does NOT animate its size in: it is a filter
+            // result, and the filter is instant. (Fixup 2 first blamed
+            // the size spring for the test failure, but DIAG3 proved the
+            // real cause — the hidden groups' wrappers kept layout height
+            // and pushed this card below the fold. Fixup 3's early return
+            // in SettingsGroup is the cure; the instant appearance stays
+            // because a filter result should never spring in.)
             if (searchQuery.isNotBlank() && !anyCardVisible) {
                 SettingsCard(title = "No results", animateSize = false) {
                     Text(
@@ -1918,10 +1918,17 @@ private fun SettingsGroupHeader(
  * background -> shell (surfaceContainerHigh + 1dp outlineVariant border)
  * -> card (surfaceContainerHighest), three tonal steps with double 16dp
  * insets. The [visible] flag is the search filter, and it is INSTANT
- * now: a plain `if` toggles the group's content, so typing a query
- * shows/hides groups with no spring. The AnimatedVisibility below is
- * the entrance only (keyed on `entered`, which never flips back), so
- * the filter can never replay the entrance slide on keystroke.
+ * now: a filtered-out group is NOT emitted at all (see the early return
+ * below), so it takes no layout space and leaves no column gap — the
+ * old shape kept the group's AnimatedVisibility in the column with an
+ * empty `if (visible)` inside it, and the wrapper kept layout height
+ * (DIAG3: a no-match query left the no-results card at y=435..470,
+ * clipped at the viewport edge, so the test read it as not displayed).
+ * The AnimatedVisibility below is the entrance only (keyed on `entered`,
+ * which never flips back), so the filter can never replay the entrance
+ * slide on keystroke — and `entered` is remembered ABOVE the early
+ * return, so hiding a group and showing it again does not replay its
+ * entrance either.
  */
 @Composable
 private fun SettingsGroup(
@@ -1943,6 +1950,11 @@ private fun SettingsGroup(
         delay(index * SettingsGroupStaggerMs)
         entered = true
     }
+    // P1-14 fixup 3 (B-39): a filtered-out group is not emitted — no
+    // AnimatedVisibility wrapper, no column gap, no layout height. The
+    // early return sits AFTER the entrance state above, so `entered`
+    // survives a hide/show cycle and the entrance never replays.
+    if (!visible) return
     AnimatedVisibility(
         visible = entered,
         enter = fadeIn(
@@ -1967,19 +1979,15 @@ private fun SettingsGroup(
         },
         modifier = modifier,
     ) {
-        // P1-14: the search filter is a plain conditional — instant, no
-        // enter/exit animation on keystroke.
-        if (visible) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(RaddTokens.Radius.Card))
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(0.dp),
-            ) {
-                content()
-            }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(RaddTokens.Radius.Card))
+                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
+        ) {
+            content()
         }
     }
 }
