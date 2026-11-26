@@ -99,8 +99,8 @@ class PlayerMockupTest {
     private fun setBottom(state: PlayerUiState) {
         // The bottom row's honest minimum (~480dp: two 48dp safe rails +
         // seven 48dp controls + gaps) is wider than the default portrait
-        // test window, so the far-right primary (More) is clipped there —
-        // that is a harness limit, not a product bug.
+        // test window, so the far-right primaries (Fullscreen, More) are
+        // clipped there — that is a harness limit, not a product bug.
         // A requiredWidth(800.dp) wrapper was tried (222db205) and made
         // all three bottom tests fail at their first assertIsDisplayed,
         // so it is reverted: these tests pin that the row's content
@@ -395,8 +395,11 @@ class PlayerMockupTest {
         compose.onNodeWithContentDescription(context.getString(R.string.player_audio_subtitles_title)).assertIsDisplayed()
         // The fixture is fullscreen (PlayerUiState's default — the player
         // starts immersive), so the toggle reads "Exit fullscreen", not
-        // "Fullscreen". The primary is there either way.
-        compose.onNodeWithContentDescription(context.getString(R.string.player_exit_fullscreen)).assertIsDisplayed()
+        // "Fullscreen". In the portrait test window the right cluster is
+        // clipped past Captions/Audio — the fullscreen toggle and More
+        // exist but are not displayed there; the landscape Paparazzi
+        // bottom shots pin the whole row visible.
+        compose.onNodeWithContentDescription(context.getString(R.string.player_exit_fullscreen)).assertExists()
         // More rides at the row's far right, past the default portrait
         // test window — it exists but is clipped there, so existence
         // (not visibility) is pinned here; the landscape Paparazzi
