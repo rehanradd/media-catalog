@@ -8201,6 +8201,10 @@ def _domain_stem(host: str) -> str | None:
 
     Returns None for an IP literal or localhost — there is no site name
     to infer from those, and inventing one would be a fresh mislabel.
+    Also None for the RFC 2606 placeholder label 'example'
+    (example.com / example.org / example.net are reserved documentation
+    domains, not sites — db08: an unknown host there is 'unknown',
+    not a site called 'example').
     """
     host = (host or "").strip().lower().rstrip(".")
     if not host or ":" in host:
@@ -8210,7 +8214,7 @@ def _domain_stem(host: str) -> str | None:
         return None
     while len(labels) > 1 and (labels[0] == "www" or _ROTATION_PREFIX.match(labels[0])):
         labels.pop(0)
-    if labels[0] == "localhost":
+    if labels[0] in ("localhost", "example"):
         return None
     return labels[0] or None
 
@@ -8270,7 +8274,16 @@ def _validate_scraped_data(data: dict):
     if not clean_title or clean_title.casefold() == "unknown":
         raise ValueError("Scraped media data is missing a usable title")
     if not source_site:
-        raise ValueError("Scraped media data is missing its source site")
+        # db08: a real domain that is not a known site is 'unknown' —
+        # the row is filed under 'unknown', not refused. Only a host
+        # with no site name at all (IP literal, localhost) is refused.
+        _host = (parsed_source_url.hostname or "").lower()
+        _labels = [label for label in _host.split(".") if label]
+        if _host and _host != "localhost" and not all(
+                label.isdigit() for label in _labels):
+            source_site = "unknown"
+        else:
+            raise ValueError("Scraped media data is missing its source site")
 
     releases = data.get("releases") or []
     if not isinstance(releases, list):
