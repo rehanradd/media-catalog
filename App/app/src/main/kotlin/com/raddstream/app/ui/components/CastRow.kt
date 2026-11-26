@@ -28,7 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.raddstream.app.ui.theme.brandSp
 
 /**
  * The cast row: one tappable person per actor, in the order the catalog
@@ -120,7 +120,7 @@ private fun CastPerson(actor: String, photoUrl: String?, onClick: () -> Unit) {
         }
         Text(
             text = actor,
-            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+            style = MaterialTheme.typography.bodySmall.copy(fontSize = brandSp(12)),
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
