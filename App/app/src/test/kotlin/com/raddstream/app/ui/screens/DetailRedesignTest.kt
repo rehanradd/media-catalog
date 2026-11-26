@@ -261,23 +261,20 @@ class DetailRedesignTest {
         // before asserting the chips; the header sits outside the
         // entrance since fixup 3, so it is placed as soon as the item
         // composes.
-        // P1-8 resume 2: a fixed advance guessed the settle time and
-        // guessed short once (2000ms, Android 45880340223 — the 420ms
-        // stagger delay plus the fade/slide springs were still in
-        // flight, so the chips existed but were not displayed). Advance
-        // past the whole entrance (3000ms, the repo's bounded settle —
-        // ScrollingChipRowTest), then poll for the settled state:
-        // waitUntil advances the test clock while it polls, and fails
-        // after a bounded timeout if the chips never land — a missing
-        // chip is not papered over, it is waited for. (waitForIdle is
-        // not used: it can hang on an animation that never idles —
-        // ScrollingChipRowTest.)
+        // P1-8 resume 3: the chips are born below the fold. The index
+        // scroll above ran while DetailEntrance(7) was still closed, so
+        // the scroll offset was computed from the closed item height
+        // (header + 12dp gap). After the 420ms stagger fires, the item
+        // grows ~22dp downward and the LazyColumn never re-scrolls —
+        // the chips land at y ≈ 470–492 in a 320×470 viewport, entirely
+        // below the fold, so no amount of waiting (run 5: 8000ms of
+        // virtual time) can ever display them. Scroll the chip node
+        // itself into view now that it exists — the pattern the sibling
+        // tests already use. Production code untouched: on a real device
+        // the user scrolls after the content is there.
         compose.mainClock.advanceTimeBy(3000L)
         compose.onNodeWithText("Details").assertIsDisplayed()
-        compose.waitUntil(timeoutMillis = 5_000) {
-            runCatching { compose.onNodeWithText("Action").assertIsDisplayed() }.isSuccess
-        }
-        compose.onNodeWithText("Action").assertIsDisplayed()
+        compose.onNodeWithText("Action").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Thriller").assertIsDisplayed()
     }
 
