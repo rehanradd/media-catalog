@@ -30,8 +30,7 @@ import org.robolectric.RobolectricTestRunner
  * jade used-share bar and a FREE UP SPACE link, rows as a thumb + clean
  * title + "quality · size" + a jade progress bar with real percent/speed,
  * icon actions on the right (play when finished, pause while downloading,
- * × to remove), and the quiet line "Downloads play here, even after the
- * app closes." No bottom nav — the screen is a sub-screen, and its
+ * × to remove). No bottom nav — the screen is a sub-screen, and its
  * Scaffold carries no bottomBar.
  *
  * Runs on the JVM under Robolectric because this project has no emulator
@@ -332,7 +331,9 @@ class DownloadsMockupTest {
         compose.onNode(hasContentDescription("Delete Severance")).assertIsDisplayed()
         compose.onNode(hasContentDescription("Pause Severance")).assertDoesNotExist()
         // D15: a finished row says so in words, with the jade check beside it.
-        compose.onNodeWithText("Downloaded ✓ — plays here or in any video player").assertIsDisplayed()
+        // P1-13: "saved on this device" — the old "plays here or in any
+        // video player" is the engineer-facing copy the empty state dropped.
+        compose.onNodeWithText("Downloaded ✓ — saved on this device").assertIsDisplayed()
         compose.onNodeWithText("High bitrate").assertIsDisplayed()
         compose.onNodeWithText("1.3 GB").assertIsDisplayed()
     }
@@ -569,6 +570,11 @@ class DownloadsMockupTest {
         }
         compose.onNodeWithText("Not enough space to finish — free room and retry").assertIsDisplayed()
         compose.onNodeWithText("Retry").assertIsDisplayed()
+        // P1-13: a NO_SPACE row is stalled, not moving — percent + bytes
+        // only, no speed/ETA and never "calculating…" for a download
+        // that cannot move.
+        compose.onNodeWithText("45% · 450 MB / 1.0 GB").assertIsDisplayed()
+        compose.onNodeWithText("calculating…").assertDoesNotExist()
     }
 
     @Test
@@ -589,6 +595,60 @@ class DownloadsMockupTest {
             }
         }
         compose.onNodeWithText("Queued for download").assertIsDisplayed()
+    }
+
+    @Test
+    fun queuedKeepRowWithSavedBytesStatesPercentOnce() {
+        // P1-13: a queued row with saved bytes shows its progress in the
+        // saved-bytes line only — the state sentence carries no percent,
+        // so "23%" appears exactly once on the row.
+        compose.setContent {
+            RaddStreamTheme {
+                KeptItemRow(
+                    item = keep(
+                        id = "13b",
+                        title = "Echoes of Silence",
+                        printLabel = "1080p · High bitrate",
+                        state = KeepState.QUEUED,
+                        bytesDownloaded = 300_000_000L,
+                        bytesTotal = 1_300_000_000L,
+                    ),
+                    onPlay = {},
+                    onCancel = {},
+                    onRetry = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Queued for download").assertIsDisplayed()
+        compose.onNodeWithText("300 MB of 1.3 GB saved · 23%").assertIsDisplayed()
+        compose.onAllNodes(hasText("23%", substring = true)).assertCountEquals(1)
+    }
+
+    @Test
+    fun partialDeviceRowStatesPercentOnce() {
+        // P1-13: a partial row states its percent once — the saved-bytes
+        // line carries it, the status sentence does not repeat it.
+        compose.setContent {
+            RaddStreamTheme {
+                DeviceDownloadRow(
+                    item = deviceFile(
+                        id = "d3p",
+                        title = "Solaris Drift",
+                        printLabel = "1080p · High bitrate",
+                        state = DeviceDownloadState.PARTIAL,
+                        bytesDownloaded = 450_000_000L,
+                        bytesTotal = 1_000_000_000L,
+                    ),
+                    onPlay = {},
+                    onPause = {},
+                    onResume = {},
+                    onRemove = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Partially saved — retry to finish the missing parts").assertIsDisplayed()
+        compose.onNodeWithText("450 MB of 1.0 GB saved · 45%").assertIsDisplayed()
+        compose.onAllNodes(hasText("45%", substring = true)).assertCountEquals(1)
     }
 
     @Test
@@ -753,20 +813,6 @@ class DownloadsMockupTest {
     }
 
     @Test
-    fun emptyPreviewShowsSampleRow() {
-        // Phase 4 (Downloads #14): the empty screen previews the
-        // populated state.
-        compose.setContent {
-            RaddStreamTheme { DownloadsEmptyPreview() }
-        }
-        compose.onNodeWithText("Your downloads will look like this:").assertIsDisplayed()
-        compose.onNodeWithText("Example title").assertIsDisplayed()
-        // D11: the sample row shows a download that is MOVING — the old
-        // "calculating…" was the stale copy this round replaces.
-        compose.onNodeWithText("45% · 540 MB / 1.2 GB · 12.0 MB/s · 1 min left").assertIsDisplayed()
-    }
-
-    @Test
     fun keepProgressLineReadsPercentBytesSpeedEta() {
         val moving = keep(
             id = "7",
@@ -798,6 +844,17 @@ class DownloadsMockupTest {
             stalled = true,
         )
         assertEquals("45% · 450 MB / 1.0 GB · Stalled — check connection", keepProgressLine(stalled))
+        // P1-13: a NO_SPACE row is stalled, not moving — percent + bytes
+        // only, no speed/ETA segment (and never "calculating…").
+        val noSpace = keep(
+            id = "8n",
+            title = "Echoes of Silence",
+            printLabel = "1080p · High bitrate",
+            state = KeepState.NO_SPACE,
+            bytesDownloaded = 450_000_000L,
+            bytesTotal = 1_000_000_000L,
+        )
+        assertEquals("45% · 450 MB / 1.0 GB", keepProgressLine(noSpace, includeSpeed = false))
     }
 
     @Test
@@ -963,16 +1020,6 @@ class DownloadsMockupTest {
             "Nothing downloaded here yet — there is nothing to free up.",
             freeUpSpaceMessage(0L),
         )
-    }
-
-    @Test
-    fun quietLineIsTheMockupLine() {
-        compose.setContent {
-            RaddStreamTheme {
-                NoticeCard(DOWNLOADS_QUIET_LINE)
-            }
-        }
-        compose.onNodeWithText("Downloads play here, even after the app closes.").assertIsDisplayed()
     }
 
     @Test

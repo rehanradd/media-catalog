@@ -285,9 +285,6 @@ fun DownloadsScreen(
             }
 
             if (state.hasAnything) {
-                item {
-                    NoticeCard(DOWNLOADS_QUIET_LINE)
-                }
                 itemsIndexed(
                     state.allDownloads,
                     key = { _, row ->
@@ -369,7 +366,7 @@ fun DownloadsScreen(
                     EmptyState(
                         title = "Nothing downloaded yet",
                         message = "Use the Download button on a movie or episode. " +
-                            "Files go to Movies/RaddStream and play in any video player.",
+                            "Saved on this device. Play offline in RaddStream.",
                         icon = {
                             Icon(
                                 painter = painterResource(R.drawable.ic_action_download),
@@ -390,10 +387,6 @@ fun DownloadsScreen(
                             ) { Text("Find something to download") }
                         },
                     )
-                    // Phase 4 (Downloads #14): a small preview of the
-                    // populated state, so the empty screen shows what
-                    // belongs here instead of only saying it.
-                    DownloadsEmptyPreview()
                 }
             }
         }
@@ -479,31 +472,6 @@ private fun LocalFilesEntry(onOpenLocalFiles: () -> Unit) {
             painter = painterResource(R.drawable.ic_action_chevron_right),
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
-internal fun NoticeCard(text: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RaddTokens.Shape.Card)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(RaddTokens.Space.Lg),
-        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
-        verticalAlignment = Alignment.Top,
-    ) {
-        Icon(
-            painter = painterResource(R.drawable.ic_action_info),
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(20.dp),
-        )
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -890,9 +858,16 @@ private fun deviceStatusLine(item: DeviceDownload): String {
         DeviceDownloadState.DOWNLOADING -> "Downloading$percent"
         DeviceDownloadState.PAUSED -> "Paused — resume when you are ready"
         // D15: a finished row says so in words, with the jade check beside it.
-        DeviceDownloadState.READY -> "Downloaded ✓ — plays here or in any video player"
+        // P1-13: "saved on this device" — the old "plays here or in any
+        // video player" is the same engineer-facing copy the empty state
+        // dropped; the file plays offline in RaddStream.
+        DeviceDownloadState.READY -> "Downloaded ✓ — saved on this device"
         DeviceDownloadState.FAILED -> "Download failed — resume, or cancel and try again"
-        DeviceDownloadState.PARTIAL -> "Partially saved$percent — retry to finish the missing parts"
+        // P1-13: no percent here — the saved-bytes line below already
+        // carries it ("450 MB of 1.0 GB saved · 45%"), and the same
+        // wording without a percent is what the notification already
+        // paints (DownloadService PARTIAL).
+        DeviceDownloadState.PARTIAL -> "Partially saved — retry to finish the missing parts"
     }
 }
 
@@ -1054,7 +1029,7 @@ internal fun KeptItemRow(
                         trackColor = MaterialTheme.colorScheme.surfaceVariant,
                         strokeCap = StrokeCap.Round,
                     )
-                    Text(keepProgressLine(item), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(keepProgressLine(item, includeSpeed = item.state == KeepState.DOWNLOADING), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     // The bar is the progress, the line is the reason: a stalled
                     // NO_SPACE row must say why, not just show a frozen bar and
                     // a button.
@@ -1343,7 +1318,10 @@ internal fun keepActionLabel(state: KeepState): String? = when (state) {
 private fun statusLine(item: KeptItem): String {
     val percent = item.percent?.let { " $it%" } ?: ""
     return when (item.state) {
-        KeepState.QUEUED -> "Queued for download$percent"
+        // P1-13: no percent here — the saved-bytes line below already
+        // carries it when anything has arrived, so the state stays one
+        // short sentence in words.
+        KeepState.QUEUED -> "Queued for download"
         KeepState.DOWNLOADING -> "Downloading$percent"
         KeepState.PAUSED -> "Paused"
         KeepState.NO_SPACE -> "Not enough space to finish — free room and retry"
@@ -1361,8 +1339,11 @@ private fun statusLine(item: KeptItem): String {
  * Dev-cleanup (Nov 2026): while nothing has arrived and the total is unknown there are no
  * byte counts to show — the old "0 KB / unknown size · calculating…" read as a broken
  * counter. The line is just "Starting…" until the first bytes land.
+ * P1-13: speed/ETA ride only while the row is actively downloading — a
+ * NO_SPACE row is stalled, not moving, so it shows percent + bytes only
+ * (no "calculating…" for a download that cannot move).
  */
-internal fun keepProgressLine(item: KeptItem): String {
+internal fun keepProgressLine(item: KeptItem, includeSpeed: Boolean = true): String {
     if (item.bytesDownloaded <= 0L && item.bytesTotal <= 0L) return "Starting…"
     val percent = item.percent?.let { "$it% · " } ?: ""
     // The total is unknown: the bytes-so-far stand alone, never "X / unknown
@@ -1372,6 +1353,7 @@ internal fun keepProgressLine(item: KeptItem): String {
     } else {
         formatMiB(item.bytesDownloaded)
     }
+    if (!includeSpeed) return "$percent$bytes"
     // D11: same stall rule as the device row — 0 B/s past the stall window
     // says so; "calculating…" is only the first seconds.
     val speed = if (item.stalled) {
@@ -1404,13 +1386,6 @@ internal fun formatRemaining(remainingMillis: Long?): String {
 }
 
 /**
- * The quiet line under the download list, in the viewer's words — the
- * Stitch Downloads mockup's line, verbatim. Internal so the mockup test
- * pins it.
- */
-internal const val DOWNLOADS_QUIET_LINE = "Downloads play here, even after the app closes."
-
-/**
  * The title a download row paints: the stored title with a trailing
  * "(YYYY)" stripped — the same rule Detail paints with, as far as the
  * row's data reaches. A download row carries no year, type or languages
@@ -1422,73 +1397,6 @@ internal const val DOWNLOADS_QUIET_LINE = "Downloads play here, even after the a
  */
 internal fun cleanDownloadTitle(title: String): String =
     UserWords.stripTitleSuffixes(title, year = null, contentType = null, languages = emptyList())
-
-/**
- * Phase 4 (Downloads #14): a small preview of the populated state for the
- * empty screen — a faded sample row under a caption, so the viewer sees
- * what belongs here instead of only reading about it. Static and clearly
- * a sample: no actions, no real data.
- */
-@Composable
-internal fun DownloadsEmptyPreview() {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = RaddTokens.Space.Sm),
-        verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
-    ) {
-        Text(
-            "Your downloads will look like this:",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RaddTokens.Shape.Card)
-                .background(MaterialTheme.colorScheme.surface)
-                .alpha(0.6f)
-                .padding(RaddTokens.Space.Lg),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
-        ) {
-            DownloadThumb(posterUrl = null, title = "Example title")
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Xs),
-            ) {
-                Text(
-                    "Example title",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                )
-                DownloadMetaLine(
-                    printLabel = "1080p · High bitrate",
-                    printLabelDescription = "Example title — 1080p · High bitrate",
-                    sizeText = "1.2 GB",
-                )
-                LinearProgressIndicator(
-                    progress = { 0.45f },
-                    modifier = Modifier.fillMaxWidth().height(6.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                    strokeCap = StrokeCap.Round,
-                )
-                // D11: the sample row shows a download that is MOVING — the
-                // old "calculating…" was the stale copy this round replaces.
-                // Round 6: the ETA reads "1 min left" (the "about " trim
-                // the real rows got) so the sample matches the live copy.
-                Text(
-                    "45% · 540 MB / 1.2 GB · 12.0 MB/s · 1 min left",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
 
 /**
  * The row's poster slot (D10). A keep whose catalog post is already in the

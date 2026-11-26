@@ -12,7 +12,6 @@ import app.cash.paparazzi.Paparazzi
 import com.raddstream.app.data.downloads.DeviceDownload
 import com.raddstream.app.data.downloads.DeviceDownloadState
 import com.raddstream.app.ui.screens.DeviceDownloadRow
-import com.raddstream.app.ui.screens.DownloadsEmptyPreview
 import com.raddstream.app.ui.screens.KeptItemRow
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.KeepState
@@ -177,17 +176,6 @@ class DownloadsPaparazziTest {
                         onCancel = {},
                         onRetry = {},
                     )
-                }
-            }
-        }
-    }
-
-    @Test
-    fun downloadsEmptyPreview() {
-        paparazzi.snapshot {
-            themed {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    DownloadsEmptyPreview()
                 }
             }
         }
