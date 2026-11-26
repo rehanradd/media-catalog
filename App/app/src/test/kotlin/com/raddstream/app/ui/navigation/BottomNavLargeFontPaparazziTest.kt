@@ -69,33 +69,38 @@ class BottomNavLargeFontPaparazziTest {
     // beside the test so the golden renders exactly what the app ships.
     // Downloads and Profile have no filled tab variants, so they wear
     // their house action glyphs in both states (same as NavGraph).
-    private fun tabItem(id: String): Triple<String, ImageVector, ImageVector> = when (id) {
-        "search" -> Triple(
-            "Search",
-            ImageVector.vectorResource(R.drawable.ic_tab_search),
-            ImageVector.vectorResource(R.drawable.ic_tab_search_filled),
-        )
-        "downloads" -> Triple(
-            "Downloads",
-            ImageVector.vectorResource(R.drawable.ic_action_download),
-            ImageVector.vectorResource(R.drawable.ic_action_download),
-        )
-        "profile" -> Triple(
-            "Profile",
-            ImageVector.vectorResource(R.drawable.ic_action_user),
-            ImageVector.vectorResource(R.drawable.ic_action_user),
-        )
-        else -> Triple(
-            "Home",
-            ImageVector.vectorResource(R.drawable.ic_tab_home),
-            ImageVector.vectorResource(R.drawable.ic_tab_home_filled),
-        )
-    }
-
+    // The mapping lives INSIDE the snapshot lambda: vectorResource is
+    // @Composable, so it can only run in a @Composable scope — the
+    // inline map {} lambda inside snapshot {} is one (same shape as
+    // NavGraph's own bottomNavItems map), while a plain helper fun is
+    // not (compileDebugUnitTestKotlin, record 45775122388).
     @Test
     fun bottomNavLargeFont() {
-        val items = PanelTabs.DEFAULT.map(::tabItem)
         paparazzi.snapshot {
+            val items = PanelTabs.DEFAULT.map { id ->
+                when (id) {
+                    "search" -> Triple(
+                        "Search",
+                        ImageVector.vectorResource(R.drawable.ic_tab_search),
+                        ImageVector.vectorResource(R.drawable.ic_tab_search_filled),
+                    )
+                    "downloads" -> Triple(
+                        "Downloads",
+                        ImageVector.vectorResource(R.drawable.ic_action_download),
+                        ImageVector.vectorResource(R.drawable.ic_action_download),
+                    )
+                    "profile" -> Triple(
+                        "Profile",
+                        ImageVector.vectorResource(R.drawable.ic_action_user),
+                        ImageVector.vectorResource(R.drawable.ic_action_user),
+                    )
+                    else -> Triple(
+                        "Home",
+                        ImageVector.vectorResource(R.drawable.ic_tab_home),
+                        ImageVector.vectorResource(R.drawable.ic_tab_home_filled),
+                    )
+                }
+            }
             RaddStreamTheme(darkTheme = true) {
                 Surface(color = MaterialTheme.colorScheme.background) {
                     RaddBottomBar(modifier = Modifier.windowInsetsPadding(WindowInsets(bottom = 0.dp))) {
