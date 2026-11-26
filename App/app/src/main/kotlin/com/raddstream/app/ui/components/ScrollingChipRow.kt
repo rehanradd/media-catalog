@@ -176,7 +176,7 @@ internal fun RowEndFade(modifier: Modifier = Modifier, height: Dp = 48.dp) {
     // at the edge. The inner gradient still reads as the scroll cue.
     Box(
         modifier = modifier
-            .width(64.dp)
+            .width(64.dp) // token-exempt: fade strip width, not spacing
             .height(height)
             .background(
                 Brush.horizontalGradient(
