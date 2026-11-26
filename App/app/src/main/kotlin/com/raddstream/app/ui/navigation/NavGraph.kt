@@ -797,6 +797,10 @@ fun RaddStreamNavGraph(
                         navController.navigate(Screen.Search.createRoute(genre = genre, industry = industry, language = language))
                     },
                     onSetupServerClick = { navController.navigate(Screen.Setup.route) },
+                    // P0-2/P0-4: the Live TV rail opens Live TV and the header
+                    // avatar opens the Profile hub (was: rail no-op, avatar → Settings).
+                    onLiveTvClick = { navController.navigate(Screen.LiveTv.route) },
+                    onProfileClick = { navController.navigate(Screen.Profile.route) },
                     // S4(c): the fatal error's "Open Settings" action.
                     onOpenSettingsClick = { navController.navigate(Screen.Settings.PLAIN_ROUTE) },
                     heroMax = theme.heroMax,

@@ -54,17 +54,17 @@ class SkeletonPlaceholderTest {
 
     /**
      * A rail cell must be the same height as the [PosterCard] that replaces
-     * it, or the rail grows when its rows arrive. The card is a 150dp poster
-     * (225dp tall at 2:3) over a 64dp text column — 6dp gap, a 20dp title
+     * it, or the rail grows when its rows arrive. The card is a 120dp poster
+     * (180dp tall at 2:3) over a 64dp text column — 6dp gap, a 20dp title
      * slot (titleSmall's own line height, one line), 2dp, a 16dp details
-     * line (labelSmall), 2dp, the always-24dp badge slot — 295dp in all.
+     * line (labelSmall), 2dp, the always-24dp badge slot — 250dp in all.
      * The old skeleton drew two 16dp title bars for the two-line title the
      * F7 redesign removed, plus the retired footer box's 8dp sides and
-     * 10dp bottom padding: 325dp against the card's 295dp, a ~30dp jump
+     * 10dp bottom padding: 325dp against the card's 250dp, a ~75dp jump
      * per rail (and per grid row) when the cards landed.
      *
-     * Mockup (Nov 2026): the rail card grew 112dp → 150dp, so the cell is
-     * 295dp now; the text column under it did not move.
+     * P0-6 (Nov 2026): the rail card shrank 150dp → 120dp, so the cell is
+     * 250dp now; the text column under it did not move.
      *
      * The assertion is on the first cell, not the rail Row: a rail rendered
      * as the test's root content is measured EXACTLY at window height, so
@@ -80,7 +80,7 @@ class SkeletonPlaceholderTest {
                 PosterRailSkeleton()
             }
         }
-        compose.onNodeWithTag("posterRailCell").assertHeightIsEqualTo(295.dp)
+        compose.onNodeWithTag("posterRailCell").assertHeightIsEqualTo(250.dp)
     }
 
     /**

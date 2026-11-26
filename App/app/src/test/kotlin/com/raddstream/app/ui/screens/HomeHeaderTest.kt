@@ -206,7 +206,7 @@ class HomeHeaderTest {
     // ── the hero card ──────────────────────────────────────────────────
 
     @Test
-    fun heroCardIsInsetWithUppercaseButtons() {
+    fun heroCardIsInsetWithSentenceCaseButtons() {
         compose.setContent {
             RaddStreamTheme {
                 HomeContent(
@@ -224,19 +224,19 @@ class HomeHeaderTest {
                 )
             }
         }
-        // The buttons read in ALL CAPS.
-        compose.onNodeWithText("WATCH NOW").assertIsDisplayed()
-        compose.onNodeWithText("MY LIST").assertIsDisplayed()
+        // P0-7: the buttons read in sentence case, not ALL CAPS.
+        compose.onNodeWithText("Watch now").assertIsDisplayed()
+        compose.onNodeWithText("My list").assertIsDisplayed()
         // The inset card: the slide's title starts 16dp in from the screen
         // edge (the card inset) plus its own 16dp of text padding, so its
-        // left edge clears 16dp with room to spare. The WATCH NOW button
+        // left edge clears 16dp with room to spare. The Watch now button
         // pins the same inset directly: it sits in the slide's 16dp-padded
         // column inside the 16dp-inset card, so its left edge clears 16dp
         // even on the art-less slide, where the title rides the fallback
         // card's centred label instead.
-        val buttonBounds = compose.onNodeWithText("WATCH NOW").fetchSemanticsNode().boundsInRoot
+        val buttonBounds = compose.onNodeWithText("Watch now").fetchSemanticsNode().boundsInRoot
         with(compose.density) {
-            assertTrue("WATCH NOW starts under 16dp from the edge", buttonBounds.left.toDp() >= 16.dp)
+            assertTrue("Watch now starts under 16dp from the edge", buttonBounds.left.toDp() >= 16.dp)
         }
         val bounds = compose.onNodeWithText("Hero Title").fetchSemanticsNode().boundsInRoot
         with(compose.density) {
