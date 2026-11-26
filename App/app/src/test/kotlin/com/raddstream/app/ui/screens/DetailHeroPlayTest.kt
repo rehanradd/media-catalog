@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
@@ -131,7 +132,12 @@ class DetailHeroPlayTest {
         )
         compose.onNodeWithText(reason).assertIsDisplayed()
         compose.onNodeWithText("Play").assertIsNotEnabled()
-        compose.onNodeWithText("Download").assertIsDisplayed().assertIsEnabled()
+        // P1-7 (Nov 2026): the page now carries two "Download" actions —
+        // the primary button above and the utility row's mirror below —
+        // so the bare text query is ambiguous once the row composes. The
+        // primary is first in tree order (page order is protected), so
+        // [0] is the button this test pins.
+        compose.onAllNodesWithText("Download")[0].assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText("Try again").assertIsDisplayed()
     }
 
@@ -158,7 +164,10 @@ class DetailHeroPlayTest {
             downloadHint = "Nothing to save for this title.",
         )
         compose.onNodeWithText("Play").assertIsNotEnabled()
-        compose.onNodeWithText("Download").assertIsDisplayed().assertIsNotEnabled()
+        // P1-7 (Nov 2026): two "Download" actions on the page now — the
+        // primary button above and the utility row's mirror below. [0]
+        // is the primary, first in tree order.
+        compose.onAllNodesWithText("Download")[0].assertIsDisplayed().assertIsNotEnabled()
         compose.onNodeWithText("Nothing to save for this title.").assertIsDisplayed()
     }
 }

@@ -262,7 +262,10 @@ class DetailRedesignTest {
             deadEndReason = "No working sources right now — download is available.",
             onDownloadPrimary = { started = true },
         )
-        compose.onNodeWithText("Download").performScrollTo().assertIsEnabled().performClick()
+        // P1-7 (Nov 2026): two "Download" actions on the page now — the
+        // primary button above and the utility row's mirror below, which
+        // is the same tap. [0] is the primary, first in tree order.
+        compose.onAllNodesWithText("Download")[0].performScrollTo().assertIsEnabled().performClick()
         assertTrue(started)
     }
 
@@ -276,7 +279,11 @@ class DetailRedesignTest {
             downloadEnabled = false,
             downloadHint = "Nothing to save for this title.",
         )
-        compose.onNodeWithText("Download").performScrollTo().assertIsNotEnabled()
+        // P1-7 (Nov 2026): two "Download" actions on the page now — the
+        // primary button above and the utility row's mirror below, which
+        // mirrors the same disabled state. [0] is the primary, first in
+        // tree order.
+        compose.onAllNodesWithText("Download")[0].performScrollTo().assertIsNotEnabled()
         compose.onNodeWithText("Nothing to save for this title.").assertIsDisplayed()
     }
 

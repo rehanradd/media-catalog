@@ -117,7 +117,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.mediarouter.app.MediaRouteButton
 import com.google.android.gms.cast.framework.CastButtonFactory
@@ -156,6 +155,7 @@ import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.navigation.DeepLinks
 import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.RaddMotion
+import com.raddstream.app.ui.theme.brandSp
 import com.raddstream.app.ui.theme.pressScale
 import com.raddstream.app.ui.theme.rememberArtworkAccent
 import com.raddstream.app.viewmodel.DetailNavigationEvent
@@ -2741,11 +2741,11 @@ private fun UtilityRateAction(
 
 /**
  * P1-7: a utility-row label that shrinks to fit its slot — the bottom
- * bar's pattern (15% steps, 8sp floor, ellipsis as the last resort), so
- * a large font scale shrinks "Download" instead of truncating it. The
- * state is keyed on the label and the font scale, so shrinking back down
- * restores the design size. The floor is ~70% of the 11sp base, the same
- * ratio as the bar's 10sp floor on its 14sp label.
+ * bar's pattern (15% steps, brandSp(8) floor, ellipsis as the last
+ * resort), so a large font scale shrinks "Download" instead of
+ * truncating it. The state is keyed on the label and the font scale, so
+ * shrinking back down restores the design size. The floor is ~70% of the
+ * 11sp base, the same ratio as the bar's 10sp floor on its 14sp label.
  */
 @Composable
 private fun UtilityLabel(text: String) {
@@ -2774,7 +2774,7 @@ private fun UtilityLabel(text: String) {
     )
 }
 
-private val UtilityLabelMinFontSize = 8.sp
+private val UtilityLabelMinFontSize = brandSp(8)
 
 /** One borderless icon + label action in the utility row. */
 @Composable
