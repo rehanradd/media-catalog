@@ -37,6 +37,7 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.images.ArtUrlPolicy
+import com.raddstream.app.images.ImageSizing
 import com.raddstream.app.images.ImageSizingHolder
 import com.raddstream.app.images.ImageSizingPolicy
 import com.raddstream.app.images.PosterUrlPolicy
@@ -165,11 +166,33 @@ fun CatalogImage(
     fallbackBottomClearance: Dp = 0.dp,
 ) {
     val context = LocalContext.current
-    val holder = remember(context) { imageSizingHolder(context) }
-    val sizing by holder.sizing.collectAsState()
-    val metered = holder.isMetered()
-    val settingsRepository = remember(context) { serverSettingsRepository(context) }
-    val serverUrl by settingsRepository.serverUrl.collectAsState(initial = null)
+    // P1 goldens (Nov 2026): Paparazzi/Layoutlib (and @Preview) have no
+    // Application, so the Hilt entry point throws there and every
+    // CatalogImage caller — LiveTvChannelCard's logo plate included —
+    // crashes before painting anything. Fall back to the holder's own
+    // seed values (the same values a first frame gets before DataStore
+    // answers), so the tile still renders its fallback art. On a real
+    // device there is always an Application and this branch never runs;
+    // on-device behaviour is unchanged.
+    val holder = remember(context) { imageSizingHolderOrNull(context) }
+    val sizing = if (holder != null) {
+        holder.sizing.collectAsState().value
+    } else {
+        ImageSizing(
+            posterMaxWidthPx = ImageSizingPolicy.widthPxFor(
+                ServerSettingsRepository.DEFAULT_IMAGE_QUALITY,
+                false,
+            ),
+            imagesAllowedOnMobileData = false,
+        )
+    }
+    val metered = holder?.isMetered() ?: false
+    val settingsRepository = remember(context) { serverSettingsRepositoryOrNull(context) }
+    val serverUrl = if (settingsRepository != null) {
+        settingsRepository.serverUrl.collectAsState(initial = null).value
+    } else {
+        null
+    }
     val serverHost = remember(serverUrl) { ArtUrlPolicy.hostOf(serverUrl) }
     // S5: a loaded poster fades in over its tinted slot instead of
     // popping — 200ms, or a snap for reduced motion (the 30ms crossfade
@@ -512,12 +535,36 @@ internal fun imageSizingHolder(context: Context): ImageSizingHolder =
         ImageSizingEntryPoint::class.java,
     ).imageSizingHolder()
 
+/**
+ * P1 goldens (Nov 2026): the nullable form of [imageSizingHolder].
+ * [EntryPointAccessors.fromApplication] throws IllegalStateException
+ * when there is no Application in the context — Paparazzi/Layoutlib
+ * and @Preview — so a caller that can render without the live holder
+ * (CatalogImage, whose seed values are the same as a first frame's)
+ * takes null here instead of crashing. Callers that cannot work
+ * without the holder (PosterPrefetch) keep the throwing form.
+ */
+internal fun imageSizingHolderOrNull(context: Context): ImageSizingHolder? =
+    try {
+        imageSizingHolder(context)
+    } catch (_: IllegalStateException) {
+        null
+    }
+
 /** Phase 7 (M4): the server settings, read the same way — the art policy needs the configured host. */
 internal fun serverSettingsRepository(context: Context): ServerSettingsRepository =
     EntryPointAccessors.fromApplication(
         context.applicationContext,
         ImageSizingEntryPoint::class.java,
     ).serverSettingsRepository()
+
+/** P1 goldens (Nov 2026): the nullable form of [serverSettingsRepository], same reason as [imageSizingHolderOrNull]. */
+internal fun serverSettingsRepositoryOrNull(context: Context): ServerSettingsRepository? =
+    try {
+        serverSettingsRepository(context)
+    } catch (_: IllegalStateException) {
+        null
+    }
 
 @EntryPoint
 @InstallIn(SingletonComponent::class)

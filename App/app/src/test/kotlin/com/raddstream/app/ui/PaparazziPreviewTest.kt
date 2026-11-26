@@ -1510,25 +1510,17 @@ class PaparazziPreviewTest {
         }
     }
 
-    // P1 goldens (Nov 2026): Cast back in the top bar (P0-10) renders
-    // only when state.castAvailable — the plain playerTopBar golden
-    // proves the bar without it. This shot sets it true so Cast is
-    // render-proven. The button is a MediaRouteButton AndroidView
-    // (CastButtonFactory.setUpMediaRouteButton), so if Layoutlib refuses
-    // it this is the test that fails — remove it and leave Cast
-    // code-proven rather than burning the run on it.
-    @Test
-    fun playerTopBarCast() {
-        paparazzi.snapshot {
-            themed {
-                TopBar(
-                    state = playerBase().copy(castAvailable = true),
-                    onBack = {},
-                    onLock = {},
-                )
-            }
-        }
-    }
+    // P1 goldens (Nov 2026): there is NO playerTopBarCast shot. Cast
+    // renders only when state.castAvailable, and the button is a
+    // MediaRouteButton AndroidView whose constructor throws under
+    // Paparazzi/Layoutlib (IllegalArgumentException "background can not
+    // be translucent: #0" from MediaRouterThemeHelper — the AppCompat
+    // theme colour the Layoutlib context lacks; record 45778601144).
+    // That is the same crash ThemeCastButtonTest pins for the app theme,
+    // and it is a harness limit, not a production bug — on a device the
+    // button composes with the app theme. Cast stays code-proven
+    // (PlayerChrome.kt:293, state.castAvailable); do not re-add a Cast
+    // snapshot until the harness can host a MediaRouteButton.
 
     // P4 (player fixes): the long title wraps to two lines and the bar
     // grows to 72dp instead of clipping — the subtitle is year · Auto only.
