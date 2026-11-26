@@ -1,27 +1,28 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.CoverageType
 import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.network.models.ReleaseLabelParsing
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.RankedPrint
-import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
 /**
- * Audit Detail #3 (Nov 2026): the cam warning is a card directly
- * under the actions it qualifies — warning icon, tonal container, the
- * same words — with a "Report copy" button that opens the same report
- * dialog as the utility row's Report. No cam print, no card.
+ * Audit Detail #3 (Nov 2026): the cam warning used to be a card
+ * directly under the actions it qualifies — warning icon, tonal
+ * container, the same words — with a "Report copy" button that opened
+ * the same report dialog as the utility row's Report.
+ * P0-9 (Nov 2026): the card is deleted by design ("Cam" is
+ * camcorder-rip vocabulary that never reaches the viewer). These tests
+ * pin the deletion: even a cam print renders no warning card and no
+ * "Report copy" button. If the card ever comes back, they fail.
  */
 @RunWith(RobolectricTestRunner::class)
 class DetailCamWarningTest {
@@ -93,15 +94,12 @@ class DetailCamWarningTest {
     }
 
     @Test
-    fun camCardShowsWarningAndReportFires() {
-        var reported = false
-        content(
-            workPrints = listOf(print("Jawan (2023) Hindi CAM 480p", "480p")),
-            onReport = { reported = true },
-        )
-        compose.onNodeWithText("Some copies here are cam recordings — low quality.").assertIsDisplayed()
-        compose.onNodeWithText("Report copy").assertIsDisplayed().performClick()
-        assertTrue(reported)
+    fun camPrintShowsNoWarningCard() {
+        // P0-9 (Nov 2026): the CamWarningCard is gone — a cam print
+        // renders no warning card and no "Report copy" button.
+        content(workPrints = listOf(print("Jawan (2023) Hindi CAM 480p", "480p")))
+        compose.onNodeWithText("Some copies here are cam recordings — low quality.").assertDoesNotExist()
+        compose.onNodeWithText("Report copy").assertDoesNotExist()
     }
 
     @Test

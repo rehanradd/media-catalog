@@ -87,6 +87,7 @@ class DetailRedesignTest {
         playHint: String? = null,
         downloadHint: String? = null,
         onTryAgain: () -> Unit = {},
+        onShowAllVersions: () -> Unit = {},
     ) {
         compose.setContent {
             RaddStreamTheme {
@@ -108,6 +109,7 @@ class DetailRedesignTest {
                     playHint = playHint,
                     downloadHint = downloadHint,
                     onTryAgain = onTryAgain,
+                    onShowAllVersions = onShowAllVersions,
                     onOpenSeason = onOpenSeason,
                     onActorClick = {},
                     similarTitles = similarTitles,
@@ -201,26 +203,31 @@ class DetailRedesignTest {
     }
 
     @Test
-    fun truncatedDetailNamesTheTrueTotal() {
-        // Detail review (Nov 2026, P1): the server caps the detail at
-        // 1,000 releases — the page says so in plain words before the
-        // viewer assumes the list is complete.
-        // 2-button detail (Nov 2026): the two stacked buttons are
-        // taller than the old side-by-side row, so the note sits below
-        // the first viewport in this test — swipe until it composes,
-        // the same pattern the similar-rail test below uses.
+    fun truncatedDetailOffersShowAllVersions() {
+        // P0-9 (Nov 2026): the server caps the detail at 1,000
+        // releases — but the cap is the app's problem, not the
+        // viewer's, so the engineer-facing note ("Showing the first 2
+        // of 8,316 releases") is gone. Progressive disclosure instead:
+        // a truncated detail offers "Show all versions (1,000+)".
+        // The two stacked buttons are taller than the old side-by-side
+        // row, so the affordance sits below the first viewport in this
+        // test — swipe until it composes, the same pattern the
+        // similar-rail test uses.
         val truncated = post.copy(
             releases = listOf(ReleaseDetail(id = 1), ReleaseDetail(id = 2)),
             releaseTotal = 8316,
             releasesTruncated = true,
         )
-        content(postDetail = truncated)
+        var shown = false
+        content(postDetail = truncated, onShowAllVersions = { shown = true })
         for (i in 0 until 5) {
-            if (compose.onAllNodesWithText("Showing the first 2 of 8,316 releases").fetchSemanticsNodes().isNotEmpty()) break
+            if (compose.onAllNodesWithText("Show all versions (1,000+)").fetchSemanticsNodes().isNotEmpty()) break
             compose.onRoot().performTouchInput { swipeUp() }
         }
-        compose.onNodeWithText("Showing the first 2 of 8,316 releases")
-            .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Show all versions (1,000+)")
+            .performScrollTo().assertIsDisplayed().performClick()
+        assertTrue(shown)
+        compose.onNodeWithText("Showing the first 2 of 8,316 releases").assertDoesNotExist()
     }
 
     @Test
