@@ -235,6 +235,45 @@ data class PostDetailResponse(
     val error: String? = null,
 )
 
+/**
+ * Response of GET /api/v1/person — one cast member's TMDb photo + bio.
+ * TMDb is the fallback for a photo and a bio only; site metadata stays
+ * primary. A name TMDb knows nobody by answers 404 (the repository maps
+ * it to null), never a wrong photo. [Person.name] is TMDb's canonical
+ * name — the app searches works by that, not by the raw scraped string
+ * (a short query is noisy: `q=Dina` matches 601 works).
+ */
+data class PersonResponse(
+    val success: Boolean = false,
+    val data: Person? = null,
+    val error: String? = null,
+)
+
+/** One person from TMDb, as `/api/v1/person` returns them. */
+data class Person(
+    @SerializedName("tmdb_person_id")
+    val tmdbPersonId: Int? = null,
+    val name: String = "",
+    /** `https://image.tmdb.org/t/p/w185/…`, or null when TMDb holds no profile photo. */
+    @SerializedName("photo_url")
+    val photoUrl: String? = null,
+    val biography: String = "",
+    /** ISO date ("1965-11-02") or null. */
+    val birthday: String? = null,
+    @SerializedName("place_of_birth")
+    val placeOfBirth: String? = null,
+    @SerializedName("known_for")
+    val knownFor: List<PersonKnownFor> = emptyList(),
+)
+
+/** One `known_for` credit: TMDb's most popular titles for the person. */
+data class PersonKnownFor(
+    val title: String = "",
+    @SerializedName("media_type")
+    val mediaType: String = "",
+    val year: Int? = null,
+)
+
 /** POST /api/v2/enrich — ask the server to fill just this one title, live. Exactly one id. */
 data class LiveFillRequest(
     @SerializedName("work_id") val workId: Long? = null,

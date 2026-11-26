@@ -78,6 +78,7 @@ import com.raddstream.app.ui.theme.brandSp
 import com.raddstream.app.viewmodel.KidsLockViewModel
 import com.raddstream.app.viewmodel.KidsPinOutcome
 import kotlinx.coroutines.launch
+import com.raddstream.app.ui.screens.ActorScreen
 import com.raddstream.app.ui.screens.BrowseScreen
 import com.raddstream.app.ui.screens.DashboardScreen
 import com.raddstream.app.ui.screens.DeadLinkScreen
@@ -1193,7 +1194,7 @@ fun RaddStreamNavGraph(
                         navController.navigate(route)
                     },
                     onActorClick = { actor ->
-                        navController.navigate(Screen.Search.createRoute(actor))
+                        navController.navigate(Screen.Actor.createRoute(actor))
                     },
                     onPostClick = { similar -> navController.navigateToPost(similar) },
                     onOpenLanguages = { navController.navigate(Screen.Languages.route) },
@@ -1201,6 +1202,31 @@ fun RaddStreamNavGraph(
                     // the hero carries the same poster key as its source.
                     sharedTransitionScope = sharedTransitionScope,
                     animatedVisibilityScope = this,
+                )
+            }
+
+            /**
+             * P2 cast (Nov 2026): one actor's page — photo + bio (TMDb)
+             * and their movies & TV on this server. The ViewModel reads
+             * the name from the nav argument itself, so the screen takes
+             * no name parameter. Search stays the fallback behind the
+             * screen's own "See all in Search" button.
+             */
+            composable(
+                route = Screen.Actor.route,
+                arguments = listOf(
+                    navArgument(Screen.Actor.ARG_NAME) {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    },
+                ),
+            ) {
+                ActorScreen(
+                    onBackClick = { navController.popBackStack() },
+                    onPostClick = { post -> navController.navigateToPost(post) },
+                    onOpenSearch = { query ->
+                        navController.navigate(Screen.Search.createRoute(query))
+                    },
                 )
             }
 
@@ -1319,10 +1345,10 @@ fun RaddStreamNavGraph(
                             popUpTo(Screen.Player.route) { inclusive = true }
                         }
                     },
-                    // SC §3: an actor tapped on the pause strip searches them,
-                    // the same route the detail screen's cast chips take.
+                    // SC §3: an actor tapped on the pause strip opens their page,
+                    // the same route the detail screen's cast row takes.
                     onActorClick = { actor ->
-                        navController.navigate(Screen.Search.createRoute(actor)) {
+                        navController.navigate(Screen.Actor.createRoute(actor)) {
                             launchSingleTop = true
                         }
                     },

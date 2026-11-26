@@ -110,6 +110,8 @@ jobs:
             --tests "com.raddstream.app.ui.PlayerLandscapePaparazziTest" \
             --tests "com.raddstream.app.ui.navigation.BottomNavLargeFontPaparazziTest" \
             --tests "com.raddstream.app.ui.screens.DetailLargeFontPaparazziTest" \
+            --tests "com.raddstream.app.ui.screens.ActorPaparazziTest" \
+            --tests "com.raddstream.app.ui.screens.ActorLargeFontPaparazziTest" \
             --tests "com.raddstream.app.ui.screens.SettingsLargeFontPaparazziTest" \
             --tests "com.raddstream.app.ui.DownloadsPaparazziTest" \
             --tests "com.raddstream.app.ui.DownloadsPaparazziLargeFontTest" \

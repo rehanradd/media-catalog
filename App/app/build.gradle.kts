@@ -494,6 +494,11 @@ tasks.withType<Test>().configureEach {
                 // record/verify runs never execute them, and without the
                 // exclude below the plain run dies at Bridge.init.
                 includeTestsMatching("com.raddstream.app.ui.screens.DetailLargeFontPaparazziTest")
+                // P2 cast (Nov 2026): the Actor screen + cast row shots —
+                // same trap, same pattern (see the DetailLargeFont note
+                // above): a class missing here never records.
+                includeTestsMatching("com.raddstream.app.ui.screens.ActorPaparazziTest")
+                includeTestsMatching("com.raddstream.app.ui.screens.ActorLargeFontPaparazziTest")
                 // Settings round 2: the 1.3x large-font shot is a Paparazzi-rule
                 // class too - same APP-09 fixup-6 pattern. Without this line the
                 // record run succeeds vacuously (no golden in the artifact) and
@@ -523,6 +528,8 @@ tasks.withType<Test>().configureEach {
                 excludeTestsMatching("com.raddstream.app.ui.DownloadsPaparazziLargeFontTest")
                 excludeTestsMatching("com.raddstream.app.ui.navigation.BottomNavLargeFontPaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.screens.DetailLargeFontPaparazziTest")
+                excludeTestsMatching("com.raddstream.app.ui.screens.ActorPaparazziTest")
+                excludeTestsMatching("com.raddstream.app.ui.screens.ActorLargeFontPaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.screens.SettingsLargeFontPaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.screens.MyListLargeFontPaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.screens.ProfilePaparazziTest")

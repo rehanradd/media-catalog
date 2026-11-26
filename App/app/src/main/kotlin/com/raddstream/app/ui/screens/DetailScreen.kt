@@ -31,8 +31,6 @@ import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -67,7 +65,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -128,6 +125,7 @@ import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.network.models.WireText
 import com.raddstream.app.network.models.parseCastNames
 import com.raddstream.app.ui.components.CapabilityChip
+import com.raddstream.app.ui.components.CastRow
 import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.channelMonogram
 import com.raddstream.app.ui.components.DetailBodySkeleton
@@ -188,7 +186,7 @@ fun DetailScreen(
     onPlayLocal: (uri: String, title: String) -> Unit = { _, _ -> },
     /** Detail redesign (Nov 2026): a season row opens its sub-page. */
     onOpenSeason: (Int) -> Unit = {},
-    /** An actor chip in the cast row: open that actor's titles in Search. */
+    /** An actor in the cast row: open that actor's page. */
     onActorClick: (String) -> Unit = {},
     /** F18: tap on a tile in the Similar titles rail. */
     onPostClick: (Post) -> Unit = {},
@@ -630,6 +628,7 @@ fun DetailScreen(
                     downloadWithStoragePermission { viewModel.downloadEpisode(season, episode) }
                 },
                 onSelectEpisodeRowSeason = viewModel::selectEpisodeRowSeason,
+                castPhotos = state.castPhotos,
                 onActorClick = onActorClick,
                 similarTitles = state.similarTitles,
                 similarLoading = state.similarLoading,
@@ -1046,7 +1045,14 @@ internal fun DetailContent(
     onPlayEpisode: (Int, Int) -> Unit = { _, _ -> },
     onDownloadEpisode: (Int, Int) -> Unit = { _, _ -> },
     onSelectEpisodeRowSeason: (Int) -> Unit = {},
-    /** An actor chip in the cast row: open that actor's titles in Search. */
+    /**
+     * P2 cast (Nov 2026): the cast row's photos, name → TMDb w185 photo
+     * URL (from DetailUiState.castPhotos). A name mapped to null, or
+     * absent, renders an initials circle. Defaults to empty — the
+     * Paparazzi callers pass nothing and pin the initials state.
+     */
+    castPhotos: Map<String, String?> = emptyMap(),
+    /** An actor in the cast row: open that actor's page. */
     onActorClick: (String) -> Unit = {},
     similarTitles: List<Post> = emptyList(),
     /**
@@ -1413,7 +1419,7 @@ internal fun DetailContent(
         // Cast, from the catalog's own scraped list — only what the server
         // actually stored, parsed into names (see parseCastNames). A title
         // with no cast data shows no section at all: no fake names, no
-        // empty "Cast" header. A tap searches that actor's titles.
+        // empty "Cast" header. A tap opens the Actor screen.
         val cast = parseCastNames(post.castNames)
         if (cast.isNotEmpty()) {
             item {
@@ -1422,7 +1428,7 @@ internal fun DetailContent(
                     enteredIds = enteredSectionIndices,
                     onEntered = { enteredSectionIndices = enteredSectionIndices + it },
                 ) {
-                    Box(pageSides) { CastSection(cast = cast, onActorClick = onActorClick) }
+                    Box(pageSides) { CastRow(cast = cast, photos = castPhotos, onActorClick = onActorClick) }
                 }
             }
         }
@@ -2882,58 +2888,6 @@ private fun ExpandableSynopsis(text: String) {
                 contentPadding = PaddingValues(0.dp),
             ) {
                 Text(if (expanded) "Show less" else "Read more")
-            }
-        }
-    }
-}
-
-/**
- * The cast row: one tappable chip per actor, in the order the catalog
- * lists them. Six chips, then a plain count of the rest: the row is a
- * doorway to the actor's titles, not a full cast list, and there is no
- * cast screen to open. A tap searches the actor in the search bar, which
- * matches `cast_names` server-side.
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun CastSection(cast: List<String>, onActorClick: (String) -> Unit) {
-    // UI-fix P1-D3: "and N more" was dead text with no cast screen to open.
-    // It now expands the row in place.
-    var expanded by remember { mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = "Cast",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            (if (expanded) cast else cast.take(6)).forEach { actor ->
-                FilterChip(
-                    colors = raddFilterChipColors(),
-                    selected = false,
-                    onClick = { onActorClick(actor) },
-                    label = { Text(actor) },
-                    // Robo run 2: a cast chip is 32dp tall — the touch-target
-                    // floor is 48dp, so the chip itself carries it.
-                    modifier = Modifier.heightIn(min = 48.dp),
-                )
-            }
-        }
-        if (cast.size > 6) {
-            TextButton(
-                onClick = { expanded = !expanded },
-                // Detail review (Nov 2026, P1): the 48dp touch-target floor.
-                modifier = Modifier.heightIn(min = 48.dp),
-                contentPadding = PaddingValues(0.dp),
-            ) {
-                Text(
-                    if (expanded) "Show less" else "and ${cast.size - 6} more",
-                    style = MaterialTheme.typography.bodySmall,
-                )
             }
         }
     }

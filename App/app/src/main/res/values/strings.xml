@@ -447,4 +447,12 @@
     <string name="kids_pin_player_subtitle">Kids Mode is on — enter the PIN to unlock the player.</string>
     <string name="kids_pin_wrong">Wrong PIN — try again</string>
     <string name="kids_pin_incomplete">Enter all 4 digits</string>
+    <!-- P2 cast (Nov 2026): the Actor screen. -->
+    <string name="actor_works_title">Movies &amp; TV on Radd Stream</string>
+    <string name="actor_tmdb_attribution">This product uses the TMDB API but is not endorsed or certified by TMDB.</string>
+    <string name="actor_no_biography">No biography available.</string>
+    <string name="actor_details_unavailable">Details unavailable — showing their titles on Radd Stream.</string>
+    <string name="actor_see_all">See all in Search</string>
+    <string name="actor_works_error">Couldn't load their titles. Check your connection and try again.</string>
+    <string name="actor_works_empty">No titles on Radd Stream for this name yet.</string>
 </resources>

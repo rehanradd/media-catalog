@@ -12,6 +12,7 @@ import com.raddstream.app.network.models.ContactRequest
 import com.raddstream.app.network.models.FacetsResponse
 import com.raddstream.app.network.models.LiveFillRequest
 import com.raddstream.app.network.models.LiveTvChannelsResponse
+import com.raddstream.app.network.models.Person
 import com.raddstream.app.network.models.PlayBundle
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PostDetail
@@ -152,6 +153,41 @@ class CatalogRepository @Inject constructor(
     suspend fun getLiveTvChannels(
         category: String? = null,
     ): LiveTvChannelsResponse = apiProvider.current().getLiveTvChannels(category)
+
+    /**
+     * GET /api/v1/person — one cast member's TMDb photo + bio. Cached
+     * per process (hits and misses alike, keyed on the lowercased name)
+     * so a detail page with 12 cast members never re-asks for a photo
+     * it already holds this session; the server already caches 24 h,
+     * this only saves the phone→server round trip. A 404 is null — no
+     * such person, never a wrong photo — and a null is remembered too,
+     * for the same reason the server caches its misses. Any other failure
+     * propagates: the caller decides between "unavailable" and a retry.
+     * (Misses live in their own set: ConcurrentHashMap forbids null
+     * values, so a cached miss cannot sit in the same map.)
+     */
+    private val personCache = ConcurrentHashMap<String, Person>()
+    private val personMisses = ConcurrentHashMap.newKeySet<String>()
+
+    suspend fun getPerson(name: String): Person? {
+        val key = name.lowercase()
+        personCache[key]?.let { return it }
+        if (personMisses.contains(key)) return null
+        val person = try {
+            val response = apiProvider.current().getPerson(name)
+            // A 200 with success:false is treated as no person — the
+            // same answer the 404 gives, without inventing a photo.
+            if (response.success) response.data else null
+        } catch (ex: CancellationException) {
+            // A cancelled load is not a failed load: rethrow, and cache
+            // nothing — the next open re-asks.
+            throw ex
+        } catch (ex: HttpException) {
+            if (ex.code() == 404) null else throw ex
+        }
+        if (person != null) personCache[key] = person else personMisses.add(key)
+        return person
+    }
 
     suspend fun getPosts(
         query: String? = null,

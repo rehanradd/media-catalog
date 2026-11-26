@@ -157,6 +157,23 @@ sealed class Screen(val route: String) {
             "detail/0/season/$season?workId=$workId"
     }
     /**
+     * P2 cast (Nov 2026): one actor's page — photo + bio (TMDb) and
+     * their movies & TV on this server. The name is a path segment, not
+     * a query: an actor is a place, not a filter. The route carries the
+     * raw scraped cast string; the screen resolves the canonical TMDb
+     * name itself. A name is free text (spaces, accents), so it is
+     * encoded on the way in and decoded on the way out, like every
+     * other text argument in this file.
+     */
+    object Actor : Screen("actor/{name}") {
+        const val ARG_NAME = "name"
+
+        fun createRoute(name: String): String =
+            "actor/${encodeRouteArg(name)}"
+
+        fun decode(encoded: String): String = decodeRouteArg(encoded)
+    }
+    /**
      * The player is addressed by the server's OPAQUE STREAM HANDLE, never by a URL: a route
      * argument lands in the back stack, in saved state and in a deep link, so an address in
      * here is an address that leaves the app. The handle resolves against our own

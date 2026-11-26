@@ -19,6 +19,7 @@ import com.raddstream.app.network.models.LiveFillResponse
 import com.raddstream.app.network.models.LiveTvChannelsResponse
 import com.raddstream.app.network.models.FacetsResponse
 import com.raddstream.app.network.models.PostDetailResponse
+import com.raddstream.app.network.models.PersonResponse
 import com.raddstream.app.network.models.PostsResponse
 import com.raddstream.app.network.models.ProfileLinkRequest
 import com.raddstream.app.network.models.ProfileLinkResponse
@@ -136,6 +137,16 @@ interface RaddStreamApi {
      */
     @GET("api/v1/facets")
     suspend fun getFacets(): FacetsResponse
+
+    /**
+     * GET /api/v1/person — a cast member's TMDb photo + bio (see
+     * [PersonResponse]). TMDb is the fallback for a photo/bio only;
+     * site metadata stays primary. Retrofit throws [retrofit2.HttpException]
+     * on the 404 (no such person) and the 503 (TMDb outage) — the
+     * repository maps the 404 to null and lets the rest propagate.
+     */
+    @GET("api/v1/person")
+    suspend fun getPerson(@Query("name") name: String): PersonResponse
 
     /**
      * GET /api/v2/suggest — cheap type-ahead over the works ledger (title

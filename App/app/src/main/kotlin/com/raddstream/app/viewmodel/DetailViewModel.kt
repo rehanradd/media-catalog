@@ -54,6 +54,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -99,6 +100,15 @@ data class DetailUiState(
      * [castAvailableFor] so a test can pin the gate without a ViewModel.
      */
     val castAvailable: Boolean = false,
+    /**
+     * P2 cast (Nov 2026): the cast row's photos, name → TMDb w185 photo
+     * URL. A name mapped to null has no photo (no TMDb match, or no
+     * profile photo) and renders an initials circle; a name absent from
+     * the map has not resolved yet and renders initials too. Empty until
+     * [loadCastPhotos] runs after a detail load — a 503 while resolving
+     * leaves entries absent, never an error state on this page.
+     */
+    val castPhotos: Map<String, String?> = emptyMap(),
     val isLoading: Boolean = true,
     val isFavorite: Boolean = false,
     /**
@@ -616,6 +626,36 @@ class DetailViewModel @Inject constructor(
     private fun recomputeCastAvailable() {
         _uiState.update {
             it.copy(castAvailable = castAvailableFor(castDevicesAvailable, castFeatureEnabled))
+        }
+    }
+
+    /**
+     * P2 cast (Nov 2026): the cast row's photos, resolved once per
+     * detail load. Each name fetches concurrently (the repository
+     * caches per process, so a re-open costs nothing); a per-name
+     * failure — 503, network — swallows to null, so one dead lookup
+     * never fails the row. Names already in [DetailUiState.castPhotos]
+     * are not re-fetched.
+     */
+    private fun loadCastPhotos(names: List<String>) {
+        val missing = names.filter { it !in _uiState.value.castPhotos }
+        if (missing.isEmpty()) return
+        viewModelScope.launch {
+            val resolved = missing.map { name ->
+                async {
+                    val photoUrl = try {
+                        catalogRepository.getPerson(name)?.photoUrl
+                    } catch (ex: CancellationException) {
+                        throw ex
+                    } catch (_: Exception) {
+                        null
+                    }
+                    name to photoUrl
+                }
+            }.awaitAll().toMap()
+            _uiState.update {
+                it.copy(castPhotos = it.castPhotos + resolved)
+            }
         }
     }
 
@@ -2109,6 +2149,9 @@ class DetailViewModel @Inject constructor(
                             matchPercent = MatchScoreStore.get(detail.id),
                         )
                     }
+                    // P2 cast (Nov 2026): the cast row's photos, resolved
+                    // once per detail load (see loadCastPhotos).
+                    loadCastPhotos(parseCastNames(detail.castNames))
                     // The catalog answer is ungated; what the viewer may SEE is decided here,
                     // from the entitlement the repository already holds.
                     publishViewerContent()
