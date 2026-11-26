@@ -66,11 +66,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.mediarouter.app.MediaRouteButton
+import com.google.android.gms.cast.framework.CastButtonFactory
 import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.player.AspectMode
 import com.raddstream.app.player.AudioBoostUi
-import com.raddstream.app.player.DecoderMode
 import com.raddstream.app.player.GestureSettings
 import com.raddstream.app.player.KeepUiState
 import com.raddstream.app.player.PlayerStatusWord
@@ -118,6 +120,11 @@ private fun playerChromeRail(): Dp {
 }
 
 @Composable
+// P0-10: onToggleDecoderMode is temporarily unused in this bar - the
+// decoder switch moved to the More sheet (see the note at the end of
+// TopBar). The parameter stays so PlayerScreen and the Paparazzi
+// previews keep compiling until that row lands.
+@Suppress("UNUSED_PARAMETER")
 internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit, onToggleDecoderMode: () -> Unit, scrimScale: Float = 1f) {
     val print = state.activeRendition
     val rail = playerChromeRail()
@@ -260,11 +267,6 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
         // Session 121 (P-35): the keep chip lived here and squeezed the title to a
         // stub ("Ali Baba …") on a narrow phone. It now rides its own row above
         // the scrubber in BottomControls, where it cannot crowd anything.
-        // Cinema (Nov 2026): the Cast button is gone from this bar — nobody
-        // opens the player to cast, they are here to watch the video. The
-        // Cast machinery (CastTransferManager, CastPlayer, the transfer
-        // rules, the server flag, state.castAvailable) stays in the
-        // codebase; Cast moves to the Detail page in a later slice.
         IconButton(onClick = onLock) {
             Icon(
                 painter = painterResource(R.drawable.ic_player_lock),
@@ -279,28 +281,49 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
         // it opened the print sheet, and the More sheet already has the
         // identical "Prints" row, so a source switch is one extra tap via
         // More instead of a permanent 48dp slot crowding the title.
-        // MX #3: the decoder switch — one tap, HW ↔ SW, far right
-        // where MX puts it. The button IS the chip: it shows the mode the
-        // player is built with right now, and tapping it rebuilds the
-        // player in the other mode at the same position. Same shape as the
-        // speed pill above it: accent text, bold, a button by role.
-        Text(
-            if (state.decoderMode == DecoderMode.SOFTWARE) stringResource(R.string.player_decoder_sw) else stringResource(R.string.player_decoder_hw),
-            color = RaddCurrent500,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier
-                .clickable(
-                    onClick = onToggleDecoderMode,
-                    role = Role.Button,
-                    onClickLabel = stringResource(
-                        if (state.decoderMode == DecoderMode.SOFTWARE) R.string.player_decoder_switch_to_hardware else R.string.player_decoder_switch_to_software,
-                    ),
-                )
-                .padding(horizontal = 8.dp, vertical = 12.dp),
-        )
+        // P0-10 (road to 100/100, audit B-16): the decoder switch is gone
+        // from this bar - plain jade "HW"/"SW" text was engineer-facing
+        // diagnostic chrome in a prime slot. The switch moves to More ->
+        // "Playback issue?" -> Decoder (PlayerSheets.kt, error-gated - shown
+        // only after a playback error); the auto-fallback HW->SW with its
+        // settled banner already lives in PlaybackService, so nothing is
+        // lost. onToggleDecoderMode is retained until that More-sheet row
+        // lands - PlayerScreen and the Paparazzi previews still pass
+        // vm.toggleDecoderMode() - and can go with it.
+        // P0-10 (audit B-23): Cast is back in the top bar, far right -
+        // removing it was a regression. The same standard route-picker
+        // Detail uses, composed only when a receiver is actually there
+        // (state.castAvailable already folds the server flag and the lock
+        // state), so the bar stays clean for everyone else. Bare 48dp like
+        // back and lock - the bar's own gradient scrim is the contrast
+        // plate, no extra circle.
+        if (state.castAvailable) {
+            PlayerCastButton()
+        }
         }
     }
+}
+
+/**
+ * P0-10 (road to 100/100, audit B-23): the player top bar's Cast button.
+ * A `MediaRouteButton` is a View, not a composable, and the framework owns
+ * the picker dialog plus the button's own connected / connecting states
+ * ([CastButtonFactory.setUpMediaRouteButton]) - the same standard
+ * route-picker Detail's cast button uses. No prose of its own: the
+ * description comes from `detail_cast`, the same word Detail announces.
+ */
+@Composable
+private fun PlayerCastButton() {
+    val description = stringResource(R.string.detail_cast)
+    AndroidView(
+        factory = { context ->
+            MediaRouteButton(context).apply {
+                CastButtonFactory.setUpMediaRouteButton(context, this)
+                contentDescription = description
+            }
+        },
+        modifier = Modifier.size(48.dp),
+    )
 }
 
 /**
