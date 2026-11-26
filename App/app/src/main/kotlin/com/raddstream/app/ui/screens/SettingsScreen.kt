@@ -1120,7 +1120,7 @@ internal fun SettingsContent(
                     // reads the stored level; this is the one place that
                     // writes it. Past 100% the gain is software boost, so the
                     // warning shows only while the level is above 100%.
-                    SettingsCard(title = "Audio", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                    SettingsCard(title = "Audio") {
                         Spacer(Modifier.height(12.dp))
                         // Mockup: the title and its percent share one row, the slider
                         // runs full-width below them. The percent stays neutral (M8):
