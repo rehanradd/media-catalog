@@ -5575,7 +5575,7 @@ def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
     pacer = _pacer if _pacer is not None else _HUBCDN_PACER
     seen_hrefs: set = set()
     rate_limited = False
-    for href, label in buttons:
+    for _idx, (href, label) in enumerate(buttons):
         if not out["size_str"]:
             size_m = re.search(r"([0-9][0-9.]*\s*(?:GB|MB))", label, re.I)
             if size_m:
@@ -5584,11 +5584,25 @@ def unwrap_hubcdn(cloud_url: str, timeout: int = 8, *, _fetch=None,
         if resolved in seen_hrefs:
             continue
         seen_hrefs.add(resolved)
-        # Both assets banked: no more l.php hits. The old loop hopped
+        # Both assets banked: no more l.php hits — unless this or a
+        # later button can still fill the gofile/telegram slots (the
+        # fan-out banks all four mirrors, API-11). The old loop hopped
         # every button (8 = 4 links x 2 labels) even after both slots
-        # were full — pure limiter budget burned for nothing.
+        # were full — pure limiter budget burned for nothing. A gofile
+        # / telegram button is named as such in its label; a quality
+        # label never is, so the peek is only a hint for whether to
+        # keep hopping — the asset role is still judged by the hop's
+        # Location, never by the label. The peek MUST include the
+        # current button: this check runs before its hop, so peeking
+        # only at buttons[_idx + 1:] breaks out without hopping the
+        # last button (the Telegram slot was never collected).
         if out["r2_url"] and out["google_url"]:
-            break
+            _more_mirrors = any(
+                ("gofile" in (lbl or "").lower()
+                 or "telegram" in (lbl or "").lower())
+                for _h, lbl in buttons[_idx:])
+            if not _more_mirrors:
+                break
         # Inside a backoff window the gateway already said no: do not
         # spend another hop proving it again.
         if pacer.is_limited():

@@ -410,9 +410,17 @@ class FanoutTests(unittest.TestCase):
     def unwrap(self, hops, buttons):
         page = gateway_page(buttons)
         recorder = HopRecorder(hops)
+        # As in UnwrapTests: pacing is proved in test_retry_caps.py with
+        # a fake clock; these tests prove the fan-out itself, so each
+        # unwrap gets a fresh no-op pacer. The process-wide pacer would
+        # otherwise leak state between tests — the 429 hop in
+        # test_rate_limit_hop_stops_the_loop arms its 60 s backoff, and
+        # the next test then reports hubcdn_rate_limited instead of
+        # proving its own path (test_telegram_only_page_is_not_ok).
         res = fast_fetch.unwrap_hubcdn(
             "https://hubcdn.io/cloud/abc123",
-            _fetch=lambda u: (page, "session=xyz"), _hop=recorder)
+            _fetch=lambda u: (page, "session=xyz"), _hop=recorder,
+            _pacer=fast_fetch.HubcdnPacer(sleep=lambda s: None))
         return res, recorder
 
     def test_all_four_mirrors_are_collected(self):
