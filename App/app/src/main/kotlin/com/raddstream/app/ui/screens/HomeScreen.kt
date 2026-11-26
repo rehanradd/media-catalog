@@ -90,6 +90,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.mediarouter.app.MediaRouteButton
+import com.google.android.gms.cast.framework.CastButtonFactory
+import com.google.android.gms.cast.framework.CastContext
 import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
 import androidx.compose.ui.text.style.TextAlign
@@ -97,6 +101,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.network.models.FacetsResponse
+import com.raddstream.app.network.models.LiveTvChannel
 import com.raddstream.app.network.models.PanelBroadcast
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.WireText
@@ -132,11 +137,11 @@ import com.raddstream.app.viewmodel.HomeFilter
 import com.raddstream.app.viewmodel.HomeMood
 import com.raddstream.app.viewmodel.HomeSection
 import com.raddstream.app.viewmodel.HomeUiState
+import com.raddstream.app.viewmodel.LiveTvViewModel
 import com.raddstream.app.viewmodel.ResumeTile
 import com.raddstream.app.viewmodel.HomeViewModel
 import com.raddstream.app.viewmodel.continueWatchingMatchFor
 import com.raddstream.app.viewmodel.homeFilterMatches
-import com.raddstream.app.viewmodel.moodMatchesPost
 import com.raddstream.app.viewmodel.homeSyncLine
 import com.raddstream.app.viewmodel.selectHeroSection
 import com.raddstream.app.viewmodel.visibleHomeRows
@@ -205,6 +210,20 @@ fun HomeScreen(
      * the catalog lives. The graph wires it to the Settings route.
      */
     onOpenSettingsClick: () -> Unit = {},
+    /**
+     * P0-4 (2027 Home fix): the header avatar — Settings today, where the
+     * account lives; the Profile hub (P0-1) takes this over. Defaults to
+     * the Settings door, so the header needs no new NavGraph wiring.
+     */
+    onProfileClick: () -> Unit = onOpenSettingsClick,
+    /**
+     * P0-2 (2027 Home fix): the Live TV rail's destination. NavGraph wires
+     * this to Screen.LiveTv; until then it is a no-op and the rail still
+     * renders its channels.
+     */
+    onLiveTvClick: () -> Unit = {},
+    /** P0-2: the Live TV rail reads the existing Live TV data, cache-first. */
+    liveTvViewModel: LiveTvViewModel = hiltViewModel(),
     /** The operator's hero knobs from the panel theme: 0 hides the hero slot. */
     heroMax: Int = HERO_LIMIT,
     /** M5 (home review, Nov 2026): manual-swipe by default — see [HeroCarousel]. */
@@ -228,6 +247,8 @@ fun HomeScreen(
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
+    // P0-2: the Live TV rail's channels, from the existing Live TV data.
+    val liveTvState by liveTvViewModel.uiState.collectAsState()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -299,6 +320,12 @@ fun HomeScreen(
             onFacetSelected = onFacetSelected,
             onSetupServerClick = onSetupServerClick,
             onOpenSettingsClick = onOpenSettingsClick,
+            onSearchClick = onSearchClick,
+            onProfileClick = onProfileClick,
+            onLiveTvClick = onLiveTvClick,
+            liveTvChannels = liveTvState.channels,
+            liveTvFavoriteIds = liveTvState.favoriteChannelIds,
+            onToggleLiveTvFavorite = { liveTvViewModel.toggleFavorite(it) },
             kidsMode = kidsMode,
             onExitKidsMode = onExitKidsMode,
             onRefresh = viewModel::refresh,
@@ -395,6 +422,22 @@ internal fun HomeContent(
      * Settings screen. Passed through from [HomeScreen].
      */
     onOpenSettingsClick: () -> Unit = {},
+    /**
+     * P0-4: the header's search glyph — the Search tab (HomeScreen's
+     * onSearchClick, wired by NavGraph). The focused-field deep link is a
+     * later P1; the glyph opens the tab.
+     */
+    onSearchClick: () -> Unit = {},
+    /** P0-4: the header avatar — see [HomeScreen.onProfileClick]. */
+    onProfileClick: () -> Unit = {},
+    /** P0-2: the Live TV rail's destination — see [HomeScreen.onLiveTvClick]. */
+    onLiveTvClick: () -> Unit = {},
+    /** P0-2: the Live TV rail's channels, from [LiveTvViewModel]. */
+    liveTvChannels: List<LiveTvChannel> = emptyList(),
+    /** P0-2: the starred channel ids, so the rail's stars read live. */
+    liveTvFavoriteIds: Set<Int> = emptySet(),
+    /** P0-2: the rail star's tap. */
+    onToggleLiveTvFavorite: (Int) -> Unit = {},
     /** MX #7 — Kids Lock: the banner and the filtered view ride this flag. */
     kidsMode: Boolean = false,
     /** MX #7: the banner's Exit — the graph raises the PIN dialog. */
@@ -425,10 +468,13 @@ internal fun HomeContent(
     // The filter chips are UI-local state: they filter the rails already on
     // screen, so no ViewModel round-trip and no reload on a tap.
     var filter by remember { mutableStateOf(HomeFilter.All) }
-    // H9: the mood filter — UI-local like `filter`, for the same reason:
-    // it narrows the rails below the mood row, so no ViewModel round-trip
-    // and no reload on a tap. Null means no mood.
-    var mood by remember { mutableStateOf<HomeMood?>(null) }
+    // P0-5: the mood row is gone as a filter (one taxonomy: the sticky
+    // category chips). The [HomeMoodRow] composable stays for its standalone
+    // Paparazzi golden and a future single Mood rail — it is no longer
+    // wired into the feed, and no rail is mood-filtered.
+    // P0-5: the status strip's sync row dismisses for this visit only — a
+    // fresh sync brings the line back on its own.
+    var syncDismissed by remember { mutableStateOf(false) }
     // Home fix (Nov 2026): the feed is a LazyColumn now — the old scrolling
     // Column composed every rail at once, so first paint waited on the whole
     // catalog and a low-end phone held all of it in memory. The lazy list
@@ -437,14 +483,20 @@ internal fun HomeContent(
     // scrolled plate, where the scroll state used to live.
     val listState = rememberLazyListState()
     // Adaptive (Nov 2026): a tablet (expanded width, 840dp+) gets wider rail
-    // cards — the 150dp phone card leaves a tablet rail mostly empty.
+    // cards — the 120dp phone card leaves a tablet rail mostly empty.
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     val railCardWidthDp = if (screenWidthDp >= 840) 180 else CardGeometry.RAIL_CARD_WIDTH_DP
+    // P0-6: spotlight rails (the hero-adjacent first rail, the Top 10
+    // chart) keep the old 150dp card; every other rail is the baseline.
+    val spotlightRailWidthDp = if (screenWidthDp >= 840) 180 else CardGeometry.SPOTLIGHT_RAIL_CARD_WIDTH_DP
 
     // The feed's shared facts, computed once per state/filter — not per
     // item, and not inside the lazy list (a LaunchedEffect inside a lazy
     // item would restart every time the item scrolled in and out of view).
     val anyVisible = state.visibleSections.any { it.visible }
+    // Fatal error only when *every* rail failed and none has data to show —
+    // the strip and Continue Watching stay off that screen (below).
+    val isFatal = state.fatal != null && !anyVisible
     val shownRows = visibleHomeRows(state.visibleSections, state.visibleContinueWatching.isNotEmpty())
     val hasSaved = state.visibleContinueWatching.isNotEmpty() || anyVisible
     // The banner rides the first rail that actually has rows, so it is real
@@ -485,15 +537,6 @@ internal fun HomeContent(
             seenWorks = next
             section.copy(items = kept)
         }
-
-    // H9: the mood narrows only the rails BELOW the mood row — the Top 10
-    // chart (rail 1) is a ranking, not a catalogue, so it never filters.
-    // The mood row sits between rail 1 and the rest (see below). A rail
-    // the mood empties drops out — unless it is loading or carries an
-    // error, which stay exactly as they do for the category filter.
-    val moodRows = renderedRows.drop(1).map { section ->
-        section.copy(items = section.items.filter { moodMatchesPost(it, mood) })
-    }.filter { it.items.isNotEmpty() || it.loading || it.error != null }
 
     // Hero (Nov 2026): warm the hero art the moment the hero items are
     // known, so first paint has art, not placeholders. The helper is a
@@ -536,7 +579,11 @@ internal fun HomeContent(
             .statusBarsPadding()
             .then(modifier),
     ) {
-        HomeHeader(scrolled = listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0)
+        HomeHeader(
+            scrolled = listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0,
+            onSearchClick = onSearchClick,
+            onProfileClick = onProfileClick,
+        )
         // MX #7 — Kids Lock: the slim banner that says the mode is on and
         // offers the PIN-guarded way out. It sits above the scroll, next to
         // the header, so it is always in reach and never scrolls away.
@@ -556,14 +603,98 @@ internal fun HomeContent(
             state = listState,
             modifier = Modifier.fillMaxSize().testTag(HomeFeedTag),
         ) {
-        // H1 (2027 Home fix, round 2): the hero is first content — the
-        // plan's §0.2 order is hero → sticky chips → Continue Watching →
-        // My List → Top 10 → mood chips → rails → promos. The hero used
-        // to sit below Continue Watching (third, after the chips and CW),
-        // so a returning viewer never saw discovery first. The hero
-        // renders only when it has items, or while it holds its footprint
-        // for loading — on a fatal screen it renders nothing, so the
-        // fatal branch below is unaffected.
+        // P0-5 (2027 Home fix): the feed order is status strip → Continue
+        // Watching → hero → sticky chips → My List → Rail 1 → Live TV →
+        // Pick 3 → rails 2+ → Browse. Nothing non-content sits above Rail 1.
+        // The strip and Continue Watching stay off the fatal screen: the
+        // error owns that page, with the operator's broadcast above it.
+        if (!isFatal) {
+            // The status strip — ops and billing messages as compact one-line
+            // rows, only when they matter, never as feed rows above Rail 1:
+            // broadcasts (operator announcements), the stale/offline sync
+            // line, the free-trial note, the offline banner. Each dismissible
+            // row keeps its 48dp dismiss (the pinned touch floor); the sync
+            // row dismisses for this visit, the offline row is live state and
+            // clears itself when the phone is back online.
+            state.broadcasts.forEach { broadcast ->
+                item(key = "status:broadcast:${broadcast.id}") {
+                    HomeStatusRow(
+                        text = broadcast.title,
+                        onDismiss = { onDismissBroadcast(broadcast.id) },
+                        dismissDescription = "Dismiss announcement",
+                    )
+                    Spacer(Modifier.height(RaddTokens.Space.Xs))
+                }
+            }
+            if (showSyncLine && !syncDismissed) {
+                item(key = "status:sync") {
+                    HomeStatusRow(
+                        text = syncLine ?: "",
+                        onDismiss = { syncDismissed = true },
+                        dismissDescription = "Dismiss sync notice",
+                    )
+                    Spacer(Modifier.height(RaddTokens.Space.Xs))
+                }
+            }
+            state.trialDaysRemaining?.let { days ->
+                item(key = "status:trial") {
+                    TrialNoteLine(
+                        daysRemaining = days,
+                        onDismiss = onDismissTrialNote,
+                    )
+                    Spacer(Modifier.height(RaddTokens.Space.Xs))
+                }
+            }
+            if (state.isOffline && hasSaved) {
+                item(key = "status:offline") {
+                    OfflineBanner()
+                    Spacer(Modifier.height(RaddTokens.Space.Xs))
+                }
+            }
+            // Continue Watching sits ABOVE the hero now — the resume row is
+            // the highest-intent content for a returning viewer (YouTube puts
+            // it top; Netflix promotes in-progress into the billboard). The
+            // hero is discovery, second. Only when populated: an empty
+            // Continue Watching is no row, and the "Start watching" line
+            // below covers only a viewer with history and nothing resumable.
+            if (state.visibleContinueWatching.isNotEmpty()) {
+                item(key = "continueWatching") {
+                    Column {
+                        SectionHeader(
+                            title = "Continue watching",
+                            modifier = Modifier.padding(horizontal = RaddTokens.Space.Gutter),
+                        )
+                        // Mockup (Nov 2026): full-width rows, not a poster rail —
+                        // thumb, title, remaining label, green progress bar. Three
+                        // at most: the section is a resume list, not a catalog.
+                        // Keyed on the scope, not the work: two rows of the same
+                        // series are two different episodes.
+                        state.visibleContinueWatching.take(3).forEach { tile ->
+                            ContinueWatchingRow(
+                                tile = tile,
+                                onClick = { onPostClick(tile.post) },
+                                // Phase 7 (D1): the × removes this scope from
+                                // Continue Watching — server row first, then
+                                // the local rows, with Undo on the snackbar.
+                                onRemove = { onRemoveFromContinueWatching(tile) },
+                            )
+                        }
+                        Spacer(Modifier.height(RaddTokens.Space.Sm))
+                    }
+                }
+            } else if (anyVisible && state.hasWatchHistory) {
+                item(key = "startWatching") {
+                    StartWatchingPlaceholder(onBrowse = { onBrowseType(null, null) })
+                    Spacer(Modifier.height(RaddTokens.Space.Sm))
+                }
+            }
+        }
+        // P0-5: the hero is second content now, after Continue Watching —
+        // the plan's old §0.2 order (hero first) put discovery ahead of the
+        // resume row a returning viewer actually wants. The hero renders
+        // only when it has items, or while it holds its footprint for
+        // loading — on a fatal screen it renders nothing, so the fatal
+        // branch below is unaffected.
         // The carousel is 240/280dp (home fix, Nov 2026) — down from
         // 320/400dp — so the first rail peeks over the fold.
         if (heroMax > 0) {
@@ -616,7 +747,7 @@ internal fun HomeContent(
             )
         }
         // Screenshot-fix D8 (2026-11-16): 4dp, not 8dp — the chips row is
-        // 48dp already, and the gap under it is dead space before the hero.
+        // 48dp already, and the gap under it is dead space before the rails.
         item(key = "filterSpacer") {
             Spacer(Modifier.height(RaddTokens.Space.Xs))
         }
@@ -629,7 +760,7 @@ internal fun HomeContent(
         // the Search screen still uses it.
 
         // Fatal error only when *every* rail failed and none has data to show.
-        if (state.fatal != null && !anyVisible) {
+        if (isFatal) {
             // H1: the operator's channel stays above the error — a broadcast
             // is exactly what the operator has to say when the catalog is
             // down, and there is no Continue Watching here to displace.
@@ -671,95 +802,14 @@ internal fun HomeContent(
                 )
             }
         } else {
-            // The offline strip, above the content it describes: it only
-            // renders when something saved is on screen — an offline phone
-            // with nothing saved gets the error state, not a banner over a
-            // blank page.
-            if (state.isOffline && hasSaved) {
-                item(key = "offline") {
-                    OfflineBanner()
-                    Spacer(Modifier.height(RaddTokens.Space.Sm))
-                }
-            }
-            // D (home fix, Nov 2026; reflowed 2027 round 2): Continue
-            // Watching sits BELOW the hero now — the plan's §0.2 order
-            // (hero first for discovery, CW second for resume). It used
-            // to sit above the hero, so a returning viewer never saw
-            // discovery first. It is still the highest-intent row after
-            // the hero: with rows they are the real rows; without rows it
-            // is the "Start watching" placeholder — but only once the
-            // catalog has landed (anyVisible) AND this device has watch
-            // history to resume (hasWatchHistory). A4-F2: on a first run
-            // the list is empty because nothing was ever watched, and the
-            // line read as an error on a populated Home (Robo
-            // matrix-12l8h97dvq326) — Pick 3 onboards a new viewer
-            // instead. A viewer who finished everything (or removed every
-            // row) still gets the line: for them "no active shows" is
-            // true, not a bug.
-            if (state.visibleContinueWatching.isNotEmpty()) {
-                item(key = "continueWatching") {
-                    Column {
-                        SectionHeader(
-                            title = "Continue watching",
-                            modifier = Modifier.padding(horizontal = RaddTokens.Space.Gutter),
-                        )
-                        // Mockup (Nov 2026): full-width rows, not a poster rail —
-                        // thumb, title, remaining label, green progress bar. Three
-                        // at most: the section is a resume list, not a catalog.
-                        // Keyed on the scope, not the work: two rows of the same
-                        // series are two different episodes.
-                        state.visibleContinueWatching.take(3).forEach { tile ->
-                            ContinueWatchingRow(
-                                tile = tile,
-                                onClick = { onPostClick(tile.post) },
-                                // Phase 7 (D1): the × removes this scope from
-                                // Continue Watching — server row first, then
-                                // the local rows, with Undo on the snackbar.
-                                onRemove = { onRemoveFromContinueWatching(tile) },
-                            )
-                        }
-                        Spacer(Modifier.height(RaddTokens.Space.Sm))
-                    }
-                }
-            } else if (anyVisible && state.hasWatchHistory) {
-                item(key = "startWatching") {
-                    StartWatchingPlaceholder(onBrowse = { onBrowseType(null, null) })
-                    Spacer(Modifier.height(RaddTokens.Space.Sm))
-                }
-            }
-            // H1 (2027 Home fix): broadcasts + the sync line ride BELOW
-            // Continue Watching now — a returning viewer sees their shows
-            // first, not chores. The fatal branch above keeps broadcasts
-            // above the error, where there is no CW to displace.
-            state.broadcasts.forEach { broadcast ->
-                item(key = "broadcast:${broadcast.id}") {
-                    BroadcastBanner(
-                        broadcast = broadcast,
-                        onDismiss = { onDismissBroadcast(broadcast.id) },
-                    )
-                    Spacer(Modifier.height(RaddTokens.Space.Sm))
-                }
-            }
-
-            // Freshness (home fix, Nov 2026): the "Updated X ago" line, only
-            // when the cache is stale or the phone is offline (see above).
-            if (showSyncLine) {
-                item(key = "syncLine") {
-                    Text(
-                        text = syncLine ?: "",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = RaddTokens.Space.Gutter, vertical = RaddTokens.Space.Xs),
-                    )
-                }
-            }
-
+            // P0-5: the offline banner, the broadcasts, the sync line and
+            // the trial note live in the status strip above the hero now —
+            // nothing non-content sits in this branch above Rail 1.
             // H11 (2027 Home fix, round 2): the My List strip — the viewer's
-            // saved titles as a rail between the broadcasts/sync line and
-            // rail 1, so the saved titles are one tap away instead of a tab
-            // away. Only when the viewer has saved something; an empty My
-            // List is no strip, not an empty rail. No dedupe against the
-            // rails below: the same title in "My List" and a genre rail is
+            // saved titles as a rail just above rail 1, so the saved titles
+            // are one tap away instead of a tab away. Only when the viewer
+            // has saved something; an empty My List is no strip, not an
+            // empty rail. No dedupe against the rails below: the same title
             // legitimate, like Netflix.
             if (state.visibleSavedPosts.isNotEmpty()) {
                 item(key = "myListStrip") {
@@ -774,16 +824,15 @@ internal fun HomeContent(
                 }
             }
 
-            // H1 (2027 Home fix, round 2): the hero lives at the top of
-            // the feed now (above the sticky chips) — it moved out of
-            // this branch, so nothing renders here in its place.
             // E (home fix, Nov 2026): Pick 3 rides BELOW the first rail
             // now — it used to ride below the hero, so a new viewer met
             // the card before any rail. The first rail is first content;
-            // the card follows it. When no rail renders (empty feed), the
-            // card rides right after the hero instead — it still onboards.
-            // The first rail is emitted here, not in the loop below, so
-            // the card sits between rail 1 and rail 2.
+            // the card follows it (after the Live TV rail below). When no
+            // rail renders (empty feed), the card rides right after the
+            // hero instead — it still onboards. The first rail is emitted
+            // here, not in the loop below, so the card sits between rail 1
+            // and rail 2. P0-6: rail 1 is hero-adjacent, so it keeps the
+            // 150dp spotlight card.
             renderedRows.firstOrNull()?.let { section ->
                 item(key = "rail:${section.key}") {
                     HomeRailSection(
@@ -791,7 +840,7 @@ internal fun HomeContent(
                         index = 0,
                         onPostClick = onPostClick,
                         onPlayClick = onPlayClick,
-                        itemWidthDp = railCardWidthDp,
+                        itemWidthDp = spotlightRailWidthDp,
                         onSeeAll = {
                             if (section.industry != null) {
                                 onFacetSelected(null, section.industry, null)
@@ -816,22 +865,17 @@ internal fun HomeContent(
                     )
                 }
             }
-            // H9 (2027 Home fix, round 2): the mood row — "Something short",
-            // "Feel good", "Mind-bending", "Dark & gritty" — sits directly
-            // above the genre rails, after the Top 10 chart (rail 1 above).
-            // A filter belongs next to the content it filters; the sticky
-            // category row under the hero is the navigation, this row is a
-            // discovery prompt. It filters only the rails below it
-            // (moodRows); the Top 10 chart never filters. Tapping the
-            // active mood clears it. Hidden when there is only the chart
-            // and no genre rail below it — a filter with nothing to filter
-            // is chrome, not discovery.
-            if (renderedRows.size > 1) {
-                item(key = "mood") {
-                    HomeMoodRow(
-                        selected = mood,
-                        onSelect = { chosen -> mood = if (chosen == mood) null else chosen },
-                        filter = filter,
+            // P0-2: the Live TV rail — the replacement destination for the
+            // Live TV tab. Favourites first, then the rest; a tap opens the
+            // Live TV destination (onLiveTvClick), the star toggles in place.
+            // Only when channels have loaded; an empty Live TV is no rail.
+            if (liveTvChannels.isNotEmpty()) {
+                item(key = "liveTvRail") {
+                    LiveTvRail(
+                        channels = liveTvChannels,
+                        favoriteChannelIds = liveTvFavoriteIds,
+                        onLiveTvClick = onLiveTvClick,
+                        onToggleFavorite = onToggleLiveTvFavorite,
                     )
                 }
             }
@@ -861,39 +905,18 @@ internal fun HomeContent(
                 }
             }
 
-            // The free trial note, as one dismissible line below the
-            // hero instead of a card above it. A dismissed note never
-            // returns.
-            state.trialDaysRemaining?.let { days ->
-                item(key = "trial") {
-                    TrialNoteLine(
-                        daysRemaining = days,
-                        onDismiss = onDismissTrialNote,
-                    )
-                    Spacer(Modifier.height(RaddTokens.Space.Sm))
-                }
-            }
-
-            // A5 (user decision 04:42 PKT 20 Nov): the Browse row carries
-            // only the server's facet chips now — its type jump-offs
-            // (All / Movies / Series / Anime) duplicated the filter row
-            // above, so they are gone; one filter row only.
-            item(key = "browse") {
-                BrowseSection(
-                    facets = state.facets,
-                    onFacetSelected = onFacetSelected,
-                )
-                Spacer(Modifier.height(RaddTokens.Space.Sm))
-            }
-
+            // P0-5: the trial note lives in the status strip above the hero
+            // now — it is not a feed row. The Browse row is the LAST row
+            // now (below the rails, see below) — facets are the way out of
+            // the feed, not a row in the middle of it.
             // The remaining rails (rail 2 onward) — the first rail was
-            // emitted above, so the mood row and Pick 3 sit between rail 1
-            // and rail 2. H9: these are the mood-filtered rails (moodRows)
-            // — the category filter already narrowed them above, the mood
-            // narrows them here, and a rail the mood empties is gone.
+            // emitted above, so the Live TV rail and Pick 3 sit between
+            // rail 1 and rail 2. The category filter already narrowed them
+            // above. P0-6: a trending (Top 10) rail keeps the 150dp
+            // spotlight card; every other rail is the 120dp baseline.
             // The stagger index continues from 1, so the entrance
             // animation does not restart at the first rail.
-            moodRows.forEachIndexed { dropIndex, section ->
+            renderedRows.drop(1).forEachIndexed { dropIndex, section ->
                 val index = dropIndex + 1
                 item(key = "rail:${section.key}") {
                     HomeRailSection(
@@ -901,7 +924,7 @@ internal fun HomeContent(
                         index = index,
                         onPostClick = onPostClick,
                         onPlayClick = onPlayClick,
-                        itemWidthDp = railCardWidthDp,
+                        itemWidthDp = if (section.sort == "trending") spotlightRailWidthDp else railCardWidthDp,
                         onSeeAll = {
                             if (section.industry != null) {
                                 onFacetSelected(null, section.industry, null)
@@ -926,28 +949,18 @@ internal fun HomeContent(
                     )
                 }
             }
-            // H9: a mood that matches nothing in the rails below is not a
-            // broken catalog — say so, and offer the way back. This never
-            // fires while a rail is still loading: an empty mood on a
-            // half-loaded feed would blame the mood for the network. It
-            // also never fires when the category filter already hid every
-            // rail — that has its own message below.
-            if (mood != null && renderedRows.isNotEmpty() && moodRows.isEmpty() &&
-                state.visibleSections.none { it.loading } && state.fatal == null
-            ) {
-                item(key = "emptyMood") {
-                    EmptyState(
-                        // H5: the empty-mood result announces itself.
-                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-                        title = "Nothing feels like that right now.",
-                        message = "Try another mood, or show everything.",
-                        action = {
-                            OutlinedButton(onClick = { mood = null }) {
-                                Text("Clear mood")
-                            }
-                        },
-                    )
-                }
+            // P0-5: the Browse row is the LAST row — the facets are the way
+            // out of the feed, not a row in the middle of it. A5 (user
+            // decision 04:42 PKT 20 Nov): it carries only the server's facet
+            // chips — its type jump-offs (All / Movies / Series / Anime)
+            // duplicated the filter row above, so they are gone; one filter
+            // row only.
+            item(key = "browse") {
+                BrowseSection(
+                    facets = state.facets,
+                    onFacetSelected = onFacetSelected,
+                )
+                Spacer(Modifier.height(RaddTokens.Space.Sm))
             }
             // A filter that hides every rail is not a broken catalog — say
             // which filter came up empty, and offer the way back to everything.
@@ -1060,19 +1073,20 @@ internal const val HomeMoodRowTag = "homeMoodRow"
 internal const val HomeFeedTag = "homeFeed"
 
 /**
- * The Home header (2026-11-17): the centred two-line logo on its own.
- * The check-in pill and the Coin Wallet pill lived here until coins and
- * daily check-in were removed, and it is not gated on the quality gate:
- * the logo shows whether the gate is on or off. Screenshot-fix D8
- * (2026-11-16) had already shrunk the header so the hero starts higher;
- * with the pills gone the row is just the logo. Gemini home review
- * (Nov 2026): once the feed scrolls ([scrolled]), the pinned logo gets a
- * solid page-background plate — a transparent header lets bright poster
- * text (NOW YOU SEE ME..., MASTERPLAN) collide behind the logo. At the
- * top the plate is transparent: nothing scrolls behind it there.
+ * The Home header (P0-4, 2027 Home fix): a single-line logo left — the
+ * mark at 24dp cap height plus the wordmark on one line — with the escape
+ * hatches on the right: search glyph (the Search tab), cast, profile
+ * avatar. The centred two-line "RADD STREAM" wordmark is gone: users know
+ * what app they opened, and the top bar's job is escape hatches, not brand
+ * vanity. The solid background plate once scrolled stays — a transparent
+ * header lets bright poster text collide behind the logo.
  */
 @Composable
-internal fun HomeHeader(scrolled: Boolean = false) {
+internal fun HomeHeader(
+    scrolled: Boolean = false,
+    onSearchClick: () -> Unit = {},
+    onProfileClick: () -> Unit = {},
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1081,27 +1095,206 @@ internal fun HomeHeader(scrolled: Boolean = false) {
                 else Color.Transparent,
             )
             .padding(horizontal = RaddTokens.Space.Gutter, vertical = RaddTokens.Space.Xs),
-        horizontalArrangement = Arrangement.Center,
+        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(
+        Row(
             modifier = Modifier.testTag(HomeLogoTag),
-            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
         ) {
-            val nameParts = Brand.name.uppercase().split(" ")
+            RaddStreamMark(
+                diameter = 24.dp, // token-exempt: logo cap height, fixed brand geometry
+                color = MaterialTheme.colorScheme.primary,
+            )
             Text(
-                text = nameParts.getOrNull(0) ?: "RADD",
+                text = Brand.name.uppercase(),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
-            )
-            Text(
-                text = nameParts.getOrNull(1) ?: "STREAM",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = onSearchClick,
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_action_search),
+                    contentDescription = "Search",
+                    tint = MaterialTheme.colorScheme.onBackground,
+                )
+            }
+            HomeCastButton()
+            IconButton(
+                onClick = onProfileClick,
+                modifier = Modifier.size(48.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp) // token-exempt: avatar circle, fixed brand geometry
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_action_user),
+                        contentDescription = "Profile",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp), // token-exempt: avatar glyph, fixed icon geometry
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * P0-4: the cast route-picker on Home, the same standard MediaRouteButton
+ * Detail uses — the framework owns the picker dialog plus the button's own
+ * connected/connecting states. Composed only when Cast can initialise on
+ * this device (runCatching, the app's own CastSpike pattern): a phone
+ * without Play Services gets search + avatar only, never a dead button or
+ * a crash — and under Robolectric the probe fails the same way, so the
+ * header tests stay green. No receiver around is not an error: the picker
+ * says so itself.
+ */
+@Composable
+private fun HomeCastButton() {
+    val context = LocalContext.current
+    val castAvailable = remember(context) {
+        runCatching {
+            CastContext.getSharedInstance(context.applicationContext)
+            true
+        }.getOrDefault(false)
+    }
+    if (!castAvailable) return
+    // The description is read here, in the composable context — the
+    // AndroidView factory below is not one, so stringResource cannot run
+    // inside it.
+    val description = stringResource(R.string.detail_cast)
+    Box(
+        modifier = Modifier.size(48.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        AndroidView(
+            factory = { factoryContext ->
+                MediaRouteButton(factoryContext).apply {
+                    CastButtonFactory.setUpMediaRouteButton(factoryContext, this)
+                    contentDescription = description
+                }
+            },
+            modifier = Modifier.size(48.dp),
+        )
+    }
+}
+
+/**
+ * P0-5: one status-strip row — a compact one-line message on the tonal
+ * surface with an explicit 48dp dismiss (the pinned touch floor; the
+ * audit's 32dp visual ideal yields to it, see the strip comment in
+ * [HomeContent]). The strip shows each row only when its message matters:
+ * a broadcast, a stale/offline sync line, the trial note (which rides the
+ * existing [TrialNoteLine] instead), the offline banner (live state, no
+ * dismiss — it clears when the phone is back online).
+ */
+@Composable
+private fun HomeStatusRow(
+    text: String,
+    onDismiss: () -> Unit,
+    dismissDescription: String,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = RaddTokens.Space.Gutter),
+        shape = RaddTokens.Shape.Input,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = RaddTokens.Space.Md, top = RaddTokens.Space.Xs, bottom = RaddTokens.Space.Xs, end = RaddTokens.Space.Xs),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_action_close),
+                    contentDescription = dismissDescription,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/** The Live TV rail, so tests can find it without the title. */
+internal const val LiveTvRailTag = "homeLiveTvRail"
+
+/** P0-2: how many channels the Home rail shows — a rail, not the grid. */
+private const val LIVE_TV_RAIL_LIMIT = 10
+
+/** P0-2: the rail's channel-card width — a 16:9 logo plate + name + meta. */
+private const val LIVE_TV_RAIL_CARD_WIDTH_DP = 160
+
+/**
+ * P0-2 (2027 Home fix): the Live TV rail — the replacement destination
+ * for the Live TV tab. A contextual rail after Rail 1, interleaved with
+ * the other contextual rails: favourites first (the channels the viewer
+ * starred), then the rest. A tap opens the Live TV destination
+ * ([onLiveTvClick]); the star toggles in place. The tiles are the
+ * Live TV screen's own [LiveTvChannelCard], so the LIVE badge, the logo
+ * plate and the meta line are the same card in both places. No rail while
+ * the channels have not loaded — an empty Live TV is no rail, not an
+ * empty rail.
+ */
+@Composable
+internal fun LiveTvRail(
+    channels: List<LiveTvChannel>,
+    favoriteChannelIds: Set<Int>,
+    onLiveTvClick: () -> Unit,
+    onToggleFavorite: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (channels.isEmpty()) return
+    // Favourites first, then the rest, in registry order — the rail leads
+    // with the channels the viewer already chose.
+    val railChannels = channels
+        .sortedByDescending { it.id in favoriteChannelIds }
+        .take(LIVE_TV_RAIL_LIMIT)
+    Column(modifier = modifier.testTag(LiveTvRailTag)) {
+        SectionHeader(
+            title = "Live TV",
+            modifier = Modifier.padding(horizontal = RaddTokens.Space.Gutter),
+            action = {
+                SeeAllButton(
+                    onClick = onLiveTvClick,
+                    contentDescription = "See all Live TV",
+                )
+            },
+        )
+        MediaRail(
+            items = railChannels,
+            key = { channel -> channel.id },
+            itemWidthDp = LIVE_TV_RAIL_CARD_WIDTH_DP,
+        ) { channel ->
+            LiveTvChannelCard(
+                channel = channel,
+                onClick = onLiveTvClick,
+                isFavorite = channel.id in favoriteChannelIds,
+                onFavoriteClick = { onToggleFavorite(channel.id) },
+            )
+        }
+        Spacer(Modifier.height(RaddTokens.Space.Sm))
     }
 }
 
@@ -1144,8 +1337,12 @@ internal fun HomeFilterRow(
  * good", "Mind-bending", "Dark & gritty" — a discovery prompt, not a
  * navigation. Rides [ScrollingChipRow] + [RaddChip] like the category
  * row, so the fade and the 48dp touch floor are the shared component.
- * Tapping the active mood clears it (that toggle lives in [HomeContent],
- * where the state sits).
+ * Tapping the active mood clears it.
+ *
+ * P0-5 (2027 Home fix): the feed no longer wires this row in — one
+ * taxonomy (the sticky category chips), moods folded into rail headers
+ * or a single Mood rail instead of a second filter system. The composable
+ * stays for its standalone Paparazzi golden and that future Mood rail.
  *
  * Award lift: the row animates in with the S7 spring when the category
  * changes — a fresh `filter` value recreates the entrance state, so the
@@ -1205,10 +1402,9 @@ internal fun HomeMoodRow(
 
 /**
  * H11 (2027 Home fix, round 2): the My List strip — the viewer's saved
- * titles as a rail between the broadcasts/sync line and rail 1, so the
- * saved titles are one tap away instead of a tab away. A doorway, not a
- * second My List: the tiles open Detail, the play button starts the work
- * at once (APP-06 one-tap play, same as the My List screen), and there
+ * titles as a rail just above rail 1, so the saved titles are one tap away
+ * instead of a tab away. A doorway, not a second My List: the tiles open
+ * Detail, the play button starts the work at once (APP-06 one-tap play,
  * is no remove × on the tiles — a × on a horizontal rail is a
  * slipping-thumb trap, and the My List screen already owns removal. No
  * dedupe against the rails below: the same title in "My List" and a
@@ -1278,7 +1474,7 @@ internal fun MyListStrip(
                     sharedTransitionScope = sharedTransitionScope,
                     animatedVisibilityScope = animatedVisibilityScope,
                     // Audit #8: the compact line (year · rating) fits the
-                    // 132dp rail card; the type stays in the tile's spoken
+                    // 120dp rail card; the type stays in the tile's spoken
                     // sentence and on Detail. Two title lines, like the
                     // rails, so long titles do not truncate mid-word.
                     compactMeta = true,
@@ -2036,7 +2232,7 @@ private fun HomeRailSection(
                         rank = if (isRanked && itemIndex < 10) itemIndex + 1 else null,
                         // Audit #8: the full "2023 · ★ 7.0 · Movie" line
                         // truncates the type word mid-word ("Mo…") on a
-                        // 132dp rail card — the compact line drops it, so
+                        // 120dp rail card — the compact line drops it, so
                         // year · rating fits. The type stays in the tile's
                         // spoken sentence and on Detail. Two title lines
                         // for the same reason: one line truncates long

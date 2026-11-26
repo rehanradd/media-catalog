@@ -33,15 +33,21 @@ object CardGeometry {
 
     /**
      * Rail tile width. A rail cell and its placeholder both draw from this one number.
-     * Density (2026-11-15): 132 dp showed ~2.4 tiles per row on a 360 dp phone;
-     * 112 dp shows ~2.7 and matches Netflix's ~110–120 dp rail. Mockup
-     * (2026-11-15): the target layout's rails are wider — ~150 dp posters,
-     * 3:4-ish, two per row with the next peeking — so the rail grows to 150 dp.
-     * The poster ratio stays 2:3 (see [POSTER_ASPECT]): one ratio per artwork
-     * class, and the skeleton follows this same number. Continue Watching
-     * stays its own width — it is full-width rows now, not rail tiles.
+     * Density (P0-6, 2027 Home fix): the 120 dp baseline shows ~3 tiles per
+     * row on a 360 dp phone (Netflix/Prime run ~105–120 dp); the old 150 dp
+     * showed ~2.1. 150 dp survives only for spotlight rails
+     * ([SPOTLIGHT_RAIL_CARD_WIDTH_DP]): hero-adjacent, Top 10, curated.
+     * Continue Watching stays its own width — it is full-width rows now,
+     * not rail tiles.
      */
-    const val RAIL_CARD_WIDTH_DP: Int = 150
+    const val RAIL_CARD_WIDTH_DP: Int = 120
+
+    /**
+     * Spotlight rail tile width (P0-6): the old 150 dp baseline, kept for
+     * rails that earn it — the hero-adjacent first rail, the Top 10 chart,
+     * curated rails. Every other rail is the [RAIL_CARD_WIDTH_DP] baseline.
+     */
+    const val SPOTLIGHT_RAIL_CARD_WIDTH_DP: Int = 150
 
     /**
      * Continue Watching rows: the poster's width in the full-width row (mockup,

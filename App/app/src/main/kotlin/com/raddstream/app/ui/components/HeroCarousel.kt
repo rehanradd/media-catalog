@@ -801,11 +801,11 @@ private fun HeroSlide(
                     ),
                     interactionSource = watchNowSource,
                     // Mockup (Nov 2026): the two buttons share the slide's
-                    // width equally and read in ALL CAPS — "WATCH NOW" /
-                    // "MY LIST" — instead of wrapping their labels. The
-                    // inset card leaves each button ~144dp wide, and the
+                    // width equally and read in sentence case — "Watch now" /
+                    // "My list" (P0-7: the ALL-CAPS read was a 2016 tell).
+                    // The inset card leaves each button ~144dp wide, and the
                     // default 24dp content padding + 22dp icon pushed
-                    // "WATCH NOW" onto two lines — so both buttons take
+                    // "Watch now" onto two lines — so both buttons take
                     // 12dp of content padding and an 18dp icon, which fits
                     // the longest label on one line with room to spare.
                     contentPadding = PaddingValues(horizontal = RaddTokens.Space.Md, vertical = RaddTokens.Space.Sm),
@@ -817,7 +817,7 @@ private fun HeroSlide(
                         modifier = Modifier.size(18.dp), // token-exempt: icon size, not spacing
                     )
                     Spacer(Modifier.width(RaddTokens.Space.Sm))
-                    Text(Brand.copy("hero_watch_now", "Watch Now").uppercase(), fontWeight = FontWeight.Bold)
+                    Text(Brand.copy("hero_watch_now", "Watch Now"), fontWeight = FontWeight.Bold)
                 }
                 // Session 121 (P-26): My List on the hero, so saving a title does not
                 // need a trip to its details page first. The filled heart says saved.
@@ -851,7 +851,7 @@ private fun HeroSlide(
                         modifier = Modifier.size(18.dp), // token-exempt: icon size, not spacing
                     )
                     Spacer(Modifier.width(RaddTokens.Space.Sm))
-                    Text((if (isFavorite) "Saved" else "My List").uppercase(), fontWeight = FontWeight.Bold)
+                    Text(if (isFavorite) "Saved" else "My List", fontWeight = FontWeight.Bold)
                 }
             }
         }

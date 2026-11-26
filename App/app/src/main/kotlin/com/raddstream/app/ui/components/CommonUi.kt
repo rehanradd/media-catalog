@@ -525,12 +525,14 @@ fun rememberDelayedVisible(
 }
 
 /**
- * The catalog grid's one column rule: a tile is never narrower than 120dp, so a phone gets
- * three columns and a tablet gets more without any screen saying so. Every real grid and
+ * The catalog grid's one column rule: a tile is never narrower than 100dp, so a 360dp phone
+ * gets three columns and a tablet gets more without any screen saying so. Every real grid and
  * [PosterGridSkeleton] draw from this single value — a skeleton with its own column count is
  * a placeholder whose cells jump sideways the moment the cards replace them.
+ * P0-6 (2027 Home fix): 120dp gave two columns on a phone (328dp / 120dp = 2.7 → 2); 100dp
+ * gives three (328dp / 100dp = 3.2 → 3), the 2027 streaming norm for poster-only grids.
  */
-val CatalogGridColumns: GridCells = GridCells.Adaptive(minSize = 120.dp)
+val CatalogGridColumns: GridCells = GridCells.Adaptive(minSize = 100.dp)
 
 /**
  * The loading stand-in for a poster grid: the same [CatalogGridColumns], the same gutters and

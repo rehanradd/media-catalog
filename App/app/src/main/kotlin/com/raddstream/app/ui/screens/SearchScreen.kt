@@ -1937,24 +1937,25 @@ internal fun SearchContent(
                             modifier = Modifier.padding(horizontal = 0.dp),
                         )
                     }
-                    // P1-S1: results are a scannable vertical grid, two posters
-                    // wide — rails are for Home. Scanning 20 results no longer
-                    // means swiping every rail sideways.
+                    // P0-6 (2027 Home fix): results are a scannable vertical grid, three posters
+                    // wide — rails are for Home, and one density rules everywhere (the
+                    // discovery "Recommended for you" grid was already 3-wide). Scanning 20
+                    // results no longer means swiping every rail sideways.
                     // Session 158 (S5): a row is keyed by what it holds, not
                     // where it sits — a re-emitted list (the same search
                     // landing twice, a second identical submit) rebuilds the
                     // groups, and an index key lets the rows shift under a
                     // press in flight. A content key keeps the row — and the
                     // press on it — alive across the re-emission.
-                    // Motion (round 2): the rows stagger in — each pair fades
+                    // Motion (round 2): the rows stagger in — each trio fades
                     // and rises 24dp behind the one above it, on the emphasized
                     // spring, capped at 300ms so a long list never waits on the
                     // animation. The delay is pure over the row's position, so
                     // it is stable across recompositions.
-                    group.items.chunked(2).forEachIndexed { pairIndex, pair ->
-                        item(key = "${group.typeKey}-${pair.joinToString(separator = ",") { it.id.toString() }}") {
+                    group.items.chunked(3).forEachIndexed { rowIndex, trio ->
+                        item(key = "${group.typeKey}-${trio.joinToString(separator = ",") { it.id.toString() }}") {
                             SearchStaggeredFade(
-                                delayMillis = searchEntranceDelayMs(groupIndex * 10 + pairIndex),
+                                delayMillis = searchEntranceDelayMs(groupIndex * 10 + rowIndex),
                                 // Round 6 (motion): re-staggers on every
                                 // new query — see the staggerKey above.
                                 staggerKey = staggerKey,
@@ -1963,7 +1964,7 @@ internal fun SearchContent(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 ) {
-                                    pair.forEach { post ->
+                                    trio.forEach { post ->
                                         // Screen audit #7 (Nov 2026): result tiles
                                         // get two title lines and no bare-type meta
                                         // — a long title reads whole under the
@@ -1992,7 +1993,10 @@ internal fun SearchContent(
                                             suppressBareTypeMeta = true,
                                         )
                                     }
-                                    if (pair.size == 1) Spacer(Modifier.weight(1f))
+                                    // A short last row holds its width: empty
+                                    // cells keep the row's posters at grid
+                                    // width instead of stretching to fill it.
+                                    repeat(3 - trio.size) { Spacer(Modifier.weight(1f)) }
                                 }
                             }
                             Spacer(Modifier.height(12.dp))
