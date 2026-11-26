@@ -28,7 +28,7 @@ import org.robolectric.RobolectricTestRunner
  * check-in sheet, the streak ladder and the coin balance. What this pins
  * is the header itself: the centred logo stays, no pill exists in any
  * state, and the filter chips under it still filter the rails in place,
- * with the hero card inset 16dp from the screen edges.
+ * with the hero full-bleed edge-to-edge (P1-5).
  */
 @RunWith(RobolectricTestRunner::class)
 class HomeHeaderTest {
@@ -203,10 +203,10 @@ class HomeHeaderTest {
         compose.onNodeWithText("Movies Rail").assertExists()
     }
 
-    // ── the hero card ──────────────────────────────────────────────────
+    // ── the hero ──────────────────────────────────────────────────────────
 
     @Test
-    fun heroCardIsInsetWithSentenceCaseButtons() {
+    fun heroIsFullBleedWithSentenceCaseButtons() {
         compose.setContent {
             RaddStreamTheme {
                 HomeContent(
@@ -227,18 +227,24 @@ class HomeHeaderTest {
         // P0-7: the buttons read in sentence case, not ALL CAPS.
         compose.onNodeWithText("Watch now").assertIsDisplayed()
         compose.onNodeWithText("My list").assertIsDisplayed()
-        // The inset card: the slide's title starts 16dp in from the screen
-        // edge (the card inset) plus its own 16dp of text padding, so its
-        // left edge clears 16dp with room to spare. The Watch now button
-        // pins the same inset directly: it sits in the slide's 16dp-padded
-        // column inside the 16dp-inset card, so its left edge clears 16dp
-        // even on the art-less slide, where the title rides the fallback
-        // card's centred label instead.
+        // P1-5: the hero is full-bleed — the slide's art spans edge to
+        // edge, so the merged slide node starts at the screen edge itself.
+        // The words still start 16dp in: the title and the Watch now
+        // button sit in the slide's own 16dp-padded text column, so their
+        // left edges clear 16dp even on the art-less slide, where the title
+        // rides the fallback card's centred label instead. The title is
+        // measured in the unmerged tree: the merged node is the whole
+        // slide, and its bounds are the art's, not the text's.
+        val slideBounds = compose.onNodeWithContentDescription("Hero Title", substring = true)
+            .fetchSemanticsNode().boundsInRoot
+        with(compose.density) {
+            assertTrue("hero art is not edge-to-edge", slideBounds.left.toDp() == 0.dp)
+        }
         val buttonBounds = compose.onNodeWithText("Watch now").fetchSemanticsNode().boundsInRoot
         with(compose.density) {
             assertTrue("Watch now starts under 16dp from the edge", buttonBounds.left.toDp() >= 16.dp)
         }
-        val bounds = compose.onNodeWithText("Hero Title").fetchSemanticsNode().boundsInRoot
+        val bounds = compose.onNodeWithText("Hero Title", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         with(compose.density) {
             assertTrue("hero title starts under 16dp from the edge", bounds.left.toDp() >= 16.dp)
         }
