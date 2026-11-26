@@ -169,12 +169,14 @@ fun PosterCard(
     rank: Int? = null,
     /**
      * Home fix (Nov 2026): direct play — one tap starts the title, no Detail
-     * stop in between. Only Home rails and My List saved tiles pass it
-     * (APP-06, Phase 4), so only they grow the play button; everywhere else
-     * the tile stays a doorway to Detail. Null means no play button. The tap
-     * opens Detail with autoplay, and Detail decides what "play" means for
-     * that title (resume, HLS, quality sheet, or the "no working link"
-     * line) — the tile never guesses playability itself.
+     * stop in between. Only Home rails pass it (APP-06, Phase 4), so only
+     * they grow the play button; everywhere else the tile stays a doorway
+     * to Detail. P2-7 (B-36): My List's saved tiles used to pass it too —
+     * the button is gone there now (tile tap opens the title, Play lives
+     * on Detail). Null means no play button. The tap opens Detail with
+     * autoplay, and Detail decides what "play" means for that title
+     * (resume, HLS, quality sheet, or the "no working link" line) — the
+     * tile never guesses playability itself.
      */
     onPlayClick: (() -> Unit)? = null,
     /**
@@ -614,8 +616,8 @@ fun PosterCard(
             // the tile. A 48dp play button in a scrimmed circle at the
             // poster's bottom-right, opposite the rank numeral; it eats
             // its own tap, so it never also opens the title (same as the
-            // heart above). Only Home rails and My List saved tiles
-            // (APP-06) pass onPlayClick, so only they grow the button.
+            // heart above). Only Home rails pass onPlayClick, so only
+            // they grow the button (P2-7 removed it from My List tiles).
             if (onPlayClick != null) {
                 IconButton(
                     onClick = onPlayClick,

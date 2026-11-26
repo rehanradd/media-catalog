@@ -33,9 +33,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -46,7 +49,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -99,13 +101,6 @@ fun MyListScreen(
     onOpenWatchHistory: () -> Unit = {},
     /** The empty list's way out: the catalog, not a sentence telling the user to go find it. */
     onBrowseClick: () -> Unit = {},
-    /**
-     * APP-06 (Phase 4): one-tap play for saved tiles — the same instant-play
-     * path Home's rail tiles use (Detail with autoplay, [DetailScreen] fires
-     * playPrimary once on open). The tile tap still opens the title; only
-     * the play button on the tile starts playback.
-     */
-    onPlayClick: (Post) -> Unit = {},
     viewModel: MyListViewModel = hiltViewModel(),
     /**
      * Round 6 motion infra: the shared-transition scopes the NavHost
@@ -123,19 +118,14 @@ fun MyListScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val saveFailedMessage = stringResource(R.string.mylist_save_failed)
 
-    // L3 (round 2): every tap answers — the save toggle and the play
-    // button tick the haptic, the same TextHandleMove tick Settings and
-    // the Player sheets use for their toggles. The tile's own press
-    // already ticks through PressHaptics; these are the controls the tile
-    // does not own.
+    // L3 (round 2): every tap answers — the save toggle ticks the
+    // haptic, the same TextHandleMove tick Settings and the Player
+    // sheets use for their toggles. The tile's own press already ticks
+    // through PressHaptics; this is the control the tile does not own.
     val haptics = LocalHapticFeedback.current
     val onToggleFavoriteWithTick: (Post) -> Unit = { post ->
         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         viewModel.toggleFavorite(post)
-    }
-    val onPlayClickWithTick: (Post) -> Unit = { post ->
-        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-        onPlayClick(post)
     }
 
     // My List review (Nov 2026): the starter rail's saved state — a v1 id
@@ -183,27 +173,48 @@ fun MyListScreen(
                 // its nav tab — the title is paint, not a second announcement.
                 title = { Text("My List", modifier = Modifier.clearAndSetSemantics { }) },
                 actions = {
-                    // Audit #45: the clock means nothing on its own — it now
-                    // says "History" next to the icon, so the viewer knows
-                    // where the tap goes. The history lives next to the list
-                    // it belongs to: the same device, the same titles, one
-                    // tap away in every list state.
-                    TextButton(
-                        onClick = onOpenWatchHistory,
-                        modifier = Modifier.heightIn(min = 48.dp),
-                    ) {
-                        // S8 (round 2): the last Material default icon on this
-                        // screen — the clock is the house history glyph
-                        // (ic_action_history), the same stroke style as
-                        // the tab icons. The "History" text beside it
-                        // names the tap, so the icon needs no label.
-                        Icon(
-                            painter = painterResource(R.drawable.ic_action_history),
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp),
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text("History")
+                    // P2-7 (B-36): History leaves the top bar — a text
+                    // button with a clock icon read as a second title
+                    // next to "My List". The bar carries one icon-only
+                    // action now (the house overflow glyph, the same one
+                    // Detail's top bar uses) and History lives one tap
+                    // inside the menu. The destination is unchanged —
+                    // the same device, the same titles, one tap away in
+                    // every list state.
+                    var showOverflowMenu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(
+                            onClick = { showOverflowMenu = true },
+                            modifier = Modifier
+                                .testTag(MyListOverflowButtonTag)
+                                .heightIn(min = 48.dp),
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_player_more),
+                                contentDescription = "More options",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(24.dp),
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showOverflowMenu,
+                            onDismissRequest = { showOverflowMenu = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("History") },
+                                leadingIcon = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_action_history),
+                                        contentDescription = null,
+                                    )
+                                },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    onOpenWatchHistory()
+                                },
+                                modifier = Modifier.testTag(MyListHistoryMenuItemTag),
+                            )
+                        }
                     }
                 },
             )
@@ -287,7 +298,6 @@ fun MyListScreen(
             else -> MyListLoadedContent(
                 state = state,
                 onPostClick = onPostClick,
-                onPlayClick = onPlayClickWithTick,
                 onRemove = { viewModel.remove(it) },
                 onSort = { viewModel.setSort(it) },
                 onFilter = { viewModel.setFilter(it) },
@@ -316,6 +326,10 @@ fun MyListScreen(
  * the rail and the 48dp Browse button without the Hilt ViewModel.
  */
 internal const val MyListBrowseButtonTag = "myListBrowseCatalog"
+
+/** P2-7 (B-36): the top-bar overflow that carries History now. */
+internal const val MyListOverflowButtonTag = "myListOverflowButton"
+internal const val MyListHistoryMenuItemTag = "myListHistoryMenuItem"
 
 @Composable
 internal fun MyListHiddenContent(
@@ -415,10 +429,9 @@ internal fun MyListHiddenContent(
 private const val MyListRemoveExitDelayMs = 300L
 
 /**
- * The loaded list: the saved count, the sort chips, and the grid — with
- * the starter shelf as a full-span footer while the list is still small.
- * Internal so the mockup test can pin the count, the progress words and
- * the shelf gate without the Hilt ViewModel.
+ * The loaded list: the saved count, the sort chips, and the grid.
+ * Internal so the mockup test can pin the count and the progress words
+ * without the Hilt ViewModel.
  */
 @Composable
 internal fun MyListLoadedContent(
@@ -428,14 +441,6 @@ internal fun MyListLoadedContent(
     onSort: (ListSort) -> Unit,
     isFavorite: (Post) -> Boolean,
     onToggleFavorite: (Post) -> Unit,
-    /**
-     * APP-06 (Phase 4): one-tap play for saved tiles. Wired to the grid
-     * tiles only — the starter shelf below stays a doorway, like the
-     * discovery rails in the empty states. Defaults to no-op so existing
-     * callers (and the mockup tests) keep compiling; NavGraph passes the
-     * autoplay navigation.
-     */
-    onPlayClick: (Post) -> Unit = {},
     /** L1 (round 2): the filter chip tap. Defaults to no-op like onSort. */
     onFilter: (MyListFilter) -> Unit = {},
     /** L4 (round 2): the inline rails-retry tap. Defaults to no-op. */
@@ -597,14 +602,13 @@ internal fun MyListLoadedContent(
                             post = post,
                             onClick = { onPostClick(post) },
                             onRemove = { onRemoveWithExit(post.id) },
-                            // APP-06 (Phase 4): the saved tile is the strongest
-                            // resume case — it grows the same play button Home's
-                            // rails have, opening Detail with autoplay. The tile
-                            // tap still opens the title; the × beside the title
-                            // still removes it. Detail decides what "play" means
-                            // for the title (resume, HLS, quality sheet, or the
-                            // "no working link" line) — the tile never guesses.
-                            onPlayClick = { onPlayClick(post) },
+                            // P2-7 (B-36): the tile is a doorway again —
+                            // no play button on it. The tile carried play
+                            // + remove × + download badge + progress at
+                            // once; the tap opens the title and Play lives
+                            // on Detail, so the button bought one saved
+                            // tap at the cost of the busiest tile in the
+                            // app. Home's rail tiles keep theirs.
                             // L2 (round 2): the download badge — a verified
                             // copy on the device, from the keep store.
                             isDownloaded = state.downloadedPostIds.contains(post.id),
@@ -705,43 +709,17 @@ internal fun MyListLoadedContent(
                         }
                     }
                 }
-            // F12 & Small #9: place the starter shelf inside the scrolling grid as
-            // a full-span footer when the trending load produced titles, so compact
-            // or scaled screens never clip either the favorites or the suggestions.
-            // The shelf is a *starter* shelf: it shows only while the list is
-            // small (at most five visible favorites), so a small list shows
-            // it the same way in every session instead of depending on
-            // whether this ViewModel was born onto one save or two.
-            // UI/UX audit Library #5 (Nov 2026): at one save the shelf
-            // vanished the moment a second title was saved — a 2-save list
-            // lost all suggestions. Five keeps discovery for small lists;
-            // the bound stays fixed, so the session-consistency rule above
-            // still holds.
-            // L1 (round 2): the shelf is a discovery footer for the whole
-            // list — under a filter it would show titles the filter just
-            // hid, so it stays on All only.
-            if (state.filter == MyListFilter.ALL &&
-                state.popular.isNotEmpty() && state.favorites.size <= 5
-            ) {
-                item(
-                    key = "my_list_starter_shelf",
-                    span = { GridItemSpan(maxLineSpan) },
-                ) {
-                    PopularRow(
-                        popular = state.popular,
-                        onPostClick = onPostClick,
-                        isFavorite = isFavorite,
-                        onToggleFavorite = { onToggleFavorite(it) },
-                        downloadedPostIds = state.downloadedPostIds,
-                        horizontalPadding = 0.dp,
-                        sharedTransitionScope = sharedTransitionScope,
-                        animatedVisibilityScope = animatedVisibilityScope,
-                    )
-                }
-            }
-            // L4 (round 2): a failed rail load leaves the inline retry in
-            // the footer's place — the shelf needs popular titles to show,
-            // and a failure has none, so the card never competes with it.
+            // P2-8 (B-37): no starter shelf in the loaded grid. The
+            // full-span PopularRow footer dominated a nearly-empty list
+            // (at most five saves it was often taller than the list
+            // itself). Discovery at zero saves lives where it belongs —
+            // the empty state's Popular + Recent rails, which stay
+            // exactly as they are — and a list with saves in it is just
+            // the list. The rails-error card below is the only footer
+            // left, and only when the rail load failed with no titles.
+            // L4 (round 2): a failed rail load leaves the inline retry as
+            // the grid's footer — the retry needs no popular titles, and
+            // a failure has none, so the card never competes with a rail.
             if (state.railsLoadFailed && state.popular.isEmpty()) {
                 item(
                     key = "my_list_rails_error",

@@ -296,13 +296,11 @@ class PaparazziPreviewTest {
     // no populated golden existed (the audit judged the loaded state from
     // code only). Two saves, one half-watched ("S2:E5 · 23 min left"), so
     // the shot pins the count line, the sort chips, the progress bar +
-    // words on the saved tile, and the starter shelf below the grid (it
-    // shows while the list is small — Library #5, at most five saves).
-    // The rail cards carry the two-line captions (Library #2) and the
-    // initials-only fallback (Library #1) like the empty state. The shelf
-    // holds only unsaved titles in this fixture, so every shelf heart is
-    // outline — the filled heart belongs to a saved title, never to a
-    // preview of one (see Library #6 above).
+    // words on the saved tile. P2-7 (B-36): the saved tiles carry no play
+    // button any more — the tile is a doorway, Play lives on Detail.
+    // P2-8 (B-37): no starter shelf below the grid — the loaded list is
+    // just the list; discovery at zero saves lives in the empty state's
+    // rails (myListEmptyState above).
     @Test
     fun myListPopulated() {
         paparazzi.snapshot {

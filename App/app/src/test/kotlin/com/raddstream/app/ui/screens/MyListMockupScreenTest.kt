@@ -333,7 +333,6 @@ class MyListMockupScreenTest {
     private fun loadedContent(
         state: MyListUiState,
         onPostClick: (Post) -> Unit = {},
-        onPlayClick: (Post) -> Unit = {},
         onRemove: (Int) -> Unit = {},
         onFilter: (MyListFilter) -> Unit = {},
         onRetryRails: () -> Unit = {},
@@ -344,7 +343,6 @@ class MyListMockupScreenTest {
                     MyListLoadedContent(
                         state = state,
                         onPostClick = onPostClick,
-                        onPlayClick = onPlayClick,
                         onRemove = onRemove,
                         onSort = {},
                         onFilter = onFilter,
@@ -377,7 +375,6 @@ class MyListMockupScreenTest {
                     MyListLoadedContent(
                         state = current,
                         onPostClick = {},
-                        onPlayClick = {},
                         onRemove = {},
                         onSort = {},
                         onFilter = {
@@ -444,38 +441,42 @@ class MyListMockupScreenTest {
     }
 
     @Test
-    fun starterShelfShowsWhileTheListIsSmall() {
+    fun starterShelfNeverShowsInLoadedList() {
+        // P2-8 (B-37): the starter shelf is gone from the loaded list —
+        // a full-span footer dominated a nearly-empty list, and the
+        // empty state already carries the discovery rails at zero
+        // saves. One save plus trending titles shows no shelf.
         loadedContent(
             loadedState(
                 favorites = listOf(post(1, "Inception")),
                 popular = listOf(post(2, "Dune"), post(3, "McLintock!")),
             ),
         )
-        compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
+        compose.mainClock.advanceTimeBy(1000)
+        compose.onNodeWithText("Trending to Start Your List").assertDoesNotExist()
     }
 
     @Test
-    fun starterShelfShowsWithTwoSaves() {
-        // UI/UX audit Library #5 (Nov 2026): the shelf used to vanish
-        // the moment a second title was saved (favorites.size <= 1) —
-        // a 2-save list lost all suggestions. The shelf stays while the
-        // list is small (at most five saves).
+    fun starterShelfNeverShowsWithTwoSaves() {
+        // P2-8 (B-37): same as above at two saves — the old ≤5 bound
+        // is gone with the shelf, not widened. Discovery at zero saves
+        // lives in the empty state's rails, not in the loaded grid.
         loadedContent(
             loadedState(
                 favorites = listOf(post(1, "Inception"), post(2, "Dune")),
                 popular = listOf(post(3, "McLintock!"), post(4, "Gen V")),
             ),
         )
-        compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
+        compose.mainClock.advanceTimeBy(1000)
+        compose.onNodeWithText("Trending to Start Your List").assertDoesNotExist()
     }
 
     @Test
     fun starterShelfHidesOnceTheListGrows() {
-        // My List review (Nov 2026): the shelf is a *starter* shelf —
-        // a small list shows it the same way in every session, whether
-        // the ViewModel was born onto one save or two. UI/UX audit
-        // Library #5 (Nov 2026): "small" is five saves, not one — the
-        // shelf leaves once the list is established.
+        // P2-8 (B-37): the shelf is gone from the loaded list at every
+        // size — the six-save case still shows no shelf, the way the
+        // one- and two-save cases above show none. Kept as the
+        // established-list pin: a list with saves in it is just the list.
         loadedContent(
             loadedState(
                 favorites = listOf(
@@ -492,66 +493,47 @@ class MyListMockupScreenTest {
         compose.onNodeWithText("Trending to Start Your List").assertDoesNotExist()
     }
 
-    // ── APP-06 one-tap play (Phase 4) ─────────────────────────────────
+    // ── P2-7 tile play button removal (B-36) ─────────────────────────
 
     @Test
-    fun savedTileGrowsAPlayButton() {
-        // APP-06: the saved tile is the strongest resume case — it grows
-        // the same play button Home's rails have, one per saved title.
-        // Two saves still show the starter shelf (the bound is five), but
-        // the shelf tiles carry no play button — PopularRow never passes
-        // onPlayClick — so every Play node here is a saved tile's.
+    fun savedTileHasNoPlayButton() {
+        // P2-7 (B-36): the saved tile is a doorway again — no play
+        // button on it. The tile carried play + remove × + download
+        // badge + progress at once; the tap opens the title and Play
+        // lives on Detail. The remove × beside the title stays (pinned
+        // below), as do the badge and the progress words.
         loadedContent(
             loadedState(listOf(post(1, "Inception"), post(2, "Dune"))),
         )
-        compose.onNodeWithContentDescription("Play Inception").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Play Dune").assertIsDisplayed()
-    }
-
-    @Test
-    fun playButtonTapPlaysThatTitleOnly() {
-        // APP-06: the play button starts its own title and never also
-        // opens it — the tap is play, not a doorway tap.
-        var played by mutableStateOf<Post?>(null)
-        val opened = mutableListOf<Post>()
-        loadedContent(
-            loadedState(listOf(post(1, "Inception"), post(2, "Dune"))),
-            onPostClick = { opened += it },
-            onPlayClick = { played = it },
-        )
-        compose.onNodeWithContentDescription("Play Dune").performClick()
-        assertEquals("Dune", played?.title)
-        assertEquals(2, played?.id)
-        assertTrue("play tap also opened a title: $opened", opened.isEmpty())
+        compose.mainClock.advanceTimeBy(1000)
+        compose.onNodeWithContentDescription("Play Inception").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Play Dune").assertDoesNotExist()
     }
 
     @Test
     fun tileTapStillOpensTheTitle() {
-        // APP-06: the tile itself stays a doorway — only the play button
-        // on it starts playback.
-        var played by mutableStateOf<Post?>(null)
+        // P2-7 (B-36): the tile itself stays a doorway — the tap opens
+        // the title, and with no play button on the tile there is
+        // nothing else a tap can start.
         val opened = mutableListOf<Post>()
         loadedContent(
             loadedState(listOf(post(1, "Inception"), post(2, "Dune"))),
             onPostClick = { opened += it },
-            onPlayClick = { played = it },
         )
         compose.onNodeWithContentDescription("Inception, 2024 · Movie").performClick()
         assertEquals(listOf("Inception"), opened.map { it.title })
-        assertTrue("tile tap also played: $played", played == null)
     }
 
     @Test
     fun removeButtonStillRemovesTheTitle() {
-        // APP-06: the management action is untouched — the × beside the
-        // title still removes its own row and starts no playback.
-        var played by mutableStateOf<Post?>(null)
+        // P2-7 (B-36): the management action is untouched — the × beside
+        // the title still removes its own row and opens nothing. The ×
+        // stays small beside the title, as the audit's fix keeps it.
         val opened = mutableListOf<Post>()
         val removed = mutableListOf<Int>()
         loadedContent(
             loadedState(listOf(post(1, "Inception"), post(2, "Dune"))),
             onPostClick = { opened += it },
-            onPlayClick = { played = it },
             onRemove = { removed += it },
         )
         compose.onNodeWithContentDescription("Remove Inception from My List").performClick()
@@ -561,7 +543,6 @@ class MyListMockupScreenTest {
         compose.mainClock.advanceTimeBy(1000)
         assertEquals(listOf(1), removed)
         assertTrue("remove tap also opened a title: $opened", opened.isEmpty())
-        assertTrue("remove tap also played: $played", played == null)
     }
 
     // ── L1/L2/L4 (round 2) ────────────────────────────────────────────
@@ -621,21 +602,24 @@ class MyListMockupScreenTest {
 
     @Test
     fun starterShelfHidesUnderAFilter() {
-        // L1: the shelf is a discovery footer for the whole list — under
-        // a filter it would show titles the filter just hid.
+        // P2-8 (B-37): the shelf is gone from the loaded list at every
+        // filter — under All there is no shelf to show, and under a
+        // filter there is still none. The old L1 rule (a discovery
+        // footer must not show titles the filter just hid) is satisfied
+        // by absence now.
         loadedContentFiltered(
             listOf(post(1, "Inception")),
             popular = listOf(post(2, "Dune"), post(3, "McLintock!")),
         )
-        compose.onNodeWithText("Trending to Start Your List").assertIsDisplayed()
+        compose.onNodeWithText("Trending to Start Your List").assertDoesNotExist()
         tapFilterAndSettle(MyListFilter.MOVIES)
         compose.onNodeWithText("Trending to Start Your List").assertDoesNotExist()
     }
 
     @Test
     fun railsErrorCardOffersRetry() {
-        // L4: a failed rail load leaves the inline retry where the shelf
-        // would have been — the card says what failed and offers the retry.
+        // L4: a failed rail load leaves the inline retry as the grid's
+        // footer — the card says what failed and offers the retry.
         var retried = false
         loadedContent(
             loadedState(listOf(post(1, "Inception")), railsLoadFailed = true),
@@ -643,9 +627,8 @@ class MyListMockupScreenTest {
         )
         compose.onNodeWithText("Couldn't load suggestions").assertIsDisplayed()
         // The card is the grid's footer, below the saved tile — on the
-        // short Robolectric window its button sits below the fold (the
-        // shelf title, at the footer's top, is visible without scrolling;
-        // this button, at the card's bottom, is not). Scroll it in first.
+        // short Robolectric window its button sits below the fold.
+        // Scroll it in first.
         compose.onNodeWithTag(MyListRailsRetryTag).performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag(MyListRailsRetryTag).performClick()
         assertTrue("retry tap did not fire", retried)

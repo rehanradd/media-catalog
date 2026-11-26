@@ -907,13 +907,6 @@ fun RaddStreamNavGraph(
                     // My List's posters animate into Detail's hero on this key.
                     sharedTransitionScope = sharedTransitionScope,
                     animatedVisibilityScope = this,
-                    // APP-06 (Phase 4): one-tap play — the saved tile's
-                    // play button opens Detail with autoplay, the same
-                    // instant-play path Home's rail tiles use, so the tap
-                    // starts the title instead of landing on the two buttons.
-                    onPlayClick = { post ->
-                        navController.navigateToPost(post, autoplay = true)
-                    },
                     onOpenWatchHistory = { navController.navigate(Screen.WatchHistory.route) },
                     // L4 (round 2): the brief's "Browse" goes to Home, not
                     // Search — Home is the catalog's front door, and the
