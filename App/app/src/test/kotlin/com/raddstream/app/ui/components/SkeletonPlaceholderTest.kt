@@ -1,7 +1,12 @@
 package com.raddstream.app.ui.components
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertDoesNotExist
+import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -45,11 +50,38 @@ class SkeletonPlaceholderTest {
                 }
             }
         }
+        // B-42 (P2-11): the skeletons mount only after the 200 ms delay
+        // gate — advance past it, so this pins the rendered skeletons and
+        // not the empty gate window.
+        compose.mainClock.advanceTimeBy(SKELETON_DELAY_MS + 50)
         // Every string contains "" — so this matches any node that carries
         // text at all, and nothing else. onAllNodes is a rule member (the
         // Session 131 trap — no import); hasText is a top-level matcher.
         compose.onAllNodes(hasText("", substring = true), useUnmergedTree = true)
             .assertCountEquals(0)
+    }
+
+    /**
+     * B-42 (P2-11): the delay gate itself — a skeleton that would appear
+     * for a load that lands in under 200 ms reads as a glitch, not as
+     * progress, so [ShimmerBox] paints nothing until the gate opens. The
+     * clock is frozen and advanced by hand (the DelayedVisibilityTest
+     * pattern), so the delay is deterministic, not wall-clock.
+     */
+    @Test
+    fun shimmerStaysHiddenUntilDelayElapses() {
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            RaddStreamTheme {
+                ShimmerBox(Modifier.size(48.dp).testTag("gatedShimmer"))
+            }
+        }
+        // Nothing yet: the 200 ms delay has not elapsed.
+        compose.onNodeWithTag("gatedShimmer").assertDoesNotExist()
+        compose.mainClock.advanceTimeBy(100)
+        compose.onNodeWithTag("gatedShimmer").assertDoesNotExist()
+        compose.mainClock.advanceTimeBy(150)
+        compose.onNodeWithTag("gatedShimmer").assertExists()
     }
 
     /**
@@ -80,6 +112,9 @@ class SkeletonPlaceholderTest {
                 PosterRailSkeleton()
             }
         }
+        // B-42 (P2-11): the skeleton mounts only after the 200 ms delay
+        // gate — advance past it before measuring.
+        compose.mainClock.advanceTimeBy(SKELETON_DELAY_MS + 50)
         compose.onNodeWithTag("posterRailCell").assertHeightIsEqualTo(250.dp)
     }
 
@@ -96,6 +131,9 @@ class SkeletonPlaceholderTest {
                 DetailSkeleton()
             }
         }
+        // B-42 (P2-11): the skeleton mounts only after the 200 ms delay
+        // gate — advance past it before measuring.
+        compose.mainClock.advanceTimeBy(SKELETON_DELAY_MS + 50)
         compose.onNodeWithTag("detailPlaySkeleton").assertHeightIsEqualTo(48.dp)
     }
 
@@ -111,6 +149,9 @@ class SkeletonPlaceholderTest {
                 HeroSkeleton()
             }
         }
+        // B-42 (P2-11): the skeleton mounts only after the 200 ms delay
+        // gate — advance past it before measuring.
+        compose.mainClock.advanceTimeBy(SKELETON_DELAY_MS + 50)
         compose.onNodeWithTag("heroTitleSkeleton").assertHeightIsEqualTo(32.dp)
     }
 }

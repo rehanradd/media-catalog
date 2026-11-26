@@ -11,6 +11,7 @@ import androidx.paging.LoadStates
 import androidx.paging.PagingData
 import androidx.paging.compose.collectAsLazyPagingItems
 import com.raddstream.app.network.models.Post
+import com.raddstream.app.ui.components.SKELETON_DELAY_MS
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Rule
@@ -73,6 +74,9 @@ class BrowseLoadMoreSkeletonTest {
                 )
             }
         }
+        // B-42 (P2-11): the placeholder cells mount only after the 200 ms
+        // delay gate — advance past it before counting.
+        compose.mainClock.advanceTimeBy(SKELETON_DELAY_MS + 50)
         // Four placeholder cells stand in for the incoming page.
         compose.onAllNodesWithTag("browseLoadMoreSkeleton").assertCountEquals(4)
         // And no spinner anywhere in the grid.

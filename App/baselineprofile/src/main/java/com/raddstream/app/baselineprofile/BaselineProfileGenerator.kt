@@ -87,7 +87,7 @@ class BaselineProfileGenerator {
         searchTab.click()
 
         // Search field — its label is the hint text.
-        val field = device.findObject(By.text("Search titles or cast"))
+        val field = device.findObject(By.text("Search titles or people"))
             ?: error("Baseline profile: no search field on the Search screen")
         field.click()
         val editText = device.findObject(By.clazz("android.widget.EditText"))

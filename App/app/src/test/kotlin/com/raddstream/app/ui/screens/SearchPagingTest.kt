@@ -33,7 +33,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
  * "Show all N results" footer is gone (A4-F4's affordance, retired: the
  * list loads the next page as the viewer scrolls), and the count line is
  * still the one count on the screen. These tests pin the new behaviour:
- * the summary line, the skeleton rows while the next page loads, and the
+ * the summary line, the delayed spinner while the next page loads, and the
  * inline retry when a page fails — all driven by the PagingData's
  * loadState, which the tests feed through a MutableStateFlow exactly the
  * way the Android Paging test guide prescribes.
@@ -138,14 +138,15 @@ class SearchPagingTest {
     }
 
     @Test
-    fun appendLoadingShowsSkeletonRowsNotASpinner() {
-        // While the next page is out, the tail of the list is two rows of
-        // the S5 geometry-matched skeleton cells — four cells, no spinner.
-        // The footer sits below the fold in the test window (the round-2
-        // category tabs added ~112dp above the results), so the test
-        // scrolls the list to it — item 3, after the tabs, the header and
-        // the one poster row. Scrolling to it composes
-        // both skeleton rows, so the pin is all four cells.
+    fun appendLoadingShowsDelayedSpinnerNotSkeletonRows() {
+        // B-42 (P2-11): while the next page is out, the tail of the list is
+        // a delayed spinner, not fixed skeleton rows — the page count is
+        // unknown, so two rows of two cells lied about the layout. The
+        // spinner mounts after the ~200 ms delay (rememberDelayedVisible,
+        // hoisted above the list, so it is already up by the time the test
+        // scrolls to the footer), and no skeleton cell stands in for the
+        // page. The footer is a single item now — index 3, after the tabs,
+        // the header and the one poster row.
         // refresh endOfPaginationReached = true, local to this test: it
         // stops the pager auto-appending (the Error sibling's fixup-3
         // mechanism), so the fixture Loading persists instead of being
@@ -160,8 +161,9 @@ class SearchPagingTest {
                 ),
             ),
         )
-        compose.onNodeWithTag(SearchResultsListTag).performScrollToIndex(4)
-        compose.onAllNodesWithTag("searchAppendSkeleton").assertCountEquals(4)
+        compose.onNodeWithTag(SearchResultsListTag).performScrollToIndex(3)
+        compose.onNodeWithTag(SearchAppendSpinnerTag).assertIsDisplayed()
+        compose.onAllNodesWithTag("searchAppendSkeleton").assertCountEquals(0)
     }
 
     @Test
@@ -205,8 +207,8 @@ class SearchPagingTest {
         // list to it first — item 3, after the tabs, the header and the
         // one poster row. (P1-11 deleted the "Showing 34 of 52 results"
         // count line, so the single-row retry footer moved from index 4
-        // to index 3; the Loading sibling's two skeleton rows still reach
-        // index 4.) Scrolling composes the footer, or waitUntil polls a
+        // to index 3; the Loading sibling's single spinner footer sits at
+        // index 3 too, since B-42.) Scrolling composes the footer, or waitUntil polls a
         // footer the LazyColumn never composed.
         compose.onNodeWithTag(SearchResultsListTag).performScrollToIndex(3)
         compose.waitUntil(timeoutMillis = 5_000) {

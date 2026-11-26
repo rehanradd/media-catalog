@@ -60,6 +60,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -137,6 +138,7 @@ import com.raddstream.app.ui.components.SearchResultsSkeleton
 import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.SkeletonBox
 import com.raddstream.app.ui.components.prefetchPosterArt
+import com.raddstream.app.ui.components.rememberDelayedVisible
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.components.searchNextPrefetchUrls
 import com.raddstream.app.ui.components.raddFilterChipColors
@@ -259,6 +261,9 @@ internal fun FuzzyBanner(
 
 /** Test tag on the results LazyColumn, so a test can scroll it to the append footer. */
 internal const val SearchResultsListTag = "searchResultsList"
+
+/** Test tag on the append spinner footer, so a test can tell the spinner from the rows above it. */
+internal const val SearchAppendSpinnerTag = "searchAppendSpinner"
 
 /**
  * The Browse route's type for a "See all" tap: the rail's type values are
@@ -2056,11 +2061,24 @@ internal fun SearchContent(
     // Feel-instant S6: the list states come from the PagingData's loadState
     // now, not a ViewModel list. The "Load more" / "Show all" footer is
     // gone — the list pages itself as the viewer scrolls, and the tail of
-    // the list is skeleton rows while the next page loads, with an inline
-    // retry when a page fails.
+    // the list is a delayed spinner while the next page loads (B-42), with
+    // an inline retry when a page fails.
     val refreshState = pagingItems.loadState.refresh
     val appendState = pagingItems.loadState.append
     val isRefreshing = refreshState is LoadState.Loading
+    // B-42 (P2-11): the append spinner is the same delay-then-minimum state
+    // machine as every other spinner ([rememberDelayedVisible]): it mounts
+    // only once the next page has been out ~200 ms, and once shown stays up
+    // at least 300 ms, so a page that lands just after the delay does not
+    // flash it on and off in the same beat. Hoisted out of the LazyColumn
+    // footer — the footer item is unmounted the moment the page lands, so
+    // it could never honour the minimum itself; the state lives here and
+    // the footer only renders while it says so.
+    val showAppendSpinner = rememberDelayedVisible(
+        appendState is LoadState.Loading,
+        delayMs = SEARCH_APPEND_SPINNER_DELAY_MS,
+        minVisibleMs = SEARCH_APPEND_SPINNER_MIN_VISIBLE_MS,
+    )
     // Round 6 (motion): the stagger key — the first result's id. It changes
     // when a new query lands with different results (re-staggering every
     // row) and stays put on appends and while typing (settled rows stay
@@ -2264,29 +2282,28 @@ internal fun SearchContent(
                     }
                 }
 
-                // Feel-instant S6: the next page arrives as the viewer scrolls,
-                // and while it is out the tail of the list is skeleton rows —
-                // the S5 geometry-matched cells, two rows of two, so the grid
-                // never jumps when the page lands. A failed page used to be
-                // invisible: the retry path was reachable only when every group
-                // was empty, so a search that died on page 3 looked like a
-                // catalog that simply had three pages. The retry is inline now.
+                // B-42 (P2-11): the next page arrives as the viewer scrolls,
+                // and while it is out the tail of the list is a delayed
+                // spinner, not skeleton rows — the page count is unknown, so
+                // a fixed 2 rows of 2 cells lied about the layout (the
+                // skeleton-vs-spinner matrix: unknown counts get a spinner).
+                // A failed page used to be invisible: the retry path was
+                // reachable only when every group was empty, so a search
+                // that died on page 3 looked like a catalog that simply had
+                // three pages. The retry is inline now.
                 when (appendState) {
                     is LoadState.Loading -> {
-                        repeat(SEARCH_APPEND_SKELETON_ROWS) { row ->
-                            item(key = "search-append-skeleton-$row") {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        if (showAppendSpinner) {
+                            item(key = "search-append-spinner") {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                    contentAlignment = Alignment.Center,
                                 ) {
-                                    PosterCellSkeleton(
-                                        Modifier.weight(1f).testTag("searchAppendSkeleton"),
-                                    )
-                                    PosterCellSkeleton(
-                                        Modifier.weight(1f).testTag("searchAppendSkeleton"),
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(32.dp).testTag(SearchAppendSpinnerTag),
+                                        strokeWidth = 3.dp,
                                     )
                                 }
-                                Spacer(Modifier.height(12.dp))
                             }
                         }
                     }
@@ -2305,8 +2322,15 @@ internal fun SearchContent(
     }
 }
 
-/** Skeleton rows the search list stands in with while the next page loads — two rows of two cells. */
-private const val SEARCH_APPEND_SKELETON_ROWS = 2
+/**
+ * B-42 (P2-11): the append spinner's delay-then-minimum window. The spinner
+ * mounts only once the next page has been out [SEARCH_APPEND_SPINNER_DELAY_MS],
+ * and once shown stays up at least [SEARCH_APPEND_SPINNER_MIN_VISIBLE_MS] — a
+ * page that lands fast never flashes a spinner, and one that lands just after
+ * the delay never flickers it off in the same beat.
+ */
+private const val SEARCH_APPEND_SPINNER_DELAY_MS = 200L
+private const val SEARCH_APPEND_SPINNER_MIN_VISIBLE_MS = 300L
 
 @Composable
 private fun FilterSheetContent(

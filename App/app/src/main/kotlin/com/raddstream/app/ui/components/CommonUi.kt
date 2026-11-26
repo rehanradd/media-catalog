@@ -54,8 +54,9 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -333,6 +334,18 @@ fun SectionHeader(
  * bare surfaceVariant box. With reduced motion the band does not move, so a
  * band-only shimmer paints nothing at all rather than covering the tile
  * with a static block.
+ *
+ * B-42 (P2-11): the 200 ms delay gate ([SKELETON_DELAY_MS]) — a skeleton
+ * that appears for a load that lands in under 200 ms reads as a glitch,
+ * not as progress, so no placeholder paints until the wait has proven
+ * long. The gate lives here, the one leaf every skeleton is built from
+ * ([SkeletonBox], the hero skeleton, the season rows), so every skeleton
+ * gets the same window and a nested skeleton can never stack two delays.
+ * The band-only overlay is exempt: it paints no placeholder of its own,
+ * it sweeps over content the caller already painted, so there is nothing
+ * to flash. Screenshots are exempt too (LocalInspectionMode): a Paparazzi
+ * render never advances the clock, so a gated skeleton would record as a
+ * blank frame and the goldens would go empty, not delayed.
  */
 @Composable
 fun ShimmerBox(
@@ -341,6 +354,15 @@ fun ShimmerBox(
     highlightAlpha: Float = SHIMMER_HIGHLIGHT_ALPHA,
     bandOnly: Boolean = false,
 ) {
+    val inInspectionMode = LocalInspectionMode.current
+    var gateOpen by remember { mutableStateOf(inInspectionMode || bandOnly) }
+    LaunchedEffect(inInspectionMode, bandOnly) {
+        if (!inInspectionMode && !bandOnly) {
+            delay(SKELETON_DELAY_MS)
+            gateOpen = true
+        }
+    }
+    if (!gateOpen) return
     val reduceMotion = rememberReduceMotion()
     val base = MaterialTheme.colorScheme.surfaceVariant
     if (reduceMotion) {
@@ -501,6 +523,15 @@ internal const val SPINNER_DELAY_MS = 250L
 
 /** Minimum time a spinner stays visible once it has appeared. */
 internal const val SPINNER_MIN_VISIBLE_MS = 500L
+
+/**
+ * B-42 (P2-11): the delay before any skeleton appears, in ms. A load that
+ * lands inside this window never shows a placeholder at all — the content
+ * simply arrives, and a fast load never flashes a skeleton that reads as a
+ * glitch. The gate lives in [ShimmerBox], the leaf every skeleton is built
+ * from, so one number covers every screen.
+ */
+internal const val SKELETON_DELAY_MS = 200L
 
 @Composable
 fun rememberDelayedVisible(
