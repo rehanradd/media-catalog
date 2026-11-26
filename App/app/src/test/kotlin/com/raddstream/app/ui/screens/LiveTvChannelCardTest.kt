@@ -11,6 +11,7 @@ import com.raddstream.app.network.models.LiveTvChannel
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -141,22 +142,21 @@ class LiveTvChannelCardTest {
     }
 
     @Test
-    fun channelMetaReservesTwoLinesSoCardHeightsStayEven() {
-        // Screen audit #6 (Nov 2026): the audit asked for a one-line
-        // clamp, which would re-cut the A4-F2 triple ("Religious ·
-        // Pakistan · Ur…"). The fix is the other direction: minLines = 2
-        // reserves the second line always, so a short meta ("News ·
-        // Pakistan") leaves the same blank second line a long meta fills
-        // — uniform card heights, full triple readable. Without minLines
-        // the short card's meta is one line tall and the row staggers.
+    fun channelMetaTakesNaturalHeightWithNoBlankSecondLine() {
+        // P2-9 (B-40): reverses the old minLines = 2 pin. The reserve
+        // bought equal heights with a blank second line under every short
+        // meta ("News · Pakistan") — visible gaps, top-heavy cards. Cards
+        // now take their natural height and the grid aligns by the fixed
+        // 16:9 logo plate, so a one-line meta is one line tall and a long
+        // triple still wraps to two lines under maxLines = 2.
         //
         // The tag lives inside Card(onClick = …), a clickable that merges
         // its descendants' semantics into the card node — so the merged
         // tree has no meta node at all (CI 44646400985 found 0 nodes) and
         // the lookup searches the unmerged tree (A4-F2 fixup 3, same tag).
-        // Unlike the wrap pin fixup 69356fcc removed, this pin does not
-        // need anything to wrap: minLines = 2 makes both metas two lines
-        // tall at any font metric, so the equality holds in Robolectric.
+        // The long meta is deliberately long ("Entertainment · Saudi
+        // Arabia · Portuguese") so it wraps to two lines at 180dp under
+        // any font metric, while the short meta fits on one.
         val short = LiveTvChannel(
             id = 1,
             name = "Geo News",
@@ -168,10 +168,10 @@ class LiveTvChannelCardTest {
         )
         val long = LiveTvChannel(
             id = 2,
-            name = "Madani Channel",
-            category = "religious",
-            country = "PK",
-            language = "urdu",
+            name = "Hum TV",
+            category = "entertainment",
+            country = "SA",
+            language = "portuguese",
             logoUrl = "",
             streamId = "stream-2",
         )
@@ -194,6 +194,17 @@ class LiveTvChannelCardTest {
         val metas = compose.onAllNodesWithTag("liveTv_channelMeta", useUnmergedTree = true)
             .fetchSemanticsNodes()
         assertEquals(2, metas.size)
-        assertEquals(metas[0].boundsInRoot.height, metas[1].boundsInRoot.height, 0.01f)
+        val shortHeight = metas[0].boundsInRoot.height
+        val longHeight = metas[1].boundsInRoot.height
+        assertTrue(
+            "Short meta ($shortHeight px) is not shorter than the long meta ($longHeight px) — " +
+                "the blank second line is still reserved",
+            shortHeight < longHeight,
+        )
+        assertTrue(
+            "Long meta ($longHeight px) is taller than two lines of the short meta ($shortHeight px) — " +
+                "maxLines = 2 is not capping it",
+            longHeight < 2.5f * shortHeight,
+        )
     }
 }

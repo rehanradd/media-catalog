@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -367,19 +366,6 @@ internal fun LiveTvContent(
                         // and the tap writes Room through the ViewModel.
                         favoriteChannelIds = state.favoriteChannelIds,
                         onFavoriteClick = { channel -> onToggleFavorite(channel) },
-                        // A4-F5: the filtered list ends with its own footer —
-                        // "End of results · 1 of 759 channels" plus the way
-                        // back to the full list. The counts are the same
-                        // numbers the heading above the grid already says.
-                        filtered = state.query.isNotBlank() || state.selectedCategory != null ||
-                            state.showFavoritesOnly,
-                        visibleCount = state.visibleChannels.size,
-                        totalCount = state.channels.size,
-                        onClearFilter = {
-                            onQueryChanged("")
-                            onCategorySelected(null)
-                            onFavouritesSelected(false)
-                        },
                         onChannelClick = onChannelClick,
                     )
                 }
@@ -428,24 +414,17 @@ internal fun LiveTvChannelCountHeading(
  * keys — 759 rows do not all compose — the button only shortens the
  * drag home.
  *
- * A4-F5: a filtered list ends with its own footer — the full-span
- * [LiveTvEndOfResultsFooter] — so a one-channel result never reads as a
- * grid that failed to load the rest. Unfiltered, there is no footer: the
- * 759-channel grid's end needs no announcement and no way back.
+ * P2-9 (B-40): there is no end-of-results footer — the old A4-F5 footer
+ * ("End of results · 1 of 759 channels") duplicated the count heading
+ * above the grid, so it is gone and the list just ends. The way back to
+ * the full list is the chip row (query pill ×, "All", Favourites
+ * toggle), not a footer button.
  */
-internal const val LiveTvEndOfResultsTag = "liveTv_endOfResults"
-internal const val LiveTvClearFilterTag = "liveTv_clearFilter"
-
 @Composable
 internal fun LiveTvChannelGrid(
     channels: List<LiveTvChannel>,
     onChannelClick: (LiveTvChannel) -> Unit,
     modifier: Modifier = Modifier,
-    filtered: Boolean = false,
-    visibleCount: Int = channels.size,
-    totalCount: Int = channels.size,
-    /** Clears both the query and the category — null renders no footer. */
-    onClearFilter: (() -> Unit)? = null,
     /** Starred channel ids — a card draws its star filled when its id is in here. */
     favoriteChannelIds: Set<Int> = emptySet(),
     /** The star tap — never the card tap: starring must not play the channel. */
@@ -475,18 +454,6 @@ internal fun LiveTvChannelGrid(
                     onFavoriteClick = { onFavoriteClick(channel) },
                 )
             }
-            if (filtered && onClearFilter != null) {
-                item(
-                    key = "liveTv_endOfResults",
-                    span = { GridItemSpan(maxLineSpan) },
-                ) {
-                    LiveTvEndOfResultsFooter(
-                        visibleCount = visibleCount,
-                        totalCount = totalCount,
-                        onClearFilter = onClearFilter,
-                    )
-                }
-            }
         }
         if (showBackToTop) {
             IconButton(
@@ -501,41 +468,6 @@ internal fun LiveTvChannelGrid(
                 Icon(painterResource(R.drawable.ic_action_keyboard_arrow_up), contentDescription = null)
             }
         }
-    }
-}
-
-/**
- * A4-F5: the end of a filtered channel list — one line naming the result
- * ("End of results · 1 of 759 channels", the same count text the heading
- * above the grid already speaks) and the way back to the full list. The
- * count is the footer: a filtered list that just stops reads as a grid
- * that failed to load the rest. Extracted so the text and the clear action
- * pin without the Hilt screen around them (see LiveTvMockupTest).
- */
-@Composable
-internal fun LiveTvEndOfResultsFooter(
-    visibleCount: Int,
-    totalCount: Int,
-    onClearFilter: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(top = 8.dp, bottom = 8.dp)
-            .testTag(LiveTvEndOfResultsTag),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Text(
-            text = "End of results · ${liveTvChannelCountText(visibleCount, totalCount, filtered = true)}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        TextButton(
-            onClick = onClearFilter,
-            modifier = Modifier.testTag(LiveTvClearFilterTag).heightIn(min = 48.dp),
-        ) { Text("Clear filter") }
     }
 }
 
@@ -892,13 +824,14 @@ internal fun LiveTvChannelCard(
                 // language the viewer filters by was the part that vanished.
                 // Two lines hold the full "Category · Country · Language"
                 // triple on a 2-column card; anything longer still ellipsizes.
-                // Screen audit #6 (Nov 2026): minLines = 2 reserves the
-                // second line even for a one-line meta, so every card is
-                // the same height — a short "News · Pakistan" leaves a
-                // blank second line instead of a shorter card. The audit's
-                // literal one-line clamp would have re-cut the A4-F2 triple.
+                // P2-9 (B-40): no minLines reserve — the old minLines = 2
+                // held a blank second line under every short meta ("News ·
+                // Pakistan"), buying equal heights with empty space. Cards
+                // now take their natural height and the grid aligns by the
+                // fixed 16:9 logo plate above the text; a long triple still
+                // wraps to two lines under maxLines = 2. There is no EPG
+                // data to fill a second line with, so nothing is invented.
                 maxLines = 2,
-                minLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 // The tag MUST sit before clearAndSetSemantics: the clear
                 // wipes every semantics set after it in the chain, so a tag

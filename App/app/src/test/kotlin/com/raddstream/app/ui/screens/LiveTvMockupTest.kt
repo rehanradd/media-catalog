@@ -320,52 +320,29 @@ class LiveTvMockupTest {
     }
 
     @Test
-    fun endOfResultsFooterShowsWhenFiltered() {
-        // A4-F5: a filtered list ends with its own footer — the count line
-        // plus the way back to the full list. The Robo case: one channel
-        // after filtering "Discover Pakistan" reads as a complete answer,
-        // not a grid that failed to load the rest.
-        var cleared = 0
+    fun filteredGridHasNoEndOfResultsFooter() {
+        // P2-9 (B-40): the filtered footer ("End of results · 1 of 759
+        // channels") duplicated the count heading above the grid, so it
+        // is gone — a filtered list just ends. The way back is the chip
+        // row (query pill ×, "All", Favourites toggle), not a footer
+        // button.
         val channels = listOf(channel("Discover Pakistan"))
         compose.setContent {
             RaddStreamTheme {
                 LiveTvChannelGrid(
                     channels = channels,
                     onChannelClick = {},
-                    filtered = true,
-                    visibleCount = 1,
-                    totalCount = 759,
-                    onClearFilter = { cleared++ },
                 )
             }
         }
-        compose.onNodeWithText("End of results · 1 of 759 channels").assertIsDisplayed()
-        compose.onNodeWithText("Clear filter").assertIsDisplayed()
-        compose.onNodeWithTag(LiveTvClearFilterTag).performClick()
-        assertEquals(1, cleared)
-    }
-
-    @Test
-    fun endOfResultsFooterAbsentWhenUnfiltered() {
-        // A4-F5: the unfiltered 759-channel grid needs no footer — its end
-        // needs no announcement and no way back.
-        val channels = (1..6).map {
-            channel(name = "Channel $it").copy(id = it, streamId = "stream-$it")
-        }
-        compose.setContent {
-            RaddStreamTheme {
-                LiveTvChannelGrid(
-                    channels = channels,
-                    onChannelClick = {},
-                    filtered = false,
-                    visibleCount = 6,
-                    totalCount = 759,
-                    onClearFilter = {},
-                )
-            }
-        }
-        compose.onNodeWithTag(LiveTvEndOfResultsTag).assertDoesNotExist()
+        compose.onNodeWithText("End of results · 1 of 759 channels").assertDoesNotExist()
         compose.onNodeWithText("Clear filter").assertDoesNotExist()
+        // The card name Text clears its own semantics (the card's single
+        // sentence carries it), so the card is pinned by content
+        // description, as the back-to-top test does.
+        compose.onNode(
+            hasContentDescription("Discover Pakistan, live · News · Pakistan · Urdu"),
+        ).assertIsDisplayed()
     }
 
     @Test

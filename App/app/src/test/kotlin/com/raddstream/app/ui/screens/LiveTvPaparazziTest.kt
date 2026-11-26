@@ -102,10 +102,10 @@ class LiveTvPaparazziTest {
     @Test
     fun liveTvFiltered() {
         // One match out of six: the count heading reads "1 of
-        // 6 channels", the grid holds one card, and the filtered
-        // footer ("End of results · 1 of 6 channels") closes it.
-        // "geo" matches Geo News only — no other fixture name,
-        // language, country or category contains it.
+        // 6 channels" and the grid holds one card. P2-9 (B-40): no
+        // end-of-results footer — the list just ends, the heading
+        // already says the count. "geo" matches Geo News only — no
+        // other fixture name, language, country or category contains it.
         paparazzi.snapshot {
             themed {
                 content(
