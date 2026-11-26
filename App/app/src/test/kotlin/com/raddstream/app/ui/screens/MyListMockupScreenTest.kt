@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import com.raddstream.app.R
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.components.PosterCard
+import com.raddstream.app.ui.components.SKELETON_DELAY_MS
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.ListSort
 import com.raddstream.app.viewmodel.MyListFilter
@@ -739,6 +740,10 @@ class MyListMockupScreenTest {
     @Test
     fun hiddenBranchShowsARailSkeletonWhileLoading() {
         hiddenContent(popularLoading = true)
+        // B-42 (P2-11): the rail skeleton mounts only after the 200 ms
+        // delay gate — advance past it before asserting it is displayed
+        // (waitForIdle does not fast-forward through the delay).
+        compose.mainClock.advanceTimeBy(SKELETON_DELAY_MS + 50)
         compose.onNodeWithTag("posterRailSkeleton").assertIsDisplayed()
         compose.onNodeWithText("Trending to Start Your List").assertDoesNotExist()
     }
