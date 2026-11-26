@@ -67,6 +67,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -154,7 +155,6 @@ import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.navigation.DeepLinks
 import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.RaddMotion
-import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.pressScale
 import com.raddstream.app.ui.theme.rememberArtworkAccent
 import com.raddstream.app.viewmodel.DetailNavigationEvent
@@ -400,6 +400,21 @@ fun DetailScreen(
                                 expanded = showMoreMenu,
                                 onDismissRequest = { showMoreMenu = false },
                             ) {
+                                // P0-8 (Nov 2026): "Restart" lives here now,
+                                // not beside Play — Play itself reads
+                                // "Resume…" while a resume exists, and the
+                                // restart is a deliberate choice, not a peer
+                                // of the primary action. Only while a resume
+                                // exists to restart from.
+                                if (state.resume != null && state.resumePlayable) {
+                                    DropdownMenuItem(
+                                        text = { Text("Restart") },
+                                        onClick = {
+                                            showMoreMenu = false
+                                            viewModel.removeProgress()
+                                        },
+                                    )
+                                }
                                 DropdownMenuItem(
                                     text = { Text("Report broken stream") },
                                     onClick = {
@@ -570,8 +585,6 @@ fun DetailScreen(
                 capabilities = state.layout?.capabilities ?: emptyList(),
                 isSeries = state.layout?.isSeriesLike ?: false,
                 resume = state.resume.takeIf { state.resumePlayable },
-                /** Phase 7 (D1): "Start over" — forget where viewing stopped. */
-                onStartOver = viewModel::removeProgress,
                 includedPill = state.includedPill,
                 deadEndReason = state.deadEndReason,
                 // 2-button detail (Nov 2026): exactly two buttons — Play
@@ -594,6 +607,12 @@ fun DetailScreen(
                 playHint = state.playHint,
                 downloadHint = state.downloadHint,
                 onTryAgain = viewModel::tryAgainPlay,
+                // P0-9 (Nov 2026): the "Show all versions" hook — the
+                // tap re-fetches the title. Full pagination is owed
+                // behind this hook: getPostDetail takes no offset, so
+                // no next page exists to load until the backend ships
+                // a paged detail endpoint and the ViewModel a load-more.
+                onShowAllVersions = { viewModel.loadDetail() },
                 videoQualityText = state.videoQualityText,
                 // Detail redesign (Nov 2026): a season row opens its
                 // sub-page — the episode list no longer lives here.
@@ -945,10 +964,10 @@ internal fun DetailContent(
     workPrints: List<RankedPrint>,
     capabilities: List<String>,
     isSeries: Boolean,
-    /** The latest scope this device stopped in, if it has a print to play — else null. */
+    /** The latest scope this device stopped in, if it has a print to play — else null.
+     * Retained for API compatibility (tests + previews pass it): Play itself reads
+     * "Resume…" while one exists, and Restart lives in the top-bar overflow now. */
     resume: ResumePoint?,
-    /** Phase 7 (D1): "Start over" — forget where viewing stopped, on the server and locally. */
-    onStartOver: () -> Unit = {},
     /** What this viewer can watch of this title, as a pill — null when it has no prints. */
     includedPill: String?,
     /** Why this title cannot be played, in the viewer's words — null when it can. */
@@ -966,9 +985,20 @@ internal fun DetailContent(
     playLabel: String = "Play",
     playEnabled: Boolean = false,
     playStarting: Boolean = false,
-    /** DT-1: determinate resolve progress (0.20/0.55/0.85) for the Play button's arc, null when idle. */
+    /**
+     * DT-1, retired by P0-8 (Nov 2026): the determinate resolve progress
+     * (0.20/0.55/0.85) — the Play button no longer renders a determinate
+     * arc, it morphs into an indeterminate spinner reading "Finding the
+     * best stream…". Retained for API compatibility (the ViewModel still
+     * publishes it, tests + previews still pass it); the UI ignores it.
+     */
     playProgress: Float? = null,
-    /** DT-1: the resolve stage's plain-words label for the Play button, null when idle. */
+    /**
+     * DT-1, retired by P0-8: the resolve stage's plain-words label
+     * ("Finding the best copy…") — retired with the arc, for the same
+     * reason ("copy" is aggregator vocabulary; the button now says
+     * "Finding the best stream…"). Retained, ignored, same as above.
+     */
     playStage: String? = null,
     onPlayPrimary: () -> Unit = {},
     downloadLabel: String = "Download",
@@ -977,6 +1007,13 @@ internal fun DetailContent(
     playHint: String? = null,
     downloadHint: String? = null,
     onTryAgain: () -> Unit = {},
+    /**
+     * P0-9 (Nov 2026): the truncated list's way forward — "Show all
+     * versions (1,000+)". The hook for the pagination follow-up (see
+     * the DetailScreen call site); the viewer taps it, the title
+     * re-fetches. Null-op by default in tests and previews.
+     */
+    onShowAllVersions: () -> Unit = {},
     /**
      * Audit Detail #1 (Nov 2026): the Video row's value — the picked
      * band, or what Auto reaches. Null when this title has no playable
@@ -1139,9 +1176,10 @@ internal fun DetailContent(
                     playLabel = playLabel,
                     playEnabled = playEnabled,
                     playStarting = playStarting,
-                    // DT-1: the determinate arc + stage label while a
-                    // Play tap resolves — published by the ViewModel,
-                    // cleared on navigation or failure.
+                    // P0-8: the resolve state still arrives from the
+                    // ViewModel (cleared on navigation or failure) — the
+                    // button morphs on it now instead of painting the
+                    // retired determinate arc + stage label.
                     playProgress = playProgress,
                     playStage = playStage,
                     onPlayPrimary = onPlayPrimary,
@@ -1151,8 +1189,6 @@ internal fun DetailContent(
                 playHint = playHint,
                 downloadHint = downloadHint,
                 onTryAgain = onTryAgain,
-                resume = resume,
-                onStartOver = onStartOver,
                 deadEndReason = deadEndReason,
                 )
             }
@@ -1177,17 +1213,13 @@ internal fun DetailContent(
             }
         }
 
-        // Audit Detail #3 (Nov 2026): the cam warning as a card,
-        // directly under the actions it qualifies — not bare red text
-        // two sections below Play.
-        if (allPrints.any { it.isCam }) {
-            item(contentType = "cam-warning") {
-                CamWarningCard(
-                    onReportCopy = onReport,
-                    modifier = pageSides,
-                )
-            }
-        }
+        // P0-9 (Nov 2026): the cam warning card is gone — "cam" is
+        // camcorder-rip vocabulary no streamer ships to viewers. No
+        // replacement card: the low-quality signal lives per print
+        // (RankedPrint.isCam), not per quality band, so no chip on
+        // this page can honestly carry a "Low quality source" badge —
+        // a band mixes cam and clean prints. The card is dropped
+        // entirely, per the audit's own fallback.
 
         // Detail redesign (Nov 2026): the story comes first — Netflix and
         // Disney+ both put the synopsis directly under the actions, and
@@ -1272,26 +1304,24 @@ internal fun DetailContent(
             }
         }
 
-        // Detail review (Nov 2026, P1): the server caps the detail at
-        // 1,000 releases — the list below is the first of many, not the
-        // whole work. One honest line, before the viewer assumes the
-        // season/episode list is complete. The per-season episode counts
-        // ARE corrected now (B2): the v2 `episode_guide` carries the true
-        // total per season, and the season rows read it — but the episodes
-        // behind those rows are still only the capped releases, so the
-        // line stays as the disclosure for the list itself.
+        // P0-9 (Nov 2026): the server caps the detail at 1,000
+        // releases — but the cap is the app's problem, not the
+        // viewer's, so the engineer-facing note ("Showing the first
+        // X of Y releases") is gone. Progressive disclosure instead:
+        // one affordance that loads the next page of versions. The
+        // per-season episode counts ARE corrected (B2): the v2
+        // `episode_guide` carries the true total per season, and the
+        // season rows read it — but the episodes behind those rows are
+        // still only the capped releases, so the affordance stays as
+        // the way forward for the list itself.
         if (post.isTruncated) {
-            item(contentType = "truncation-note") {
-                Text(
-                    text = stringResource(
-                        R.string.detail_truncated_releases,
-                        "%,d".format(post.releases.size),
-                        "%,d".format(post.totalReleases),
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = pageSides,
-                )
+            item(contentType = "show-all-versions") {
+                TextButton(
+                    onClick = onShowAllVersions,
+                    modifier = pageSides.heightIn(min = 48.dp),
+                ) {
+                    Text("Show all versions (1,000+)")
+                }
             }
         }
 
@@ -1302,8 +1332,8 @@ internal fun DetailContent(
         // this page. The per-season counts ARE corrected (B2): the v2
         // `episode_guide` carries the true total per season, and the rows
         // read it — but the sub-page tiles are still only the capped
-        // releases, so the truncation line above stays as the disclosure
-        // for the list itself.
+        // releases, so the "Show all versions" affordance above stays as
+        // the way forward for the list itself.
         if (isSeries) {
             item(contentType = "seasons-header") {
                 Box(pageSides) {
@@ -1854,15 +1884,25 @@ private fun DetailCastButton() {
 }
 
 /**
- * 2-button detail (Nov 2026): exactly two buttons — Play (filled,
- * first) and Download (outlined, directly below). The label names the
- * quality, the hint under a button says why it is greyed or what it
- * will do, and both are at least 48dp. The quality choice lives in
- * the selector above, never here — both buttons act on the picked
- * band. A dead end greys Play, says why in plain words, and offers
- * [Try again] — the viewer is never left at a wall with no way out.
- * The name stays `PrimaryActions` and both buttons keep
- * `heightIn(min = 48.dp)`: SkeletonParityTest reads the source for both.
+ * P0-8 (Nov 2026): exactly ONE primary CTA. Play takes ~2/3 of the
+ * row (filled jade) and Download sits beside it as a tonal pill at
+ * ~1/3 (Disney+ shape) — the old two stacked full-width buttons made
+ * two "primaries" and pushed the synopsis below the fold. Play morphs
+ * while it resolves: Play → indeterminate spinner reading "Finding
+ * the best stream…" → playback (Netflix-style). The fake determinate
+ * arc (0.20/0.55/0.85 stages) and its stage-label row are gone — the
+ * numbers were stages, not progress — and there is no separate label
+ * row: the label lives inside the morphing button. The helper hints
+ * under the buttons are gone too; only the reason a greyed button is
+ * greyed still shows, as one line under that button (the dead-end
+ * reason under Play is the F-12 handling, kept). The quality choice
+ * lives in the selector above, never here — both buttons act on the
+ * picked band. A dead end greys Play, says why in plain words, and
+ * offers [Try again] — the viewer is never left at a wall with no way
+ * out. Play reads "Resume…" while a resume exists; Restart lives in
+ * the top-bar overflow. The name stays `PrimaryActions` and both
+ * buttons keep `heightIn(min = 48.dp)`: SkeletonParityTest reads the
+ * source for both.
  */
 @Composable
 private fun PrimaryActions(
@@ -1870,27 +1910,29 @@ private fun PrimaryActions(
     /** The Play label from the ViewModel: "Play", "Resume S1:E3 · 23 min left". */
     playLabel: String,
     playEnabled: Boolean,
-    /** The press-in-flight guard: while true Play reads "Starting…" and a second tap is ignored. */
+    /** The press-in-flight guard: while true Play morphs into its spinner and a second tap is ignored. */
     playStarting: Boolean,
-    /** DT-1: determinate resolve progress (0.20/0.55/0.85), null when no Play tap is in flight. */
+    /** DT-1, retired by P0-8: the determinate resolve progress — kept for API compatibility, ignored (see DetailContent). */
     playProgress: Float? = null,
-    /** DT-1: the stage's plain-words label ("Finding the best copy…"), null when idle. */
+    /** DT-1, retired by P0-8: the stage label ("Finding the best copy…") — kept for API compatibility, ignored (see DetailContent). */
     playStage: String? = null,
     onPlayPrimary: () -> Unit,
     /** The Download label: "Download", or "✓ Downloaded" when the file is already on this device. */
     downloadLabel: String,
     downloadEnabled: Boolean,
     onDownloadPrimary: () -> Unit,
-    /** The plain line under Play: why it is greyed, or where it will play. */
+    /**
+     * P0-8: only the reason a greyed Play is greyed still shows, as one
+     * line under the button — the "where it will play" helper is gone.
+     */
     playHint: String? = null,
-    /** The plain line under Download: why it is greyed, or what it will save. */
+    /**
+     * P0-8: only the reason a greyed Download is greyed still shows, as
+     * one line under the button — the "what it will save" helper is gone.
+     */
     downloadHint: String? = null,
     /** The dead end's way out: reload this title. */
     onTryAgain: () -> Unit = {},
-    /** The latest scope this device stopped in — only "Start over" reads it now. */
-    resume: ResumePoint? = null,
-    /** Phase 7 (D1): forget where viewing stopped — only offered while a resume exists. */
-    onStartOver: () -> Unit = {},
     /** Why this title cannot be played, in the viewer's words — null when it can. */
     deadEndReason: String? = null,
 ) {
@@ -1901,64 +1943,89 @@ private fun PrimaryActions(
         // UI-fix P1-X1: press scale + haptic on the primary action.
         val playSource = remember { MutableInteractionSource() }
         PressHaptics(playSource)
-        Button(
-            onClick = onPlayPrimary,
-            enabled = playEnabled && !playStarting,
-            interactionSource = playSource,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 48.dp)
-                .pressScale(playSource),
-            // D-29: a disabled Play keeps the same shape and language as the
-            // enabled one — a tonal fill, not a dead grey slab. The reason it
-            // cannot start rides right under the button, so the tonal state
-            // is never mistaken for a working one.
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary,
-                disabledContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                disabledContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            ),
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            // DT-1: while a Play tap resolves, the button IS the progress
-            // surface — a determinate arc beside the stage label, never a
-            // bare "Starting…" swap and never a full-screen spinner. The
-            // arc's fraction is the stage the ViewModel published
-            // (0.20 accepted, 0.55 network in flight, 0.85 handoff next);
-            // the label is the stage's plain-words name. When the
-            // progress is null (a Play tap started before the stage
-            // published, or a state restored mid-resolve) the button
-            // falls back to the old "Starting…" text — an arc with no
-            // fraction would be a lie either way.
-            if (playStarting && playProgress != null) {
-                CircularProgressIndicator(
-                    progress = playProgress,
-                    modifier = Modifier.size(20.dp),
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    trackColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.3f),
-                    strokeWidth = 2.5.dp,
-                )
+            Button(
+                onClick = onPlayPrimary,
+                enabled = playEnabled && !playStarting,
+                interactionSource = playSource,
+                modifier = Modifier
+                    .weight(2f)
+                    .heightIn(min = 48.dp)
+                    .pressScale(playSource),
+                shape = CircleShape,
+                // D-29: a disabled Play keeps the same shape and language as the
+                // enabled one — a tonal fill, not a dead grey slab. The reason it
+                // cannot start rides right under the button, so the tonal state
+                // is never mistaken for a working one.
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    disabledContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                    disabledContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                ),
+            ) {
+                // P0-8: while a Play tap resolves, the button IS the
+                // progress surface — an indeterminate spinner beside
+                // "Finding the best stream…", never a bare "Starting…"
+                // swap and never a full-screen spinner. The determinate
+                // arc is gone: its fractions were stages, not progress.
+                if (playStarting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        strokeWidth = 2.5.dp,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "Finding the best stream…",
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                } else {
+                    Icon(painterResource(R.drawable.ic_player_play), contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = playLabel,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
+            FilledTonalButton(
+                onClick = onDownloadPrimary,
+                enabled = downloadEnabled,
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp),
+                shape = CircleShape,
+            ) {
+                Icon(painterResource(R.drawable.ic_action_download), contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = playStage ?: stringResource(R.string.detail_starting),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            } else {
-                Icon(painterResource(R.drawable.ic_player_play), contentDescription = null, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = if (playStarting) stringResource(R.string.detail_starting) else playLabel,
+                    text = downloadLabel,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
         }
-        playHint?.let { hint ->
-            Text(
-                text = hint,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        // P0-8: the only line left under Play — why it is greyed. The
+        // dead-end reason leads (F-12: the reason in the viewer's words);
+        // the hint is the fallback when the page has no reason. An
+        // enabled Play carries no helper: "Plays instantly…" and the
+        // provider-page line are gone (the button label already says the
+        // latter).
+        if (!playEnabled) {
+            (deadEndReason ?: playHint)?.let { reason ->
+                Text(
+                    text = reason,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         // The dead end's way out, under the reason: reload the title.
         if (!playEnabled && deadEndReason != null) {
@@ -1969,39 +2036,16 @@ private fun PrimaryActions(
                 Text(stringResource(R.string.detail_try_again))
             }
         }
-
-        OutlinedButton(
-            onClick = onDownloadPrimary,
-            enabled = downloadEnabled,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 48.dp),
-        ) {
-            Icon(painterResource(R.drawable.ic_action_download), contentDescription = null, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = downloadLabel,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        downloadHint?.let { hint ->
-            Text(
-                text = hint,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        // Phase 7 (D1): only while a resume exists — after "Start over" the
-        // button above reads plain Play again, so this row must not linger.
-        if (resume != null) {
-            // Detail review (Nov 2026, P1): the 48dp touch-target floor.
-            TextButton(
-                onClick = onStartOver,
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) {
-                Text("Start over")
+        // P0-8: the only line left under Download — why it is greyed
+        // ("Nothing to save for this title.", "Downloads are off in Kids
+        // Mode."). An enabled Download carries no helper.
+        if (!downloadEnabled) {
+            downloadHint?.let { hint ->
+                Text(
+                    text = hint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -2124,51 +2168,9 @@ internal fun DetailQualitySelector(
     }
 }
 
-/**
- * Audit Detail #3 (Nov 2026): the cam warning as a card, directly
- * under the actions it qualifies — warning icon + tonal container,
- * not error-red text two sections below Play. "Report copy" opens
- * the same report dialog as the utility row's Report ("Bad quality"
- * is one of its reasons).
- */
-@Composable
-private fun CamWarningCard(
-    onReportCopy: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                painterResource(R.drawable.ic_action_warning),
-                contentDescription = null,
-                tint = RaddTokens.Color.Warning,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(Modifier.width(12.dp))
-            Text(
-                text = stringResource(R.string.detail_cam_warning),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(
-                onClick = onReportCopy,
-                modifier = Modifier.heightIn(min = 48.dp),
-            ) {
-                Text(stringResource(R.string.detail_report_copy))
-            }
-        }
-    }
-}
+// P0-9 (Nov 2026): CamWarningCard deleted outright — see the
+// call-site note in DetailContent. No badge replacement: the cam
+// signal is per print, not per quality band.
 
 /**
  * 2-button detail (Nov 2026): the quality sheet — one component, three
