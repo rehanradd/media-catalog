@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -303,22 +304,25 @@ class DetailRedesignTest {
         // puts the reason itself in the hint when it has one.
         compose.onNodeWithText("Play").assertIsNotEnabled()
         compose.onNodeWithText("Try again").assertIsDisplayed()
-        // Detail review (Nov 2026, P1): the Similar action lives in the
-        // utility row now. Its scroll-to-rail is the same bringIntoView
-        // the link used — and it cannot be proven from the top of the
-        // page here: the rail is the last LazyColumn item, uncomposed
-        // until the list scrolls near it, so the requester has no node
-        // to attach to yet (the same shape as
+        // P1-7 (Nov 2026): the Similar action lives in the utility
+        // row's More overflow now. Its scroll-to-rail is the same
+        // bringIntoView the link used — and it cannot be proven from
+        // the top of the page here: the rail is the last LazyColumn
+        // item, uncomposed until the list scrolls near it, so the
+        // requester has no node to attach to yet (the same shape as
         // similarRailIsCalledMoreLikeThis). Making that scroll work
         // from anywhere needs a list-state scroll by index — flagged
         // as a follow-up, not this slice. The row itself sits below
         // the taller stacked buttons, outside the first composition
-        // — swipe until it composes, then bring it into view.
+        // — swipe until it composes, open the overflow, then the
+        // Similar item is on the page.
         for (i in 0 until 5) {
-            if (compose.onAllNodesWithText("Similar").fetchSemanticsNodes().isNotEmpty()) break
+            if (compose.onAllNodesWithText("More").fetchSemanticsNodes().isNotEmpty()) break
             compose.onRoot().performTouchInput { swipeUp() }
         }
-        compose.onNodeWithText("Similar").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("More").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("More actions").performClick()
+        compose.onNodeWithText("Similar").assertIsDisplayed()
     }
 
 }

@@ -1,8 +1,11 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.ui.test.assertDoesNotExist
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
@@ -23,19 +26,19 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
 /**
- * APP-02 (Phase 4): the visible quality control on Detail — one chip per
- * playable band under the two buttons, and a "Video:" row that opens the
- * browse sheet. These tests pin what the page itself can pin: the chips
- * render one per playable band only, a locked band renders locked (not
- * hidden), a chip tap picks the band without starting playback, and the
- * "Video:" row opens the browse sheet. The locked/dead rules themselves
- * live in the pure layer ([qualityChipsFor], pinned by
- * TwoButtonDetailTest); the ViewModel's answer to a locked tap (the
- * upsell line, no selection change) is its own decision, not the page's.
- * The browse sheet's row dispatch (a row tap picks, the Auto row
- * picks Auto, nothing plays) is pinned by the two browse-sheet tests
- * below, carried from the Detail audit (their Video-row tests went
- * with DetailVideoRow, subsumed by this selector's own Video row).
+ * P1-6 (Nov 2026): the quality selector is a "Video:" row plus ONE
+ * upgrade affordance — the chip rail is gone. These tests pin what the
+ * page itself can pin: no band ever renders as a chip, the Video row
+ * still names the pick and opens the browse sheet, a locked band shows
+ * exactly one "— Upgrade" affordance naming the top locked band, its tap
+ * answers with the upsell (never a selection change), and a locked band
+ * that cannot play names no upgrade. The browse sheet's row dispatch is
+ * pinned by the two browse-sheet tests below, carried from the Detail
+ * audit (their Video-row tests went with DetailVideoRow, subsumed by this
+ * selector's own Video row). The locked/dead rules themselves live in
+ * the pure layer ([qualityChipsFor], pinned by TwoButtonDetailTest); the
+ * ViewModel's answer to a locked tap (the upsell line, no selection
+ * change) is its own decision, not the page's.
  */
 @RunWith(RobolectricTestRunner::class)
 class DetailQualitySelectorTest {
@@ -87,7 +90,7 @@ class DetailQualitySelectorTest {
         qualityOptions: List<QualityOption> = playable,
         lockedQualityBands: Set<String> = emptySet(),
         selectedBand: String? = LadderForScope.AUTO,
-        onSelectQualityBand: (String) -> Unit = {},
+        onLockedQualityBand: () -> Unit = {},
         onOpenQualitySheet: () -> Unit = {},
         onPlayPrimary: () -> Unit = {},
     ) {
@@ -115,7 +118,7 @@ class DetailQualitySelectorTest {
                     qualityOptions = qualityOptions,
                     lockedQualityBands = lockedQualityBands,
                     selectedBand = selectedBand,
-                    onSelectQualityBand = onSelectQualityBand,
+                    onLockedQualityBand = onLockedQualityBand,
                     onOpenQualitySheet = onOpenQualitySheet,
                     contentPadding = PaddingValues(0.dp),
                 )
@@ -124,62 +127,84 @@ class DetailQualitySelectorTest {
     }
 
     @Test
-    fun chipsRenderOnePerPlayableBandOnly() {
+    fun noBandRendersAsAChip() {
         content()
-        compose.onNodeWithText("1080p Full HD").assertIsDisplayed()
-        compose.onNodeWithText("720p HD").assertIsDisplayed()
-        compose.onNodeWithText("480p").assertIsDisplayed()
+        // The rail is gone: no band name renders as a standalone chip
+        // label — the only band text on the page is the Video row's pick.
+        compose.onNodeWithText("1080p Full HD").assertDoesNotExist()
+        compose.onNodeWithText("720p HD").assertDoesNotExist()
+        compose.onNodeWithText("480p").assertDoesNotExist()
+        compose.onNodeWithText("Video: Auto").assertIsDisplayed()
     }
 
     @Test
     fun deadBandAndProviderPageRenderNothing() {
         // The selector re-checks the publisher's rule, so a stale list
-        // can never paint a band that cannot play.
+        // can never paint a band that cannot play — and a locked band
+        // that cannot play names no upgrade either.
         content(
             qualityOptions = playable + listOf(
                 option("sd", playsHere = false),
                 option("2160p", isProviderPage = true),
             ),
+            lockedQualityBands = setOf("2160p"),
         )
         compose.onNodeWithText("SD").assertDoesNotExist()
         compose.onNodeWithText("4K Ultra HD").assertDoesNotExist()
-        compose.onNodeWithText("720p HD").assertIsDisplayed()
+        compose.onNodeWithText("4K — Upgrade").assertDoesNotExist()
+        compose.onNodeWithText("720p HD").assertDoesNotExist()
     }
 
     @Test
-    fun lockedBandRendersLockedNotHidden() {
+    fun lockedBandShowsOneUpgradeAffordanceNotAChip() {
         content(lockedQualityBands = setOf("1080p"))
-        // The locked band is still on the page, with its chip — never
-        // hidden. The lock icon carries no text; the chip's presence is
-        // what this test pins.
-        compose.onNodeWithText("1080p Full HD").assertIsDisplayed()
+        // The locked band is still on the page — as the one upgrade
+        // affordance, never as a greyed chip. The lock icon carries no
+        // text; the affordance's presence is what this test pins.
+        compose.onNodeWithText("1080p — Upgrade").assertIsDisplayed()
+        compose.onNodeWithText("1080p Full HD").assertDoesNotExist()
     }
 
     @Test
-    fun tappingAChipPicksTheBandAndDoesNotPlay() {
-        var picked: String? = null
+    fun upgradeAffordanceNamesTheTopLockedBand() {
+        content(
+            qualityOptions = listOf(option("2160p"), option("1080p"), option("720p")),
+            lockedQualityBands = setOf("1080p", "2160p"),
+        )
+        // One affordance, naming the highest locked band — not one per
+        // locked band.
+        compose.onNodeWithText("4K — Upgrade").assertIsDisplayed()
+        compose.onNodeWithText("1080p — Upgrade").assertDoesNotExist()
+    }
+
+    @Test
+    fun noLockedBandsMeansNoUpgradeAffordance() {
+        content()
+        compose.onNodeWithText("Upgrade", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun tappingUpgradeAffordanceAnswersWithoutPlaying() {
+        // The affordance fires the upsell — the ViewModel decides the
+        // lock (upsell line, no selection change); the page must not
+        // swallow the tap, and nothing starts.
+        var upsold = false
         var played = false
         content(
-            onSelectQualityBand = { picked = it },
+            lockedQualityBands = setOf("1080p"),
+            onLockedQualityBand = { upsold = true },
             onPlayPrimary = { played = true },
         )
-        compose.onNodeWithText("720p HD").performClick()
-        assertEquals("720p", picked)
+        compose.onNodeWithContentDescription("Upgrade to unlock 1080p").performClick()
+        assertEquals(true, upsold)
         assertEquals(false, played)
     }
 
     @Test
-    fun tappingALockedChipStillAnswersTheTap() {
-        // The chip fires for a locked band too — the ViewModel decides
-        // the lock (upsell line, no selection change); the page must
-        // not swallow the tap.
-        var picked: String? = null
-        content(
-            lockedQualityBands = setOf("1080p"),
-            onSelectQualityBand = { picked = it },
-        )
-        compose.onNodeWithText("1080p Full HD").performClick()
-        assertEquals("1080p", picked)
+    fun upgradeAffordanceIs48dp() {
+        content(lockedQualityBands = setOf("1080p"))
+        compose.onNodeWithContentDescription("Upgrade to unlock 1080p")
+            .assertHeightIsAtLeast(48.dp)
     }
 
     @Test

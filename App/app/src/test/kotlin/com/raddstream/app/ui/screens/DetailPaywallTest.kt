@@ -21,8 +21,14 @@ import org.robolectric.RobolectricTestRunner
  * moved again — into the Quality Sheet, where a locked row shows greyed
  * with a lock and "VIP only" (pinned by TwoButtonDetailTest's sheet-row
  * tests, which build the rows the sheet renders). What this file still
- * pins: no upsell card, and no VIP text at all, can ever appear on the
- * detail page itself — the page is two buttons, a story, and the title.
+ * pins: no upsell card, and no VIP upsell copy, can ever appear on the
+ * detail page itself.
+ *
+ * P1-6 (Nov 2026): the one exception the audit now mandates — a single
+ * upgrade affordance ("4K — Upgrade") on the page, naming the top locked
+ * band. It is the only upsell the page may carry: no "Go VIP" card, no
+ * locked-message sentence, no chip per locked band (pinned by
+ * DetailQualitySelectorTest).
  */
 @RunWith(RobolectricTestRunner::class)
 class DetailPaywallTest {

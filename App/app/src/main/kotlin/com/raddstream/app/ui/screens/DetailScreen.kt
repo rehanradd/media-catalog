@@ -35,7 +35,6 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -69,7 +68,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -95,12 +93,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
@@ -117,6 +117,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.mediarouter.app.MediaRouteButton
 import com.google.android.gms.cast.framework.CastButtonFactory
@@ -166,6 +167,7 @@ import com.raddstream.app.viewmodel.QualitySheetRow
 import com.raddstream.app.viewmodel.QualitySheetState
 import com.raddstream.app.viewmodel.RankedPrint
 import com.raddstream.app.viewmodel.ResumePoint
+import com.raddstream.app.viewmodel.SHEET_BAND_ORDER
 import com.raddstream.app.viewmodel.SeasonGroup
 import com.raddstream.app.viewmodel.SeriesDownloadKind
 import com.raddstream.app.viewmodel.SeriesDownloadRow
@@ -653,13 +655,15 @@ fun DetailScreen(
                 },
                 onReport = { showReportDialog = true },
                 onOpenLanguages = onOpenLanguages,
-                // APP-02 (Phase 4): the quality selector — one chip per
-                // playable band; Play and Download act on the pick.
+                // P1-6 (Nov 2026): the quality selector — the "Video:"
+                // row names the pick and opens the browse sheet; a locked
+                // band answers with the one upgrade affordance, never a
+                // chip. Play and Download act on the pick.
                 qualityOptions = state.qualityOptions,
                 lockedQualityBands = state.lockedQualityBands,
                 selectedBand = state.selectedBand,
-                onSelectQualityBand = viewModel::selectQualityBand,
                 onOpenQualitySheet = viewModel::openQualityBrowseSheet,
+                onLockedQualityBand = viewModel::onLockedQualityRow,
                 contentPadding = detailPadding,
                 sharedElementKey = viewModel.sharedElementKey,
                 sharedTransitionScope = sharedTransitionScope,
@@ -1079,20 +1083,22 @@ internal fun DetailContent(
     onOpenLanguages: () -> Unit = {},
     contentPadding: PaddingValues,
     /**
-     * APP-02 (Phase 4): the quality selector — one chip per playable
-     * band, in ladder order. Empty hides the selector entirely, so the
-     * four detail goldens that pass nothing keep rendering exactly as
-     * before.
+     * P1-6 (Nov 2026): the quality selector — the playable bands, in
+     * ladder order. Only the entitled bands are ever shown on this page
+     * (in the "Video:" row's pick and the browse sheet it opens); a
+     * locked band appears only as the one upgrade affordance. Empty
+     * hides the selector entirely, so the detail goldens that pass
+     * nothing keep rendering exactly as before.
      */
     qualityOptions: List<QualityOption> = emptyList(),
-    /** APP-02: the bands among [qualityOptions] this viewer may not take — greyed with a lock, never hidden. */
+    /** P1-6: the bands among [qualityOptions] this viewer may not take — the top one names the upgrade affordance, never a chip. */
     lockedQualityBands: Set<String> = emptySet(),
     /** APP-02: the picked band, or null / "auto" for Auto. */
     selectedBand: String? = null,
-    /** APP-02: a chip tapped — pick the band, start nothing. */
-    onSelectQualityBand: (String) -> Unit = {},
     /** APP-02: the "Video:" row tapped — open the browse sheet. */
     onOpenQualitySheet: () -> Unit = {},
+    /** P1-6: the upgrade affordance tapped — the ViewModel answers with the upsell line, same as a locked sheet row. */
+    onLockedQualityBand: () -> Unit = {},
     /**
      * Round-6 motion (Nov 2026): the shared-element key + scopes for
      * the hero — the destination for the Library / Search / Home
@@ -1194,12 +1200,13 @@ internal fun DetailContent(
             }
         }
 
-        // APP-02 (Phase 4): the quality selector sits directly under
-        // the actions — one chip per playable band, and Play / Download
-        // act on the picked one. The pre-play sheet is gone: quality is
-        // chosen here (or in the browse sheet the "Video:" row opens),
-        // never before play. The hero's included pill already states
-        // the tier.
+        // P1-6 (Nov 2026): the quality selector sits directly under
+        // the actions — the "Video:" row names the pick, and Play /
+        // Download act on it. The pre-play sheet is gone: quality is
+        // chosen in the browse sheet the "Video:" row opens, never
+        // before play, and the chip rail is gone with it — locked bands
+        // never render as chips on this page, only as the one upgrade
+        // affordance. The hero's included pill already states the tier.
         item {
             DetailEntrance(index = 2) {
                 DetailQualitySelector(
@@ -1207,8 +1214,8 @@ internal fun DetailContent(
                     qualityOptions = qualityOptions,
                     lockedBands = lockedQualityBands,
                     selectedBand = selectedBand,
-                    onSelectQualityBand = onSelectQualityBand,
                     onOpenQualitySheet = onOpenQualitySheet,
+                    onLockedQualityBand = onLockedQualityBand,
                 )
             }
         }
@@ -1233,20 +1240,24 @@ internal fun DetailContent(
             item { Box(pageSides) { ExpandableSynopsis(text = UserWords.stripSectionMarkers(synopsis)) } }
         }
 
-        // Detail review (Nov 2026, P1): Save / Share / Similar / Report
-        // live here, directly under the synopsis — one compact borderless
-        // row for thumb reach, not three outlined buttons under the hero.
-        // The Similar action keeps the scroll-to-rail behaviour the dead
-        // end's standalone link used to carry; that link is gone.
+        // P1-7 (Nov 2026): four visible actions, rest in overflow —
+        // Save · Rate · Share · Download, then More [Follow, Report,
+        // Similar]. Report never sits at icon parity with Save, and
+        // Similar is navigation to the "More Like This" rail below, not
+        // a utility. The Similar action keeps the scroll-to-rail
+        // behaviour the dead end's standalone link used to carry; that
+        // link is gone. Download mirrors the primary Download above —
+        // same tap, same enabled state, same spoken name — so the row
+        // and the button can never disagree about this title.
         item {
             DetailUtilityRow(
                 modifier = pageSides,
                 isFavorite = isFavorite,
                 onToggleFavorite = onToggleFavorite,
-                // E2 slice 2: the bell shows only on a series the catalog
-                // named with a handle — a film has no next episode, and a
-                // handle-less title has nothing the daily check could ask
-                // the catalog about.
+                // E2 slice 2: the bell lives in the overflow now, and
+                // only on a series the catalog named with a handle — a
+                // film has no next episode, and a handle-less title has
+                // nothing the daily check could ask the catalog about.
                 showFollow = isSeries && !post.workRef.isNullOrBlank(),
                 isFollowed = isFollowed,
                 onToggleFollow = onToggleFollow,
@@ -1262,6 +1273,9 @@ internal fun DetailContent(
                     contentScope.launch { similarBringIntoView.bringIntoView() }
                 },
                 onReport = onReport,
+                downloadLabel = downloadLabel,
+                downloadEnabled = downloadEnabled,
+                onDownloadPrimary = onDownloadPrimary,
             )
         }
 
@@ -2052,13 +2066,17 @@ private fun PrimaryActions(
 }
 
 /**
- * APP-02 (Phase 4): the visible quality control — a "Video:" row naming
- * the current pick, and one chip per playable band. A chip tap picks the
- * band (Play and Download act on it from now on); a locked chip still
- * answers the tap, greyed with a lock, and the ViewModel answers with
- * the upsell instead of changing the pick. Hidden entirely when the
- * title has no playable qualities. The row and the chips are at least
- * 48dp, like every other tap target on this page.
+ * P1-6 (Nov 2026): the visible quality control — a "Video:" row naming
+ * the current pick, and nothing else on the page. The chip rail is gone:
+ * locked bands rendered as greyed chips with a lock were a ransom row —
+ * greyed chips advertising unavailability — and the rail duplicated the
+ * browse sheet the "Video:" row already opens. Only entitled bands are
+ * ever shown here (as the pick, and as rows in that sheet); a locked
+ * band appears only as ONE upgrade affordance naming the top locked band
+ * ("4K — Upgrade"), which answers with the upsell the same way a locked
+ * sheet row does. Hidden entirely when the title has no playable
+ * qualities. The row and the affordance are at least 48dp, like every
+ * other tap target on this page.
  */
 @Composable
 internal fun DetailQualitySelector(
@@ -2066,19 +2084,27 @@ internal fun DetailQualitySelector(
     qualityOptions: List<QualityOption>,
     lockedBands: Set<String>,
     selectedBand: String?,
-    onSelectQualityBand: (String) -> Unit,
     onOpenQualitySheet: () -> Unit,
+    onLockedQualityBand: () -> Unit = {},
 ) {
-    // A chip must never offer a copy that cannot play — the publisher
+    // A band must never offer a copy that cannot play — the publisher
     // filters the same way, and the row re-checks, so a stale list can
     // never paint a dead band or a provider page.
-    val chips = qualityOptions.filter { it.playsHere && !it.isProviderPage && it.streamId.isNotBlank() }
+    val playable = qualityOptions.filter { it.playsHere && !it.isProviderPage && it.streamId.isNotBlank() }
     val isAuto = selectedBand == null || selectedBand == LadderForScope.AUTO
     val selection = if (isAuto) {
         stringResource(R.string.detail_quality_auto)
     } else {
         bandDisplayName(selectedBand)
     }
+    // The one upgrade affordance: the highest locked band among the
+    // playable ones, best-first by the sheet's own band order. A locked
+    // band that cannot play (dead, provider page) names nothing — it is
+    // not an upgrade, it is a dead copy.
+    val topLockedBand = playable
+        .filter { it.band in lockedBands }
+        .minByOrNull { SHEET_BAND_ORDER.indexOf(it.band.trim().lowercase()).takeIf { index -> index >= 0 } ?: Int.MAX_VALUE }
+        ?.band
     // Round-6 motion: the selector expands / collapses with an
     // AnimatedVisibility on the expressive spatial + effects specs —
     // it fades + rises in when quality options arrive, and out when
@@ -2089,7 +2115,7 @@ internal fun DetailQualitySelector(
     // MaterialTheme.motionScheme exposes no such callables in
     // material3 1.5.0 (CI 45641979193).
     AnimatedVisibility(
-        visible = chips.isNotEmpty(),
+        visible = playable.isNotEmpty(),
         enter = fadeIn(
             animationSpec = RaddMotion.defaultEffects(),
         ) + slideInVertically(
@@ -2127,45 +2153,46 @@ internal fun DetailQualitySelector(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            ScrollingChipRow(
-                contentPadding = PaddingValues(0.dp),
-                fadeHeight = 48.dp,
-            ) {
-                items(chips, key = { it.band }) { option ->
-                    val locked = option.band in lockedBands
-                    val selected = !isAuto && option.band == selectedBand
-                    FilterChip(
-                        selected = selected,
-                        onClick = { onSelectQualityBand(option.band) },
-                        label = { Text(text = bandDisplayName(option.band)) },
-                        modifier = Modifier.heightIn(min = 48.dp),
-                        leadingIcon = if (locked) {
-                            {
-                                Icon(
-                                    painterResource(R.drawable.ic_action_lock),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                            }
-                        } else {
-                            null
-                        },
-                        colors = if (locked) {
-                            FilterChipDefaults.filterChipColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                // This Compose version names the unselected icon colour
-                                // `iconColor`, not `leadingIconColor` (fails compile — CI 45325377385).
-                                iconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        } else {
-                            raddFilterChipColors()
-                        },
+            topLockedBand?.let { band ->
+                // The single upsell on this page: a lock + the top
+                // locked band + "Upgrade", in the primary colour so it
+                // reads as an action, not a muted label. The tap answers
+                // with the upsell line; it never changes the pick.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clickable(onClick = onLockedQualityBand, role = Role.Button)
+                        // The visible label is the short "4K — Upgrade";
+                        // the full sentence is the spoken name, so
+                        // TalkBack hears what the tap unlocks.
+                        .semantics { contentDescription = "Upgrade to unlock ${upgradeBandShortName(band)}" },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        painterResource(R.drawable.ic_action_lock),
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = "${upgradeBandShortName(band)} — Upgrade",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
                     )
                 }
             }
         }
     }
+}
+
+/** P1-6: the short band name the upgrade affordance carries — "4K", never "4K Ultra HD". */
+internal fun upgradeBandShortName(band: String): String = when (band.trim().lowercase()) {
+    "2160p", "4k", "uhd" -> "4K"
+    "fullhd", "fhd" -> "1080p"
+    else -> band.trim()
 }
 
 // P0-9 (Nov 2026): CamWarningCard deleted outright — see the
@@ -2502,15 +2529,20 @@ private fun DetailQualityBatchRow(
 }
 
 /**
- * Detail review (Nov 2026, P1): the compact borderless utility row —
- * Save / Share / Similar / Report — that sits directly under the
- * synopsis. No outlined buttons, no Download: the hero above already
- * owns Download, and a second one would be the same action twice on
- * one screen. Similar appears only when the rail below has titles;
- * Report opens the same broken-stream dialog the top bar's More menu
- * offers (kept in both places: the bar for discoverability, this row
- * for thumb reach). E2 slice 2 adds "Notify me" on a series with a
- * handle — the bell that follows the series for new episodes.
+ * P1-7 (Nov 2026): the compact borderless utility row, directly under
+ * the synopsis — four visible icon + label actions, rest in overflow:
+ * Save · Rate (thumbs) · Share · Download + More [Follow, Report,
+ * Similar]. The old row carried six or seven peer actions at icon
+ * parity; at 1.3x font scale "Similar" silently dropped out of it
+ * (detailLargeFont golden, round 6) — a clip, not a fit. Report is trust
+ * & safety, never a peer of Save; Similar is navigation to the "More Like
+ * This" rail below, not a utility; Follow is series-critical but shares
+ * Save's mental model, so it lives in the menu as a labelled row, not as
+ * a sixth identical icon. Every visible target is 48dp; the labels shrink
+ * in 15% steps (the bottom bar's pattern) instead of truncating at a
+ * large font scale. Download mirrors the primary Download above — the
+ * same tap, same enabled state, same spoken name — so the row and the
+ * button can never disagree about this title.
  */
 @Composable
 private fun DetailUtilityRow(
@@ -2529,11 +2561,17 @@ private fun DetailUtilityRow(
     hasSimilar: Boolean,
     onBrowseSimilar: () -> Unit,
     onReport: () -> Unit,
+    /** The primary Download's spoken name ("Download · 720p · 1.3 GB") — the utility action's too. */
+    downloadLabel: String = "Download",
+    /** The primary Download's enabled state — the utility action's too. */
+    downloadEnabled: Boolean = true,
+    /** The primary Download's tap — the utility action's too. */
+    onDownloadPrimary: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    var showOverflow by remember { mutableStateOf(false) }
     Row(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceEvenly,
     ) {
         UtilityAction(
             icon = if (isFavorite) painterResource(R.drawable.ic_action_favorite_filled) else painterResource(R.drawable.ic_action_favorite_border),
@@ -2541,65 +2579,206 @@ private fun DetailUtilityRow(
             contentDescription = favoriteActionLabel(isFavorite),
             tint = if (isFavorite) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
             onClick = onToggleFavorite,
+            modifier = Modifier.weight(1f),
         )
         // REA #2 (Netflix, Nov 2026): the thumbs — the input behind the
-        // Match %. A selected thumb reads in the secondary tint, like the
-        // saved heart; tapping it again clears the vote.
+        // Match %. One "Rate" group, two 48dp targets: the pair is one
+        // of the four visible actions, not two. A selected thumb reads
+        // in the secondary tint, like the saved heart; tapping it again
+        // clears the vote.
         if (showThumbs) {
-            UtilityAction(
-                icon = painterResource(R.drawable.ic_action_thumb_up),
-                label = "Like",
-                contentDescription = thumbActionLabel(thumb, 1),
-                tint = if (thumb == 1) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
-                onClick = { onThumb(1) },
-            )
-            UtilityAction(
-                icon = painterResource(R.drawable.ic_action_thumb_down),
-                label = "Dislike",
-                contentDescription = thumbActionLabel(thumb, -1),
-                tint = if (thumb == -1) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
-                onClick = { onThumb(-1) },
-            )
-        }
-        if (showFollow) {
-            // S8: one bell glyph for both states — the follow state
-            // reads in the tint (secondary when following), not in a
-            // second glyph, so the row carries one icon per meaning.
-            UtilityAction(
-                icon = painterResource(R.drawable.ic_action_notifications),
-                label = if (isFollowed) "Following" else "Notify me",
-                contentDescription = followActionLabel(isFollowed),
-                tint = if (isFollowed) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
-                onClick = onToggleFollow,
+            UtilityRateAction(
+                thumb = thumb,
+                onThumb = onThumb,
+                modifier = Modifier.weight(2f),
             )
         }
         UtilityAction(
             icon = painterResource(R.drawable.ic_action_share),
             label = "Share",
             onClick = onShare,
+            modifier = Modifier.weight(1f),
         )
-        if (hasSimilar) {
-            // Audit Detail #8: a recognisable related-content glyph —
-            // the 2×2 grid read as "apps". AutoAwesome is the same
-            // sparkle family as the audit's auto_awesome_movies
-            // suggestion, and the member this icons version proves.
-            UtilityAction(
-                icon = painterResource(R.drawable.ic_action_star),
-                label = "Similar",
-                onClick = onBrowseSimilar,
-            )
-        }
         UtilityAction(
-            icon = painterResource(R.drawable.ic_action_flag),
-            label = "Report",
-            onClick = onReport,
+            icon = painterResource(R.drawable.ic_action_download),
+            label = "Download",
+            contentDescription = downloadLabel,
+            onClick = onDownloadPrimary,
+            enabled = downloadEnabled,
+            modifier = Modifier.weight(1f),
         )
+        // The overflow: everything that is not one of the four. The Box
+        // anchors the menu; the action itself is a fixed 48dp target,
+        // never a squeezed weight.
+        Box(
+            modifier = Modifier.width(48.dp),
+        ) {
+            UtilityAction(
+                icon = painterResource(R.drawable.ic_player_more),
+                label = "More",
+                contentDescription = "More actions",
+                onClick = { showOverflow = true },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            DropdownMenu(
+                expanded = showOverflow,
+                onDismissRequest = { showOverflow = false },
+            ) {
+                if (showFollow) {
+                    // S8: one bell glyph for both states — the follow
+                    // state reads in the tint (secondary when
+                    // following), not in a second glyph, so the menu
+                    // carries one icon per meaning.
+                    DropdownMenuItem(
+                        text = { Text(if (isFollowed) "Following" else "Notify me") },
+                        leadingIcon = {
+                            Icon(
+                                painterResource(R.drawable.ic_action_notifications),
+                                contentDescription = null,
+                                tint = if (isFollowed) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        },
+                        onClick = {
+                            showOverflow = false
+                            onToggleFollow()
+                        },
+                        modifier = Modifier.semantics { contentDescription = followActionLabel(isFollowed) },
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text("Report") },
+                    leadingIcon = {
+                        Icon(
+                            painterResource(R.drawable.ic_action_flag),
+                            contentDescription = null,
+                        )
+                    },
+                    onClick = {
+                        showOverflow = false
+                        onReport()
+                    },
+                    modifier = Modifier.semantics { contentDescription = "Report a broken stream" },
+                )
+                if (hasSimilar) {
+                    // Audit Detail #8: a recognisable related-content
+                    // glyph — the 2×2 grid read as "apps". AutoAwesome
+                    // is the same sparkle family as the audit's
+                    // auto_awesome_movies suggestion, and the member
+                    // this icons version proves.
+                    DropdownMenuItem(
+                        text = { Text("Similar") },
+                        leadingIcon = {
+                            Icon(
+                                painterResource(R.drawable.ic_action_star),
+                                contentDescription = null,
+                            )
+                        },
+                        onClick = {
+                            showOverflow = false
+                            onBrowseSimilar()
+                        },
+                        modifier = Modifier.semantics { contentDescription = "Show similar titles" },
+                    )
+                }
+            }
+        }
     }
 }
 
+/**
+ * P1-7: the "Rate" group — the thumbs are one of the four visible
+ * actions, so the pair shares one label and one slot. Each thumb is
+ * still its own 48dp target; the slot is twice a normal weight so the
+ * pair fits without squeezing the other actions.
+ */
+@Composable
+private fun UtilityRateAction(
+    thumb: Int,
+    onThumb: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = modifier.heightIn(min = 48.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clickable(onClick = { onThumb(1) }, role = Role.Button)
+                    .semantics { contentDescription = thumbActionLabel(thumb, 1) },
+            ) {
+                Icon(
+                    painterResource(R.drawable.ic_action_thumb_up),
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp),
+                    tint = if (thumb == 1) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clickable(onClick = { onThumb(-1) }, role = Role.Button)
+                    .semantics { contentDescription = thumbActionLabel(thumb, -1) },
+            ) {
+                Icon(
+                    painterResource(R.drawable.ic_action_thumb_down),
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp),
+                    tint = if (thumb == -1) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(Modifier.height(2.dp))
+        UtilityLabel("Rate")
+    }
+}
+
+/**
+ * P1-7: a utility-row label that shrinks to fit its slot — the bottom
+ * bar's pattern (15% steps, 8sp floor, ellipsis as the last resort), so
+ * a large font scale shrinks "Download" instead of truncating it. The
+ * state is keyed on the label and the font scale, so shrinking back down
+ * restores the design size. The floor is ~70% of the 11sp base, the same
+ * ratio as the bar's 10sp floor on its 14sp label.
+ */
+@Composable
+private fun UtilityLabel(text: String) {
+    val fontScale = LocalDensity.current.fontScale
+    val labelStyle = MaterialTheme.typography.labelSmall
+    var labelFontSize by remember(text, fontScale) { mutableStateOf(labelStyle.fontSize) }
+    Text(
+        text = text,
+        style = labelStyle,
+        fontSize = labelFontSize,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Ellipsis,
+        onTextLayout = { result ->
+            if (result.lineCount > 0 && result.isLineEllipsized(0) &&
+                labelFontSize > UtilityLabelMinFontSize
+            ) {
+                val shrunk = labelFontSize * 0.85f
+                labelFontSize = if (shrunk < UtilityLabelMinFontSize) {
+                    UtilityLabelMinFontSize
+                } else {
+                    shrunk
+                }
+            }
+        },
+    )
+}
+
+private val UtilityLabelMinFontSize = 8.sp
+
 /** One borderless icon + label action in the utility row. */
 @Composable
-private fun RowScope.UtilityAction(
+private fun UtilityAction(
     icon: Painter,
     label: String,
     onClick: () -> Unit,
@@ -2610,14 +2789,15 @@ private fun RowScope.UtilityAction(
     // the icons painted near-black on black while their labels read
     // light. Selected states pass their own secondary tint instead.
     tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    enabled: Boolean = true,
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
         modifier = modifier
-            .weight(1f)
             .heightIn(min = 48.dp)
-            .clickable(onClick = onClick, role = Role.Button)
+            .alpha(if (enabled) 1f else 0.38f)
+            .clickable(enabled = enabled, onClick = onClick, role = Role.Button)
             // The visible label is the short verb; the full phrase is the
             // spoken name, so TalkBack still hears what the tap does.
             .semantics { this.contentDescription = contentDescription ?: label },
@@ -2629,12 +2809,7 @@ private fun RowScope.UtilityAction(
             tint = tint,
         )
         Spacer(Modifier.height(2.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        UtilityLabel(label)
     }
 }
 
