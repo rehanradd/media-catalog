@@ -98,9 +98,10 @@ class PlayerMockupTest {
     )
 
     private fun setBottom(state: PlayerUiState) {
-        // The bottom row's honest minimum (~447dp) is wider than the
-        // default portrait test window, so the far-right primary (More)
-        // is clipped there — that is a harness limit, not a product bug.
+        // The bottom row's honest minimum (~480dp: two 48dp safe rails +
+        // seven 48dp controls + gaps) is wider than the default portrait
+        // test window, so the far-right primary (More) is clipped there —
+        // that is a harness limit, not a product bug.
         // A requiredWidth(800.dp) wrapper was tried (222db205) and made
         // all three bottom tests fail at their first assertIsDisplayed,
         // so it is reverted: these tests pin that the row's content
@@ -114,15 +115,11 @@ class PlayerMockupTest {
                     onTogglePlayPause = {},
                     onToggleMute = {},
                     onShowSubtitleSheet = {},
-                    onShowQualitySheet = {},
                     onToggleFullscreen = {},
                     onShowMoreSheet = {},
-                    onShowSpeedSheet = {},
-                    onShowAudioSheet = {},
-                    onRequestNextEpisode = {},
                     onSeekTo = {},
+                    onSeekBy = {},
                     onSetUserVolume = {},
-                    onSetAudioBoostLevel = {},
                     onKeepCurrent = {},
                     onEnterPip = {},
                     onActivity = {},
@@ -167,13 +164,12 @@ class PlayerMockupTest {
     }
 
     @Test
-    fun `the speed pill opens the speed sheet`() {
-        // Player review D5, moved by P1 (player fixes): the pill that says
-        // the speed IS the way to change it lives in the bottom row now —
-        // the TopBar pill is gone, the bottom-row pill is the single owner.
-        // At 1.5x the flexible slots resolve to Speed + Subtitles, so the
-        // pill is in the row for this fixture.
-        var opened = false
+    fun `no speed pill rides the bottom row at 1_5x`() {
+        // Player review D5, moved by P1 (player fixes) and again by P1-15
+        // (audit B-17): the pill that said the speed lived in the bottom
+        // row — the TopBar pill is gone, the bottom-row pill is gone too.
+        // Speed lives in More now. At 1.5x the fixed row shows no speed
+        // pill, and the ±10 s skips (the new fixed transport) are there.
         compose.setContent {
             RaddStreamTheme {
                 BottomControls(
@@ -182,15 +178,11 @@ class PlayerMockupTest {
                     onTogglePlayPause = {},
                     onToggleMute = {},
                     onShowSubtitleSheet = {},
-                    onShowQualitySheet = {},
                     onToggleFullscreen = {},
                     onShowMoreSheet = {},
-                    onShowSpeedSheet = { opened = true },
-                    onShowAudioSheet = {},
-                    onRequestNextEpisode = {},
                     onSeekTo = {},
+                    onSeekBy = {},
                     onSetUserVolume = {},
-                    onSetAudioBoostLevel = {},
                     onKeepCurrent = {},
                     onEnterPip = {},
                     onActivity = {},
@@ -198,8 +190,9 @@ class PlayerMockupTest {
                 )
             }
         }
-        compose.onNodeWithText("1.5×").assertIsDisplayed().performClick()
-        assertTrue("tapping the speed pill must open the speed sheet", opened)
+        compose.onNodeWithText("1.5×").assertDoesNotExist()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_rewind_10)).assertIsDisplayed()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_forward_10)).assertIsDisplayed()
     }
 
     @Test

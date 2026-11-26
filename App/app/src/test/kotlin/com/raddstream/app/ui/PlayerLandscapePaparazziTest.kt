@@ -21,8 +21,8 @@ import org.junit.Test
 
 /**
  * The player bottom row, rendered the way the player actually runs: landscape.
- * The row's honest minimum is ~447dp (two 48dp safe rails + six 48dp primaries
- * + the quality pill), which overflows the portrait PIXEL_5 frame the rest of
+ * The row's honest minimum is ~480dp (two 48dp safe rails + seven 48dp
+ * controls + gaps), which overflows the portrait PIXEL_5 frame the rest of
  * PaparazziPreviewTest uses — a portrait golden would enshrine a clipped More
  * button. These four shots live here, on a landscape PIXEL_5, so the goldens
  * show the whole row. Fixtures mirror PaparazziPreviewTest's playerBase so
@@ -89,15 +89,11 @@ class PlayerLandscapePaparazziTest {
                     onTogglePlayPause = {},
                     onToggleMute = {},
                     onShowSubtitleSheet = {},
-                    onShowQualitySheet = {},
                     onToggleFullscreen = {},
                     onShowMoreSheet = {},
-                    onShowSpeedSheet = {},
-                    onShowAudioSheet = {},
-                    onRequestNextEpisode = {},
                     onSeekTo = {},
+                    onSeekBy = {},
                     onSetUserVolume = {},
-                    onSetAudioBoostLevel = {},
                     onKeepCurrent = {},
                     onEnterPip = {},
                     onActivity = {},

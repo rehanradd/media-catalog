@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -31,7 +32,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -40,7 +40,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,9 +50,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -66,14 +70,15 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Popup
 import androidx.mediarouter.app.MediaRouteButton
 import com.google.android.gms.cast.framework.CastButtonFactory
 import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.player.AspectMode
-import com.raddstream.app.player.AudioBoostUi
 import com.raddstream.app.player.CacheAffordance
 import com.raddstream.app.player.GestureSettings
 import com.raddstream.app.player.KeepUiState
@@ -83,7 +88,6 @@ import com.raddstream.app.player.playerStatusWord
 import com.raddstream.app.player.SleepMode
 import com.raddstream.app.player.StartDeadlineStage
 import com.raddstream.app.player.StartPhase
-import com.raddstream.app.ui.components.RaddDialogTitle
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.RaddChip
 import com.raddstream.app.ui.components.ScrollingChipRow
@@ -101,6 +105,7 @@ import com.raddstream.app.ui.theme.paint
 import com.raddstream.app.ui.theme.pressScale
 import com.raddstream.app.viewmodel.PlayerViewModel
 import com.raddstream.app.viewmodel.formatTime
+import kotlin.math.roundToInt
 
 
 // ── 5. Chrome bars ─────────────────────────────────────────────────────────────
@@ -216,12 +221,13 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
                 val autoTag = if (state.autoQualityBand != null) stringResource(R.string.player_tag_auto_plain) else null
                 // P4 (player fixes): the subtitle is year · Auto — quality
                 // moves OUT of it. Quality is owned by the persistent HUD +
-                // the QualityPill (single-owner rule), so the subtitle never
-                // repeats it. Round 2: the old tag said "Auto: 1080p" — the
-                // rung in a third place, after the HUD and the pill. The
-                // bare "Auto" is the Auto indicator; the rung is the pill's
-                // and the HUD's alone. A quality that moves on its own is
-                // still never mistaken for a hand-picked one: Auto says so.
+                // the More sheet's Quality row (single-owner rule), so the
+                // subtitle never repeats it. Round 2: the old tag said
+                // "Auto: 1080p" — the rung in a third place, after the HUD
+                // and the row. The bare "Auto" is the Auto indicator; the
+                // rung is the HUD's and the More row's alone. A quality
+                // that moves on its own is still never mistaken for a
+                // hand-picked one: Auto says so.
                 // Review fix (16 Nov): a live channel has no subtitle at all — the
                 // single live mark rides the bottom row, and a live picture has
                 // no year or rung to print. The title centres vertically on its own.
@@ -262,7 +268,7 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
             )
         }
         // P1 (player fixes): the speed pill is GONE from this bar — the
-        // bottom-row [SpeedPill] is the single owner and the single control
+        // More sheet's Speed row is the single owner and the single control
         // for speed now. A second pill here would be a second owner.
         // Session 121 (P-35): the keep chip lived here and squeezed the title to a
         // stub ("Ali Baba …") on a narrow phone. It now rides its own row above
@@ -669,18 +675,14 @@ internal fun BottomControls(
     onTogglePlayPause: () -> Unit,
     onToggleMute: () -> Unit,
     onShowSubtitleSheet: () -> Unit,
-    onShowQualitySheet: () -> Unit,
     onToggleFullscreen: () -> Unit,
     onShowMoreSheet: () -> Unit,
-    // P1 (player fixes): the flexible slots' owners — the speed sheet, the
-    // audio-tracks sheet and the next-episode hop. They arrive as callbacks
-    // (never a ViewModel call) so the row stays a pure view of the state.
-    onShowSpeedSheet: () -> Unit,
-    onShowAudioSheet: () -> Unit,
-    onRequestNextEpisode: () -> Unit,
     onSeekTo: (Long) -> Unit,
+    // P1-15 (audit B-17): the row is fixed now, so the ±10 s skips arrive
+    // as a relative seek — the same vm.seekBy the More sheet's rows use —
+    // never a ViewModel call, so the row stays a pure view of the state.
+    onSeekBy: (Long) -> Unit,
     onSetUserVolume: (Float) -> Unit,
-    onSetAudioBoostLevel: (Float) -> Unit,
     onKeepCurrent: () -> Unit,
     onEnterPip: () -> Unit,
     onActivity: () -> Unit,
@@ -689,14 +691,10 @@ internal fun BottomControls(
     // SC §3: tapping an actor on the pause strip searches them, the same
     // route the detail screen's cast chips take.
     onActorClick: (String) -> Unit = {},
-    // 25c: the single-rung Quality button explains itself through the
-    // screen's snackbar, which lives in the content scope, not here.
-    onMessage: (String) -> Unit = {},
     // P3 (round 2): the scrim multiplier from the staged poster's
     // luminance (1.0x = the long-standing scrim; no poster = 1.0x).
     scrimScale: Float = 1f,
 ) {
-    var showVolumeDialog by remember { mutableStateOf(false) }
     // P1-16 (road to 100/100, audit B-21): the pause X-Ray is one line
     // that expands on tap. A fresh pause always starts collapsed, and
     // resuming collapses it again — the cast is never advertised on
@@ -705,6 +703,12 @@ internal fun BottomControls(
     LaunchedEffect(state.isPlaying) {
         if (state.isPlaying) xrayExpanded = false
     }
+    // P1-15 (audit B-18): tap on volume mutes; a long press opens the
+    // inline vertical slider, floating just above the volume button — no
+    // dialog, so the video stays visible while the level is adjusted.
+    var showVolumeSlider by remember { mutableStateOf(false) }
+    var volumeAnchor by remember { mutableStateOf<Rect?>(null) }
+    val volumePercent = (state.userVolume * 100).toInt()
     val chrome = PlayerChromeTheme.forId(state.playerTheme)
     val rail = playerChromeRail()
     // Review fix (16 Nov): the bottom scrim is a full-height gradient — the
@@ -935,24 +939,19 @@ internal fun BottomControls(
                     }
                 }
             }
-            // Review fix (16 Nov): a D-43 reversal. SpaceEvenly spread the six
-            // primaries into a row of identical islands with no relation between
-            // them; the groups now read as two clusters — transport on the
-            // left, tools on the right — the way every rival lays them out.
+            // P1-15 (audit B-17): fixed positions — the row is the same seven
+            // controls, in the same order, in every context. A control that
+            // moves depending on context cannot be learned, so the flexible
+            // slots are gone: Speed, Quality and Next Episode live in More
+            // (their single owners), and the row never re-resolves. Two
+            // clusters, as before — transport on the left, tools on the
+            // right. The volume button stays in the transport cluster: tap
+            // mutes, long-press opens the inline slider (B-18).
             Row(
                 Modifier
                     .fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                val subtitleWord = subtitleStatusLabel(state, stringResource(R.string.player_off))
-                val volumePercent = (state.userVolume * 100).toInt()
-                // P1 (player fixes): exactly six primaries, in two clusters —
-                // transport on the left (Play/Pause, Volume), tools on the
-                // right (2 flexible slots, Fullscreen, More). The flexible
-                // slots resolve by priority ([resolveFlexiblePlayerControls]),
-                // so the row is always six and a hidden seventh button would
-                // still be a button that lies. Everything not in the row lives
-                // in the More sheet — nothing was deleted, only moved.
                 Row(
                     modifier = Modifier.testTag("player-controls-left"),
                     verticalAlignment = Alignment.CenterVertically,
@@ -971,24 +970,58 @@ internal fun BottomControls(
                             tint = PlayerOnVideo.text,
                         )
                     }
+                    // The skips ride seekEnabled, like the scrubber: on a
+                    // live stream (or while locked) they dim and do not fire
+                    // instead of vanishing — the row stays seven fixed
+                    // controls in every context, and a button that can only
+                    // no-op never reads as live.
                     PlayerControlButton(
-                        { onToggleMute() },
-                        if (state.userVolume > 0f) stringResource(R.string.player_volume, volumePercent)
-                        else stringResource(R.string.player_volume_muted),
-                        onLongClick = { showVolumeDialog = true },
+                        { onSeekBy(-10_000) },
+                        stringResource(R.string.player_rewind_10),
+                        enabled = state.seekEnabled,
                     ) {
-                        if (state.userVolume > 0f) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_player_volume),
-                                contentDescription = null,
-                                tint = PlayerOnVideo.text,
-                            )
-                        } else {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_player_volume_muted),
-                                contentDescription = null,
-                                tint = PlayerOnVideo.text,
-                            )
+                        Icon(
+                            painter = painterResource(R.drawable.ic_player_replay_10),
+                            contentDescription = null,
+                            tint = PlayerOnVideo.text,
+                        )
+                    }
+                    PlayerControlButton(
+                        { onSeekBy(10_000) },
+                        stringResource(R.string.player_forward_10),
+                        enabled = state.seekEnabled,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_player_forward_10),
+                            contentDescription = null,
+                            tint = PlayerOnVideo.text,
+                        )
+                    }
+                    // The anchor box records where the volume button sits in
+                    // the window, so the long-press slider can float just
+                    // above it; the button itself is unchanged (tap = mute).
+                    Box(
+                        Modifier.onGloballyPositioned { volumeAnchor = it.boundsInWindow() },
+                    ) {
+                        PlayerControlButton(
+                            { onToggleMute() },
+                            if (state.userVolume > 0f) stringResource(R.string.player_volume, volumePercent)
+                            else stringResource(R.string.player_volume_muted),
+                            onLongClick = { showVolumeSlider = true },
+                        ) {
+                            if (state.userVolume > 0f) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_player_volume),
+                                    contentDescription = null,
+                                    tint = PlayerOnVideo.text,
+                                )
+                            } else {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_player_volume_muted),
+                                    contentDescription = null,
+                                    tint = PlayerOnVideo.text,
+                                )
+                            }
                         }
                     }
                 }
@@ -998,64 +1031,17 @@ internal fun BottomControls(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    // P1 (player fixes): the right cluster is 2 flexible slots
-                    // + Fullscreen + More — 4 permanent + 2 flexible = 6,
-                    // always, by construction ([resolveFlexiblePlayerControls]).
-                    // The default title (no next episode, 1x speed, one audio
-                    // track, no cast target) resolves to Subtitles + Quality,
-                    // exactly the row this replaced — so the common case does
-                    // not move, and the row only changes when the context does.
-                    val flexible = resolveFlexiblePlayerControls(
-                        hasNextEpisode = state.nextEpisodeTitle != null || state.endedHasNextEpisode,
-                        castAvailable = state.castAvailable,
-                        speed = state.speed,
-                        hasMultipleAudioTracks = state.canCycleAudio,
-                    )
-                    flexible.forEach { slot ->
-                        when (slot) {
-                            FlexiblePlayerControl.NEXT_EPISODE -> PlayerControlButton(
-                                { onRequestNextEpisode() },
-                                stringResource(R.string.player_next_episode),
-                            ) {
-                                Icon(painter = painterResource(R.drawable.ic_player_skip_next), contentDescription = null, tint = PlayerOnVideo.text)
-                            }
-                            // Cast never renders while CAST_PATH_PROVEN is
-                            // false (the resolver already excludes it) — the
-                            // branch exists so the `when` stays exhaustive
-                            // when the spike is proven and the flag flips.
-                            FlexiblePlayerControl.CAST -> Unit
-                            FlexiblePlayerControl.SPEED -> SpeedPill(
-                                speed = state.speed,
-                                onShowSpeedSheet = onShowSpeedSheet,
-                            )
-                            FlexiblePlayerControl.AUDIO -> {
-                                // P6: the audio button names the track in play
-                                // — the "current state is visible" pattern, the
-                                // same one the speed pill and the subtitles
-                                // label already follow.
-                                val audioLabel = state.audioTracks
-                                    .firstOrNull { it.selected }?.label?.takeIf { it.isNotBlank() }
-                                PlayerControlButton(
-                                    { onShowAudioSheet() },
-                                    audioLabel?.let { stringResource(R.string.player_audio_label, it) }
-                                        ?: stringResource(R.string.player_audio_tracks),
-                                ) {
-                                    Icon(painter = painterResource(R.drawable.ic_player_audiotrack), contentDescription = null, tint = PlayerOnVideo.text)
-                                }
-                            }
-                            FlexiblePlayerControl.SUBTITLES -> PlayerControlButton(
-                                { onShowSubtitleSheet() },
-                                stringResource(R.string.player_subtitles_label, subtitleWord),
-                                selected = subtitleActive(state),
-                            ) {
-                                Icon(painterResource(R.drawable.ic_player_subtitles), null, tint = if (subtitleActive(state)) RaddCurrent500 else PlayerOnVideo.text)
-                            }
-                            FlexiblePlayerControl.QUALITY -> QualityPill(
-                                state = state,
-                                onShowQualitySheet = onShowQualitySheet,
-                                onMessage = onMessage,
-                            )
-                        }
+                    // Captions/Audio is one fixed slot: it opens the combined
+                    // "Audio & Subtitles" sheet, which already carries the
+                    // audio-track language switch one tap from the subtitles
+                    // (H25) — so this button is the single owner of both,
+                    // and the full audio controls stay in More → Audio tracks.
+                    PlayerControlButton(
+                        { onShowSubtitleSheet() },
+                        stringResource(R.string.player_audio_subtitles_title),
+                        selected = subtitleActive(state),
+                    ) {
+                        Icon(painterResource(R.drawable.ic_player_subtitles), null, tint = if (subtitleActive(state)) RaddCurrent500 else PlayerOnVideo.text)
                     }
                     PlayerControlButton(
                         { onToggleFullscreen() },
@@ -1085,77 +1071,81 @@ internal fun BottomControls(
                 }
             }
         }
-        // Volume long-press: a level slider with the % in words, so the exact level
-        // is reachable without the gesture. Dragging writes straight to the same
-        // setUserVolume the gesture uses, so mute remembers the restore point.
-        if (showVolumeDialog) {
-            AlertDialog(
-                onDismissRequest = { showVolumeDialog = false },
-                title = { RaddDialogTitle(stringResource(R.string.player_volume_title)) },
-                text = {
-                    Column {
-                        // Robo run 4: this level line says "Volume 100%" — and so
-                        // does the HUD toast — so the two read identically. The
-                        // dialog is the level control, so it announces itself as
-                        // one ("Volume level, 100 percent") while the paint stays
-                        // the short "Volume 100%".
-                        val volumeLevelSpoken = stringResource(
-                            R.string.player_volume_level,
-                            (state.userVolume * 100).toInt(),
-                        )
-                        Text(
-                            stringResource(R.string.player_volume, (state.userVolume * 100).toInt()),
-                            modifier = Modifier.semantics { contentDescription = volumeLevelSpoken },
-                        )
-                        Slider(
-                            value = state.userVolume,
-                            onValueChange = { onSetUserVolume(it) },
-                            valueRange = 0f..1f,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        // Volume boost (MX idea #8, verified 2026-11-24):
-                        // the slider runs the full 0..200%
-                        // (AudioBoostUi.MAX_OFFERED_LEVEL) because the
-                        // software gain stage is real — the part of the
-                        // level above unity goes to the enhancement
-                        // processor in the service's audio sink chain
-                        // (PlaybackService collects the store's
-                        // audioEnhancement and applies it live), so
-                        // every stop on it is applied. The old comment
-                        // here said this build had no gain stage and the
-                        // slider stopped at the 100% player ceiling; both
-                        // were wrong — the slider never stopped at 100%,
-                        // and the processor has been wired since MX #8.
-                        // The summary below says what was requested and
-                        // what was actually applied. The requested level lives
-                        // in this dialog only — the stored level is the
-                        // clamped one, and a request that was never applied is
-                        // not a setting to persist.
-                        var requestedBoost by remember { mutableStateOf(state.audioBoostLevel) }
-                        Spacer(Modifier.height(12.dp))
-                        Text(stringResource(R.string.player_volume_boost))
-                        Slider(
-                            value = requestedBoost,
-                            onValueChange = {
-                                requestedBoost = it
-                                onSetAudioBoostLevel(it)
-                            },
-                            valueRange = 0f..AudioBoostUi.MAX_OFFERED_LEVEL,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Text(
-                            AudioBoostUi.honestSummary(requestedBoost, state.userVolume),
-                            color = PlayerOnVideo.faintText,
-                            fontSize = brandSp(12),
-                        )
+        // Volume long-press: an inline vertical slider floating just above
+        // the volume button, with the % in words, so the exact level is
+        // reachable without the gesture — and without a dialog blocking the
+        // video. Dragging writes straight to the same setUserVolume the
+        // gesture uses, so mute remembers the restore point. The 0–200%
+        // boost is gone from here: it lives in Settings → Audio now
+        // (P1-15, audit B-18), with its warning.
+        //
+        // The slider is a horizontal M3 Slider rotated -90°: the layout
+        // stays 160dp wide (requiredWidth, so the 48dp card never squeezes
+        // it), the draw turns it vertical with max at the top, and the
+        // graphics-layer rotation maps a vertical drag onto the slider's
+        // own axis. The card is a fixed 56×208dp, anchored on the volume
+        // button's window position; a tap outside (or back) dismisses it.
+        if (showVolumeSlider) {
+            val anchor = volumeAnchor
+            if (anchor != null) {
+                val density = LocalDensity.current
+                val popupWidthPx = with(density) { 56.dp.roundToPx() }
+                val popupHeightPx = with(density) { 208.dp.roundToPx() }
+                val popupLeft = (anchor.center.x - popupWidthPx / 2f)
+                    .roundToInt().coerceAtLeast(0)
+                val popupTop = (anchor.top - popupHeightPx - with(density) { 8.dp.roundToPx() })
+                    .roundToInt().coerceAtLeast(0)
+                Popup(
+                    alignment = Alignment.TopStart,
+                    offset = IntOffset(popupLeft, popupTop),
+                    onDismissRequest = { showVolumeSlider = false },
+                ) {
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.85f),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.size(width = 56.dp, height = 208.dp),
+                    ) {
+                        Column(
+                            Modifier.padding(vertical = 12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            // Robo run 4: this level line says "Volume 100%"
+                            // — and so does the HUD toast — so the two read
+                            // identically. The slider announces itself as a
+                            // level ("Volume level, 100 percent") while the
+                            // paint stays the short "Volume 100%".
+                            val volumeLevelSpoken = stringResource(
+                                R.string.player_volume_level,
+                                volumePercent,
+                            )
+                            Text(
+                                stringResource(R.string.player_volume, volumePercent),
+                                modifier = Modifier.semantics {
+                                    contentDescription = volumeLevelSpoken
+                                },
+                                color = PlayerOnVideo.text,
+                                fontSize = brandSp(12),
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Box(
+                                Modifier.size(width = 48.dp, height = 160.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Slider(
+                                    value = state.userVolume,
+                                    onValueChange = { onSetUserVolume(it) },
+                                    valueRange = 0f..1f,
+                                    modifier = Modifier
+                                        .requiredWidth(160.dp)
+                                        .rotate(-90f),
+                                )
+                            }
+                        }
                     }
-                },
-                confirmButton = {
-                    TextButton({ showVolumeDialog = false }) {
-                        Text(stringResource(R.string.player_close))
-                    }
-                },
-            )
+                }
+            }
         }
     }
 }

@@ -362,14 +362,21 @@ class PlayerControlSemanticsTest {
 
     @Test
     fun `a long press on volume opens the level slider`() {
+        // P1-15 (audit B-18): the long-press opens the inline vertical
+        // slider floating above the volume button — no AlertDialog, so the
+        // video stays visible while the level is adjusted.
         assertTrue(
             "the Volume button must offer its level on a long press",
-            source.contains("onLongClick = { showVolumeDialog = true }"),
+            source.contains("onLongClick = { showVolumeSlider = true }"),
         )
         assertTrue(
             "the slider must write the same volume the gesture writes",
             source.contains("onValueChange = { onSetUserVolume(it) }"),
         )
+        val row = bottomControlsBody()
+        assertFalse("the volume dialog is back", row.contains("AlertDialog("))
+        assertFalse("the boost slider is back in the player", row.contains("player_volume_boost"))
+        assertFalse("the dialog title is back", row.contains("player_volume_title"))
     }
 
     /**
@@ -397,22 +404,27 @@ class PlayerControlSemanticsTest {
     }
 
     @Test
-    fun `the bottom row is exactly the six primaries`() {
+    fun `the bottom row is exactly the seven fixed controls`() {
+        // P1-15 (audit B-17): fixed positions — Play/Pause, Back 10,
+        // Forward 10, Volume, Captions/Audio, Fullscreen, More, always in
+        // that order. The flexible slots are gone; Speed, Quality and Next
+        // Episode live in More.
         val row = bottomControlsBody()
         listOf(
             "onTogglePlayPause()" to "Play/Pause",
+            "onSeekBy(-10_000)" to "Back 10",
+            "onSeekBy(10_000)" to "Forward 10",
             "onToggleMute()" to "Volume",
-            "onShowSubtitleSheet()" to "Subtitles",
-            "QualityPill(" to "Quality",
+            "onShowSubtitleSheet()" to "Captions/Audio",
             "onToggleFullscreen()" to "Fullscreen",
             "onShowMoreSheet()" to "More",
         ).forEach { (call, name) ->
-            assertTrue("the bottom row lost its $name primary", row.contains(call))
+            assertTrue("the bottom row lost its $name control", row.contains(call))
         }
         assertTrue("the More button must be named", row.contains("R.string.player_more"))
         assertFalse(
-            "the bottom row must not scroll — six buttons fit every phone, and a " +
-                "hidden seventh would be a button that lies",
+            "the bottom row must not scroll — seven fixed buttons fit the " +
+                "landscape player, and a hidden eighth would be a button that lies",
             row.contains("horizontalScroll"),
         )
     }
@@ -439,7 +451,7 @@ class PlayerControlSemanticsTest {
         val sheet = moreSheetBody()
         listOf(
             // Playback
-            "vm.showSpeedSheet()", "vm.showSleepSheet()", "vm.stepFrame(-1)", "vm.stepFrame(1)",
+            "vm.showSpeedSheet()", "vm.showQualitySheet()", "vm.showSleepSheet()", "vm.stepFrame(-1)", "vm.stepFrame(1)",
             "vm.seekBy(-10_000)", "vm.seekBy(10_000)", "vm.cycleAspect()", "vm.toggleOrientation()",
             "vm.toggleViewMode()",
             // Subtitle
@@ -686,9 +698,11 @@ class PlayerControlSemanticsTest {
             "the chrome still cuts on a plain conditional",
             chrome.contains("if (chromeVisible && !state.locked)"),
         )
-        // D5, moved by P1 (player fixes): the speed pill left the TopBar —
-        // the bottom-row pill is the single owner and the single control.
-        // The TopBar takes no speed callback and paints no pill; the row does.
+        // D5, moved by P1 (player fixes) and again by P1-15: the speed pill
+        // left the TopBar, then left the bottom row with the flexible slots
+        // — the More sheet's Speed row is the single owner and the single
+        // control now. The TopBar takes no speed callback and paints no
+        // pill; neither does the row.
         val topBarStart = source.indexOf("internal fun TopBar(")
         val topBarEnd = source.indexOf("\n@Composable\ninternal fun CenterSpinner(", topBarStart)
         assertTrue("TopBar bounds missing", topBarStart >= 0 && topBarEnd > topBarStart)
@@ -698,8 +712,13 @@ class PlayerControlSemanticsTest {
         val bottomStart = source.indexOf("internal fun BottomControls(")
         assertTrue("BottomControls bounds missing", bottomStart >= 0)
         val bottom = source.substring(bottomStart)
-        assertTrue("the row must take the speed-sheet callback", bottom.contains("onShowSpeedSheet: () -> Unit"))
-        assertTrue("the speed pill must open the speed sheet", bottom.contains("SpeedPill("))
+        assertFalse("the row must not take the speed-sheet callback anymore", bottom.contains("onShowSpeedSheet"))
+        assertFalse("the speed pill must be gone from the row", bottom.contains("SpeedPill("))
+        assertFalse("the quality pill must be gone from the row", bottom.contains("QualityPill("))
+        assertTrue(
+            "the More sheet must own speed now",
+            moreSheetBody().contains("vm.showSpeedSheet()"),
+        )
     }
 
     @Test

@@ -51,8 +51,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.R
-import com.raddstream.app.player.AudioBoost
-import com.raddstream.app.player.AudioBoostUi
 import com.raddstream.app.player.AudioTrackMatcher
 import com.raddstream.app.player.AudioTrackPolicy
 import com.raddstream.app.player.DecoderMode
@@ -684,38 +682,6 @@ internal fun TracksSheet(state: PlayerUiState, vm: PlayerViewModel) {
             SheetRow(
                 label = if (state.audioOnly) stringResource(R.string.player_audio_only_on) else stringResource(R.string.player_audio_only_off),
             ) { vm.toggleAudioOnly() }
-
-            // ── Audio level. Media3's setVolume contract stops at 100%, so the
-            //    part of the level above unity goes to the enhancement
-            //    processor as software gain (MX idea #8): the slider runs
-            //    the full 0..200% and every stop on it is applied. The
-            //    caption states the applied percent.
-            Spacer(Modifier.height(14.dp))
-            SheetSection(stringResource(R.string.player_audio_level))
-            Row(
-                Modifier.padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    AudioBoost.labelFor(state.audioBoostLevel),
-                    color = RaddCurrent500,
-                    fontSize = brandSp(14),
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Slider(
-                    value = state.audioBoostLevel.coerceIn(0f, AudioBoostUi.MAX_OFFERED_LEVEL),
-                    onValueChange = { vm.setAudioBoostLevel(it) },
-                    valueRange = 0f..AudioBoostUi.MAX_OFFERED_LEVEL,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            Text(
-                AudioBoostUi.honestSummary(state.audioBoostLevel, state.userVolume),
-                color = Color.White.copy(alpha = 0.55f),
-                fontSize = brandSp(11),
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
         }
     }
 }
@@ -739,7 +705,8 @@ internal fun canShareMoment(state: PlayerUiState): Boolean {
  * sheet or dialog hides More first (the PrintLogSheet pattern), so two sheets never
  * stack; a row that acts directly closes More too, so the viewer sees the picture,
  * not the menu, after the tap. Lock is not here — it lives in the top bar already.
- * The audio-level slider lives inside the TracksSheet the Audio tracks row opens.
+ * The 0–200% audio boost lives in Settings → Audio now (P1-15, audit B-18),
+ * not in the player at all.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -754,6 +721,16 @@ internal fun MoreSheet(state: PlayerUiState, vm: PlayerViewModel, onEnterPip: ()
             SheetRow(label = stringResource(R.string.player_speed_label, state.speed)) {
                 vm.hideMoreSheet()
                 vm.showSpeedSheet()
+            }
+            // P1-15 (audit B-17): the fixed bottom row carries no Quality
+            // pill anymore, so Quality lives here — the row names the rung
+            // in play, and the sheet is the single owner of the switch.
+            // The sheet itself explains a single-rung title (Auto + the
+            // one rung + the note), so the old pill's "says why instead
+            // of opening a one-row sheet" rule is not lost, only moved.
+            SheetRow(label = stringResource(R.string.player_quality_label, state.qualityLabel)) {
+                vm.hideMoreSheet()
+                vm.showQualitySheet()
             }
             SheetRow(label = stringResource(R.string.player_sleep_timer)) {
                 vm.hideMoreSheet()

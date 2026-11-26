@@ -706,15 +706,11 @@ private fun PlayerScreenContent(
                         onTogglePlayPause = { vm.togglePlayPause() },
                         onToggleMute = { vm.toggleMute() },
                         onShowSubtitleSheet = { vm.showSubtitleSheet() },
-                        onShowQualitySheet = { vm.showQualitySheet() },
                         onToggleFullscreen = { vm.toggleFullscreen() },
                         onShowMoreSheet = { vm.showMoreSheet() },
-                        onShowSpeedSheet = { vm.showSpeedSheet() },
-                        onShowAudioSheet = { vm.showTracksSheet() },
-                        onRequestNextEpisode = { vm.requestNextEpisode() },
                         onSeekTo = { vm.seekTo(it) },
+                        onSeekBy = { vm.seekBy(it) },
                         onSetUserVolume = { vm.setUserVolume(it) },
-                        onSetAudioBoostLevel = { vm.setAudioBoostLevel(it) },
                         onKeepCurrent = { vm.keepCurrent() },
                         onEnterPip = launchPip,
                         onActivity = { interactTick = System.nanoTime() },
@@ -725,7 +721,6 @@ private fun PlayerScreenContent(
                             interactTick = System.nanoTime()
                         },
                         onActorClick = onActorClick,
-                        onMessage = { snackbar = PlayerSnackbar(it) },
                         scrimScale = scrimScale,
                     )
                 }

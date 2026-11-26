@@ -13,12 +13,11 @@
     <string name="player_audio_only_paused">Audio only — paused</string>
     <string name="player_brightness">Brightness %1$d%%</string>
     <string name="player_volume">Volume %1$d%%</string>
-    <!-- Robo run 4: the volume dialog's level line announces this instead of the
+    <!-- Robo run 4: the volume slider's level line announces this instead of the
          bare "Volume 100%" — the HUD toast already says that, so the two read
-         identically. The dialog is the level control; it says so. -->
+         identically. The slider is the level control; it says so. -->
     <string name="player_volume_level">Volume level, %1$d percent</string>
     <string name="player_volume_muted">Volume muted</string>
-    <string name="player_volume_title">Volume</string>
     <string name="player_fullscreen">Fullscreen</string>
     <string name="player_exit_fullscreen">Exit fullscreen</string>
     <string name="player_more">More</string>
@@ -28,7 +27,7 @@
     <string name="player_boost_badge">Boosting speed</string>
     <string name="player_back">Back</string>
     <!-- Round 2 (P4 single-owner): the subtitle's Auto tag names the mode
-         only — the rung lives in the QualityPill + HUD, so "Auto: 1080p"
+         only — the rung lives in the More sheet's Quality row + HUD, so "Auto: 1080p"
          (the old player_tag_auto) printed quality in three places. The
          bare "Auto" is the Auto indicator; the rung is never repeated. -->
     <string name="player_tag_auto_plain">Auto</string>
@@ -132,7 +131,6 @@
          the cast chips only appear when the viewer taps it. -->
     <string name="player_xray_show_cast">Show cast</string>
     <string name="player_xray_hide_cast">Hide cast</string>
-    <string name="player_volume_boost">Volume boost</string>
     <string name="player_seek">Seek: %1$s of %2$s</string>
     <string name="player_seek_chapter">, %1$s</string>
     <!-- P2 (player fixes): the scrubber's TalkBack chapter — "Chapter 3 — 12:00". -->
@@ -141,7 +139,6 @@
     <string name="player_audio_label">Audio: %1$s</string>
     <string name="player_up_next_title">%1$s: %2$s</string>
     <string name="player_season_episode">S%1$d:E%2$d</string>
-    <string name="player_quality_single">Only one quality is available for this title</string>
     <!-- Session 126 (NAV-4/NAV-5): the catch-all deep-link destination. -->
     <!-- Flow mockup (Nov 2026): the words are the mockup's — the title was
          never named, so the screen says the title is not available and the
@@ -275,7 +272,6 @@
     <string name="player_stereo_note">Note: this restricts track SELECTION to ≤2-channel tracks; 1.3.1 cannot downmix 5.1/Atmos to stereo.</string>
     <string name="player_audio_only_on">Audio-only mode: ON (screen decoder off)</string>
     <string name="player_audio_only_off">Audio-only mode: off</string>
-    <string name="player_audio_level">Audio level</string>
     <!-- MX idea #8 — equalizer (More sheet → EQ sheet). Every value is
          unique among player_* strings and every one is used; the band
          labels are resources, not literals, so the screen holds no prose. -->

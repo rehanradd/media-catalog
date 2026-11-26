@@ -506,7 +506,11 @@ internal fun SettingsContent(
     // The debug card is DEBUG-only and never filtered.
     val showContentPreference = settingsQueryMatches(searchQuery, "content preference", "region", "watch", "change")
     val showLanguages = settingsQueryMatches(searchQuery, "languages", "audio", "subtitles")
-    val showPlaybackDisplay = settingsQueryMatches(searchQuery, "playback display", "image quality", "battery saver", "mobile data", "data saver", "downloads kept", "audio level", "dynamic colour", "wallpaper")
+    val showPlaybackDisplay = settingsQueryMatches(searchQuery, "playback display", "image quality", "battery saver", "mobile data", "data saver", "downloads kept", "dynamic colour", "wallpaper")
+    // P1-15 (audit B-18): the 0–200% audio boost lives in its own Audio
+    // card now, not inside Playback & display — so it gets its own filter
+    // flag, and "audio level" leaves the card above.
+    val showAudio = settingsQueryMatches(searchQuery, "audio", "audio level", "volume boost", "sound", "loud")
     val showPlayer = settingsQueryMatches(searchQuery, "player", "autoplay", "next episode", "previews", "picture-in-picture", "default quality", "subtitle size")
     val showKidsLock = settingsQueryMatches(searchQuery, "kids lock", "family", "pin", "child", "mode")
     val showWatchHistory = settingsQueryMatches(searchQuery, "watch history", "watched")
@@ -520,7 +524,7 @@ internal fun SettingsContent(
     val showAnalytics = settingsQueryMatches(searchQuery, "anonymous", "usage totals", "analytics", "share", "plays", "crashes")
     val showAbout = settingsQueryMatches(searchQuery, "about", "version", "build", "made for watching")
     val showAdvancedCard = settingsQueryMatches(searchQuery, "advanced", "catalog", "server", "address", "connected", "change", "save")
-    val showPlaybackGroup = showContentPreference || showLanguages || showPlaybackDisplay || showPlayer || showKidsLock || showWatchHistory
+    val showPlaybackGroup = showContentPreference || showLanguages || showPlaybackDisplay || showAudio || showPlayer || showKidsLock || showWatchHistory
     val showDownloadsGroup = showOffline || showShare
     val showAboutGroup = showHelp || showContact || showDisclaimer || showAnalytics || showAbout || showAdvancedCard
     val showAccountGroup = showVip || showAccount
@@ -1105,6 +1109,16 @@ internal fun SettingsContent(
                             style = settingsHelperStyle,
                         )
 
+                    }
+                }
+                if (showAudio) {
+                    // P1-15 (audit B-18): the 0–200% audio boost lives here
+                    // now — its own Audio card, not a row inside Playback &
+                    // display and not a slider in the player. The player only
+                    // reads the stored level; this is the one place that
+                    // writes it. Past 100% the gain is software boost, so the
+                    // warning shows only while the level is above 100%.
+                    SettingsCard(title = "Audio", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
                         Spacer(Modifier.height(12.dp))
                         // Mockup: the title and its percent share one row, the slider
                         // runs full-width below them. The percent stays neutral (M8):
@@ -1159,6 +1173,12 @@ internal fun SettingsContent(
                             AudioBoostUi.honestSummary(state.prefs.audioBoost, 1f),
                             style = settingsHelperStyle,
                         )
+                        if (state.prefs.audioBoost > 1f) {
+                            Text(
+                                "Above 100% can distort the sound and may damage your hearing. Turn it down if the sound crackles.",
+                                style = settingsHelperStyle,
+                            )
+                        }
 
                         Text(
                             "Saved on this device.",

@@ -2,8 +2,6 @@ package com.raddstream.app.ui
 
 import com.raddstream.app.player.ChapterTick
 import com.raddstream.app.player.chapterAt
-import com.raddstream.app.ui.screens.FlexiblePlayerControl
-import com.raddstream.app.ui.screens.resolveFlexiblePlayerControls
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -11,105 +9,91 @@ import org.junit.Test
 import java.io.File
 
 /**
- * P1/P2/P8 (player fixes) — the context-aware primary row, the chapter
- * numbering, and the gesture button-equivalents, as pure rules. The row's
- * six-button guarantee is provable by construction here: 4 permanent +
- * the first 2 of the priority list, always 2, never a seventh.
+ * P1-15 (audit B-17/B-18, player fixes) — the bottom row is fixed now:
+ * Play/Pause, Back 10, Forward 10, Volume, Captions/Audio, Fullscreen,
+ * More, always in that order, in every context. The flexible slots and
+ * their priority resolver are gone; Speed, Quality and Next Episode live
+ * in More, their single owners. The chapter numbering and the gesture
+ * button-equivalents below are unchanged.
  */
 class PlayerFlexibleControlsTest {
 
-    private fun resolve(
-        hasNextEpisode: Boolean = false,
-        castAvailable: Boolean = false,
-        speed: Float = 1f,
-        hasMultipleAudioTracks: Boolean = false,
-        castPathProven: Boolean = false,
-    ) = resolveFlexiblePlayerControls(
-        hasNextEpisode = hasNextEpisode,
-        castAvailable = castAvailable,
-        speed = speed,
-        hasMultipleAudioTracks = hasMultipleAudioTracks,
-        castPathProven = castPathProven,
-    )
+    private val screensDir: File by lazy {
+        var dir: File? = File("").absoluteFile
+        while (dir != null) {
+            if (File(dir, "brand.properties").isFile) {
+                return@lazy File(
+                    dir,
+                    "App/app/src/main/kotlin/com/raddstream/app/ui/screens",
+                )
+            }
+            dir = dir.parentFile
+        }
+        error("brand.properties not found above ${File("").absolutePath}")
+    }
 
-    // ── P1: the priority order ───────────────────────────────────────────
+    private fun read(name: String): String = File(screensDir, name).readText()
+
+    /** The bottom row, from its signature to the next top-level function. */
+    private fun bottomRow(): String {
+        val source = read("PlayerChrome.kt")
+        val start = source.indexOf("internal fun BottomControls(")
+        assertTrue("BottomControls is gone", start >= 0)
+        val end = source.indexOf("\nprivate fun subtitleActive(", start)
+        assertTrue("cannot find the end of BottomControls", end >= 0)
+        return source.substring(start, end)
+    }
+
+    // ── P1-15: the fixed row ─────────────────────────────────────────────
 
     @Test
-    fun `a plain title keeps subtitles and quality`() {
-        assertEquals(
-            listOf(FlexiblePlayerControl.SUBTITLES, FlexiblePlayerControl.QUALITY),
-            resolve(),
+    fun `the bottom row carries exactly the seven fixed controls, in order`() {
+        val row = bottomRow()
+        // The order is the contract: a control that moves depending on
+        // context cannot be learned, so the row is pinned by position,
+        // not just by presence.
+        val calls = listOf(
+            "onTogglePlayPause()" to "Play/Pause",
+            "onSeekBy(-10_000)" to "Back 10",
+            "onSeekBy(10_000)" to "Forward 10",
+            "onToggleMute()" to "Volume",
+            "onShowSubtitleSheet()" to "Captions/Audio",
+            "onToggleFullscreen()" to "Fullscreen",
+            "onShowMoreSheet()" to "More",
         )
+        var lastIndex = -1
+        calls.forEach { (call, name) ->
+            val index = row.indexOf(call)
+            assertTrue("the bottom row lost its $name control", index >= 0)
+            assertTrue("the $name control moved out of its fixed position", index > lastIndex)
+            lastIndex = index
+        }
+        assertFalse("the bottom row must not scroll", row.contains("horizontalScroll"))
     }
 
     @Test
-    fun `a next episode takes the first flexible slot`() {
-        assertEquals(
-            listOf(FlexiblePlayerControl.NEXT_EPISODE, FlexiblePlayerControl.SUBTITLES),
-            resolve(hasNextEpisode = true),
-        )
-    }
-
-    @Test
-    fun `a changed speed takes a flexible slot`() {
-        assertEquals(
-            listOf(FlexiblePlayerControl.SPEED, FlexiblePlayerControl.SUBTITLES),
-            resolve(speed = 1.5f),
-        )
-    }
-
-    @Test
-    fun `multiple audio tracks take a flexible slot`() {
-        assertEquals(
-            listOf(FlexiblePlayerControl.AUDIO, FlexiblePlayerControl.SUBTITLES),
-            resolve(hasMultipleAudioTracks = true),
-        )
-    }
-
-    @Test
-    fun `next episode plus speed fills both slots`() {
-        assertEquals(
-            listOf(FlexiblePlayerControl.NEXT_EPISODE, FlexiblePlayerControl.SPEED),
-            resolve(hasNextEpisode = true, speed = 2f),
-        )
-    }
-
-    @Test
-    fun `the row is always exactly two flexible slots`() {
+    fun `the row never resolves by priority anymore`() {
+        val row = bottomRow()
         listOf(
-            resolve(),
-            resolve(hasNextEpisode = true, speed = 1.5f, hasMultipleAudioTracks = true),
-            resolve(castAvailable = true, speed = 0.5f),
-        ).forEach { slots -> assertEquals(2, slots.size) }
-    }
-
-    // ── P1: the cast gate ────────────────────────────────────────────────
-
-    @Test
-    fun `an available cast target stays hidden while the path is unproven`() {
-        // CAST_SPIKE proves the SDK wires up, not that a real receiver plays
-        // a resolved URL — so a receiver in range must NOT buy a button.
-        assertFalse(resolve(castAvailable = true).contains(FlexiblePlayerControl.CAST))
-        assertEquals(
-            listOf(FlexiblePlayerControl.SUBTITLES, FlexiblePlayerControl.QUALITY),
-            resolve(castAvailable = true),
-        )
+            "resolveFlexiblePlayerControls",
+            "FlexiblePlayerControl",
+            "SpeedPill(",
+            "QualityPill(",
+            "onShowSpeedSheet",
+            "onShowQualitySheet",
+            "onShowAudioSheet",
+            "onRequestNextEpisode",
+        ).forEach { gone ->
+            assertFalse("the bottom row still carries $gone", row.contains(gone))
+        }
     }
 
     @Test
-    fun `once proven cast outranks speed`() {
-        assertEquals(
-            listOf(FlexiblePlayerControl.CAST, FlexiblePlayerControl.SPEED),
-            resolve(castAvailable = true, speed = 1.5f, castPathProven = true),
-        )
-    }
-
-    @Test
-    fun `once proven next episode still outranks cast`() {
-        assertEquals(
-            listOf(FlexiblePlayerControl.NEXT_EPISODE, FlexiblePlayerControl.CAST),
-            resolve(hasNextEpisode = true, castAvailable = true, castPathProven = true),
-        )
+    fun `speed, quality and next episode live in More, not the row`() {
+        val more = read("PlayerSheets.kt")
+        assertTrue("More lost Speed", more.contains("vm.showSpeedSheet()"))
+        assertTrue("More lost Quality", more.contains("vm.showQualitySheet()"))
+        assertTrue("More lost Next Episode", more.contains("vm.requestNextEpisode()"))
     }
 
     // ── P2: the chapter numbering ────────────────────────────────────────
@@ -139,22 +123,6 @@ class PlayerFlexibleControlsTest {
 
     // ── P8: every gesture keeps a visible button equivalent ─────────────
 
-    private val screensDir: File by lazy {
-        var dir: File? = File("").absoluteFile
-        while (dir != null) {
-            if (File(dir, "brand.properties").isFile) {
-                return@lazy File(
-                    dir,
-                    "App/app/src/main/kotlin/com/raddstream/app/ui/screens",
-                )
-            }
-            dir = dir.parentFile
-        }
-        error("brand.properties not found above ${File("").absolutePath}")
-    }
-
-    private fun read(name: String): String = File(screensDir, name).readText()
-
     @Test
     fun `the plus-minus-10s skips are buttons not just gestures`() {
         // Centre buttons while paused…
@@ -164,33 +132,11 @@ class PlayerFlexibleControlsTest {
         val more = read("PlayerSheets.kt")
         assertTrue(more.contains("vm.seekBy(-10_000)"))
         assertTrue(more.contains("vm.seekBy(10_000)"))
-    }
-
-    @Test
-    fun `the bottom row still carries exactly the six primaries`() {
-        // The flexible slots render by priority, but the source must still
-        // name every primary the row can show — a slot that lost its call
-        // would be a button that lies.
-        val row = read("PlayerChrome.kt")
-        listOf(
-            "onTogglePlayPause()",
-            "onToggleMute()",
-            "onShowSubtitleSheet()",
-            "QualityPill(",
-            "onToggleFullscreen()",
-            "onShowMoreSheet()",
-            "onShowAudioSheet()",
-            "onRequestNextEpisode()",
-        ).forEach { call -> assertTrue("bottom row lost $call", row.contains(call)) }
-        // Speed is a pill, not an icon button: it takes the handler as a
-        // value (`onShowSpeedSheet = onShowSpeedSheet`), it never calls it
-        // inline — so the wiring check is the pill + the passed handler,
-        // not a `onShowSpeedSheet()` call (which no pill slot ever has).
-        assertTrue("bottom row lost SpeedPill(", row.contains("SpeedPill("))
-        assertTrue(
-            "bottom row lost the speed-sheet wiring",
-            row.contains("onShowSpeedSheet = onShowSpeedSheet"),
-        )
-        assertFalse("the bottom row must not scroll", row.contains("horizontalScroll"))
+        // P1-15: the bottom row carries the skips too, fixed — so the
+        // ±10 s jump is a button in every chrome state, not only while
+        // paused and not only behind More.
+        val row = bottomRow()
+        assertTrue(row.contains("onSeekBy(-10_000)"))
+        assertTrue(row.contains("onSeekBy(10_000)"))
     }
 }

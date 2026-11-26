@@ -35,8 +35,9 @@ import org.robolectric.RobolectricTestRunner
  * The 16 Nov player review fixes, pinned in code: the malformed pause/play
  * vectors lost their foot, the subtitles glyph is a caption card (no chat
  * bubble), the centre transport is paused-only, the bottom row carries the
- * single live mark, the Quality pill never dims, the control row is two
- * groups on one shared rail, and the icons are one outlined family.
+ * single live mark, quality lives in More (P1-15, no pill to dim), the
+ * control row is two groups on one shared rail, and the icons are one
+ * outlined family.
  */
 @RunWith(RobolectricTestRunner::class)
 class PlayerReviewFixesTest {
@@ -139,24 +140,24 @@ class PlayerReviewFixesTest {
     }
 
     @Test
-    fun `the quality pill never dims`() {
-        // QualityPill and Scrubber widened private -> internal in the
-        // APP-10 split (PlayerControls.kt), so the markers drop the
-        // visibility word.
-        val start = playerScreen.indexOf("fun QualityPill(")
-        assertTrue("QualityPill is gone", start >= 0)
-        val end = playerScreen.indexOf("fun Scrubber(", start)
-        assertTrue("cannot find the end of QualityPill", end > start)
-        val pill = playerScreen.substring(start, end)
-        assertFalse("QualityPill still dims a tappable control", pill.contains("dimmed"))
-        // The 40% white still lives in the border (the Auto pill's outline),
-        // which is fine — the TEXT must print full white, never dimmed.
-        // P3 (player fixes): the white is spelled PlayerOnVideo.text now —
-        // the token IS full white (Color.White, see Color.kt), so the pill
-        // prints exactly what this test pinned before, under the role name.
+    fun `quality lives in More, not in a pill that can dim`() {
+        // P1-15 (audit B-17): the Quality pill left the bottom row with the
+        // flexible slots — Quality is a row in More now, naming the rung in
+        // play. A tappable control never dims, and a sheet row has no dimmed
+        // state to regress, so the old pill's rule is pinned here as the
+        // row's existence, not as the pill's paint.
+        assertFalse("the Quality pill is back", playerScreen.contains("fun QualityPill("))
+        assertFalse("the speed pill is back", playerScreen.contains("fun SpeedPill("))
+        val moreStart = playerScreen.indexOf("fun MoreSheet(")
+        assertTrue("MoreSheet is gone", moreStart >= 0)
+        val more = playerScreen.substring(moreStart)
         assertTrue(
-            "QualityPill text must print full white",
-            pill.contains("val textColor = if (!state.qualityAuto) RaddCurrent500 else PlayerOnVideo.text"),
+            "More lost the Quality row",
+            more.contains("vm.showQualitySheet()"),
+        )
+        assertTrue(
+            "the Quality row must name the rung in play",
+            more.contains("R.string.player_quality_label"),
         )
     }
 
@@ -222,15 +223,11 @@ class PlayerReviewFixesTest {
                     onTogglePlayPause = {},
                     onToggleMute = {},
                     onShowSubtitleSheet = {},
-                    onShowQualitySheet = {},
                     onToggleFullscreen = {},
                     onShowMoreSheet = {},
-                    onShowSpeedSheet = {},
-                    onShowAudioSheet = {},
-                    onRequestNextEpisode = {},
                     onSeekTo = {},
+                    onSeekBy = {},
                     onSetUserVolume = {},
-                    onSetAudioBoostLevel = {},
                     onKeepCurrent = {},
                     onEnterPip = {},
                     onActivity = {},

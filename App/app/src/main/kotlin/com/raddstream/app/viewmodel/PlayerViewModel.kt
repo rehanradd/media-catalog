@@ -1824,38 +1824,11 @@ class PlayerViewModel @Inject constructor(
         _ui.update { it.copy(fullscreen = !it.fullscreen) }
     }
 
-    /**
-     * The audio level control. 1.0 is the untouched baseline and 2.0 is the
-     * MX Player ceiling: the part at or below unity goes to the player, the
-     * excess goes to the enhancement processor as software gain (see
-     * [AudioBoostUi.splitGain] and [applyPlayerVolume]). Stored through the
-     * same DataStore the settings screen writes, so a mix made in the player
-     * is the level the next episode starts with and the one the settings
-     * screen shows.
-     */
-    fun setAudioBoostLevel(level: Float) {
-        val clamped = AudioBoostUi.offeredLevel(level)
-        _ui.update { it.copy(audioBoostLevel = clamped) }
-        applyPlayerVolume()
-        // F-03: the boost slider fires per tick — the persisted write is
-        // debounced (same 500 ms pattern as scheduleSyncPrefsSave) so a
-        // drag writes once, with the last value, instead of once per tick.
-        // The live gain applies immediately in applyPlayerVolume above;
-        // only the DataStore write waits.
-        scheduleAudioBoostSave()
-    }
-
-    /** Debounced persistence for [setAudioBoostLevel]; reads the live state at fire time. */
-    private var audioBoostSaveJob: Job? = null
-
-    private fun scheduleAudioBoostSave() {
-        audioBoostSaveJob?.cancel()
-        audioBoostSaveJob = viewModelScope.launch {
-            delay(SYNC_PREFS_SAVE_DEBOUNCE_MS)
-            val level = _ui.value.audioBoostLevel
-            settingsRepository.saveAudioBoostLevel(level)
-        }
-    }
+    // P1-15 (audit B-18): the player no longer writes the audio boost —
+    // the 0–200% slider lives in Settings → Audio only, and the player only
+    // reads the stored level (collected at line ~484) and applies it in
+    // [applyPlayerVolume]. The setter and its debounced save went with the
+    // two player sliders that called it.
 
     /**
      * The one place that writes `Player.setVolume` — and the one place that

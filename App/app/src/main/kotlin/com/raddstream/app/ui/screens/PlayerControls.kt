@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -39,7 +38,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -60,7 +58,6 @@ import com.raddstream.app.ui.theme.RaddCurrent500
 import com.raddstream.app.ui.theme.RaddInk950
 import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.PlayerChromeTheme
-import com.raddstream.app.ui.theme.PlayerOnVideo
 import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.pressScale
 import com.raddstream.app.viewmodel.formatTime
@@ -150,171 +147,11 @@ internal fun PlayerControlButton(
     }
 }
 
-/**
- * Mockup: quality is a text pill, not an icon — the rung itself ("1080P",
- * "Auto") is the label, so the viewer reads the quality without opening
- * the sheet. Same press contract as the other primaries (48dp minimum,
- * Button role, spoken label), only the shape is a rounded rectangle, so it
- * cannot ride [ControlTarget]'s circle clip. Single rung: the pill stays in
- * FULL white and tapping it says why instead of opening a sheet with one
- * row — the 25c rule, unchanged. Review fix (16 Nov): the old pill painted
- * the rung at 40% opacity, which reads as a disabled control on a tappable
- * one — a tappable control never dims. A hand-picked rung prints jade, Auto
- * white.
- *
- * P3 (player fixes): the pill is a full pill now (expressive chip shape),
- * on the shared on-video pill fill — the same shape the speed pill wears,
- * so the two text pills in the row read as one family.
- */
-@Composable
-internal fun QualityPill(
-    state: PlayerUiState,
-    onShowQualitySheet: () -> Unit,
-    onMessage: (String) -> Unit,
-) {
-    val context = LocalContext.current
-    val label = stringResource(R.string.player_quality_label, state.qualityLabel)
-    val singleQualityMessage = stringResource(R.string.player_quality_single)
-    val textColor = if (!state.qualityAuto) RaddCurrent500 else PlayerOnVideo.text
-    // Round 6: the pill presses with the same default-effects spring +
-    // haptic tick as the other bottom controls (ControlTarget) — until
-    // now it pressed with no scale and no tick.
-    val interactionSource = remember { MutableInteractionSource() }
-    Box(
-        modifier = Modifier
-            .heightIn(min = MinControlTarget)
-            .clip(RoundedCornerShape(percent = 50))
-            // Cinema (Nov 2026): no outline — the rung is plain bold text on a
-            // translucent solid fill; the border was the outline this slice removes.
-            .background(PlayerOnVideo.pillFill, RoundedCornerShape(percent = 50))
-            .pressScale(interactionSource)
-            .clickable(
-                onClick = {
-                    if (state.canSwitchQuality) onShowQualitySheet()
-                    else onMessage(singleQualityMessage)
-                },
-                role = Role.Button,
-                interactionSource = interactionSource,
-            )
-            .semantics { contentDescription = label }
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        PressHaptics(interactionSource)
-        Text(
-            text = state.qualityLabel,
-            color = textColor,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-        )
-    }
-}
-
-/**
- * P1 — the speed pill, MOVED from the TopBar: the bottom-row pill is the
- * single owner and the single control for speed (the TopBar pill is gone).
- * Same pill shape and press contract as [QualityPill]; jade bold text, so
- * a changed speed reads at a glance, and the pill only exists in the row
- * while speed != 1x — at 1x there is nothing to show, and speed is changed
- * from More. The label speaks the speed ("Speed 1.5×"); the paint prints
- * it short ("1.5×").
- */
-@Composable
-internal fun SpeedPill(
-    speed: Float,
-    onShowSpeedSheet: () -> Unit,
-) {
-    val label = stringResource(R.string.player_speed_label, speed)
-    // Round 6: the pill presses with the same default-effects spring +
-    // haptic tick as the other bottom controls (ControlTarget) — until
-    // now it pressed with no scale and no tick.
-    val interactionSource = remember { MutableInteractionSource() }
-    Box(
-        modifier = Modifier
-            .heightIn(min = MinControlTarget)
-            .clip(RoundedCornerShape(percent = 50))
-            .background(PlayerOnVideo.pillFill, RoundedCornerShape(percent = 50))
-            .pressScale(interactionSource)
-            .clickable(
-                onClick = onShowSpeedSheet,
-                role = Role.Button,
-                interactionSource = interactionSource,
-            )
-            .semantics { contentDescription = label }
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        PressHaptics(interactionSource)
-        Text(
-            text = stringResource(R.string.player_speed_short, speed),
-            color = RaddCurrent500,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-        )
-    }
-}
-
-/**
- * P1 — the context-aware primary row, as a pure rule: 4 permanent primaries
- * (Play/Pause, Volume, Fullscreen, More — owned by [BottomControls]) plus
- * exactly the first TWO of these flexible candidates, in priority order:
- *
- *  1. Next Episode — a next episode exists;
- *  2. Cast — a cast target is available (gated by [CAST_PATH_PROVEN]);
- *  3. Speed pill — speed != 1x;
- *  4. Audio-track — multiple audio tracks exist;
- *  5. Subtitles;
- *  6. QualityPill.
- *
- * Subtitles and Quality always apply, so the row always fills to six and
- * never shows a seventh button. Anything not in the row stays in More.
- * Pure, so [PlayerFlexibleControlsTest] can prove the six-button guarantee
- * without a player.
- */
-internal enum class FlexiblePlayerControl {
-    NEXT_EPISODE,
-    CAST,
-    SPEED,
-    AUDIO,
-    SUBTITLES,
-    QUALITY,
-}
-
-/**
- * P1 — the cast gate. A cast target being *available* is not a proven cast
- * *path*: CAST_SPIKE (2026-11-18) proves the SDK wires up and a MediaInfo
- * builds, and explicitly does NOT prove a real receiver plays a resolved
- * URL — the receiver fetches the media itself, and our server sends no CORS
- * headers. Until a real-device cast plays, the button is HIDDEN, never
- * shown as a dead control; flipping this one flag (after that proof) puts
- * Cast back in its priority slot, ahead of Speed. The resolver takes
- * [castAvailable] and this flag separately so the test can pin both halves
- * of the gate.
- */
-internal const val CAST_PATH_PROVEN = false
-
-internal fun resolveFlexiblePlayerControls(
-    hasNextEpisode: Boolean,
-    castAvailable: Boolean,
-    speed: Float,
-    hasMultipleAudioTracks: Boolean,
-    // Test seam: the production call passes the default (the flag above),
-    // so the row hides Cast until the spike is proven — and the test can
-    // still prove Cast's priority slot (ahead of Speed) with `true` here.
-    castPathProven: Boolean = CAST_PATH_PROVEN,
-): List<FlexiblePlayerControl> {
-    val candidates = listOfNotNull(
-        FlexiblePlayerControl.NEXT_EPISODE.takeIf { hasNextEpisode },
-        FlexiblePlayerControl.CAST.takeIf { castAvailable && castPathProven },
-        FlexiblePlayerControl.SPEED.takeIf { speed != 1f },
-        FlexiblePlayerControl.AUDIO.takeIf { hasMultipleAudioTracks },
-        FlexiblePlayerControl.SUBTITLES,
-        FlexiblePlayerControl.QUALITY,
-    )
-    return candidates.take(2)
-}
+// P1-15 (audit B-17): the bottom row is fixed now — Play/Pause, Back 10,
+// Forward 10, Volume, Captions/Audio, Fullscreen, More, always in that
+// order — so the flexible slots are gone with their pills and their
+// priority resolver (SpeedPill, QualityPill, resolveFlexiblePlayerControls).
+// Speed, Quality and Next Episode live in More, their single owners.
 
 /**
  * P2 (round 2) — the chapter-marker tone rule. The played portion of the
