@@ -68,6 +68,7 @@ class LiveTvPaparazziTest {
 
     private val categories = listOf("news", "sports", "entertainment", "movies")
 
+    @Composable
     private fun content(state: LiveTvViewModel.UiState) {
         LiveTvContent(
             state = state,
