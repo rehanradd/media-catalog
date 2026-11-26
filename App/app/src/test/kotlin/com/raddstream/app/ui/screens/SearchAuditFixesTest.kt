@@ -244,12 +244,13 @@ class SearchAuditFixesTest {
     }
 
     // ── Audit #8: the rail's right-edge fade is wide enough to read ──
-    // Re-rate 8 (Nov 2026): 48dp → 64dp — the 48dp fade still left the
-    // cut chip legible at rest, so the strip widened and the ramp
-    // steepened (see RowEndFade).
+    // Re-rate 8 (Nov 2026): the 48dp fade still left the cut chip
+    // legible at rest, so the ramp was steepened (80% background at 30%,
+    // full at 60%) WITHIN the pinned 48dp width — the width itself must
+    // not move (a 64dp strip was tried and reverted).
 
     @Test
-    fun railFadeIs64dpWide() {
+    fun railFadeIs48dpWide() {
         compose.setContent {
             RaddStreamTheme {
                 Box(Modifier.size(width = 360.dp, height = 120.dp)) {
@@ -260,7 +261,7 @@ class SearchAuditFixesTest {
         val fade = compose.onNodeWithTag(FilterRailFadeTag)
             .fetchSemanticsNode().boundsInRoot
         with(compose.density) {
-            assertEquals("Fade must be 64dp wide to dim the cut chip", 64.dp, fade.width.toDp())
+            assertEquals("Fade must be 48dp wide to dim the cut chip", 48.dp, fade.width.toDp())
         }
     }
 

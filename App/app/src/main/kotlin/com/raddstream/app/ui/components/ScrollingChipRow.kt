@@ -152,10 +152,12 @@ internal fun RowEndFade(modifier: Modifier = Modifier, height: Dp = 48.dp) {
     // height of the filter, Browse and Live TV rows; callers with
     // shorter rows pass their own height.
     //
-    // Audit #11: the strip itself is 64dp wide now, not 24dp — a 24dp
+    // Audit #11: the strip itself is 48dp wide now, not 24dp — a 24dp
     // fade on a 360dp row dims only the last sliver of the cut chip, so
-    // the row still read as broken-off, not scrollable. At 64dp the last
-    // chip visibly dims into the edge, which is the scroll cue.
+    // the row still read as broken-off, not scrollable. At 48dp the last
+    // chip visibly dims into the edge, which is the scroll cue. The width
+    // is the 48dp grid step (RaddTokens.Space.Step48) — pinned by
+    // SearchAuditFixesTest.railFadeIs48dpWide, so it must not move.
     //
     // S3 (2027 Home fix, round 2): the linear fade still read as a
     // hard cut — the chips are dark-on-dark (the chip fill to the
@@ -170,13 +172,15 @@ internal fun RowEndFade(modifier: Modifier = Modifier, height: Dp = 48.dp) {
     // Re-rate 8 (Nov 2026): the eased ramp still left the cut chip
     // legible at rest — the re-rate 8 homeLoaded render shows "KPOP"
     // cut after ANIME, dimmed but readable, so both raters still read
-    // the row as clipped. The ramp goes further now and the strip is
-    // wider: 64dp, reaching 80% background at 30% and full background
-    // at 60%, so the outer ~26dp is fully opaque and no glyph survives
-    // at the edge. The inner gradient still reads as the scroll cue.
+    // the row as clipped. The ramp goes further now, WITHIN the pinned
+    // 48dp: 80% background at 30% and full background at 60%, so the
+    // outer ~19dp is fully opaque and no glyph survives at the edge.
+    // (A 64dp strip was tried first and reverted — the 48dp width is
+    // pinned by test, so the fix lives in the ramp, not the width.)
+    // The inner gradient still reads as the scroll cue.
     Box(
         modifier = modifier
-            .width(64.dp) // token-exempt: fade strip width, not spacing
+            .width(RaddTokens.Space.Step48)
             .height(height)
             .background(
                 Brush.horizontalGradient(
