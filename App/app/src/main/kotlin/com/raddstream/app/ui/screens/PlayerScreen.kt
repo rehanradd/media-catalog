@@ -667,7 +667,7 @@ private fun PlayerScreenContent(
                     enter = chromeEnter,
                     exit = chromeExit,
                 ) {
-                    TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, onToggleDecoderMode = { vm.toggleDecoderMode() }, scrimScale = scrimScale)
+                    TopBar(state = state, onBack = onBackClick, onLock = { vm.setLocked(true) }, scrimScale = scrimScale)
                 }
                 // P10 (round 2): the zoom-reset chip — a visible way back
                 // to Fit while zoomed. It rides the chrome visibility, so

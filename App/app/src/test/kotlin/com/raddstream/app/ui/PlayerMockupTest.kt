@@ -144,7 +144,6 @@ class PlayerMockupTest {
                     state = liveBase(),
                     onBack = {},
                     onLock = {},
-                    onToggleDecoderMode = {},
                 )
             }
         }
@@ -161,7 +160,6 @@ class PlayerMockupTest {
                     state = vodBase(),
                     onBack = {},
                     onLock = {},
-                    onToggleDecoderMode = {},
                 )
             }
         }
@@ -206,60 +204,64 @@ class PlayerMockupTest {
     }
 
     @Test
-    fun `the decoder chip shows the mode and toggles it`() {
-        // MX idea #3: the top-bar chip IS the switch — HW by default, one
-        // tap to SW. The pill that says the mode is the way to change it,
-        // the same shape as the speed pill above.
-        var toggled = false
+    fun `the top bar carries no decoder chip`() {
+        // P0-10 (road to 100/100, audit B-16): the HW/SW decoder text left
+        // the top bar — engineer-facing diagnostic chrome in a prime slot.
+        // The switch lives in More -> "Playback issue?" -> Decoder, shown
+        // only after a playback error. The bar must print neither mode.
         compose.setContent {
             RaddStreamTheme {
                 TopBar(
                     state = vodBase(),
                     onBack = {},
                     onLock = {},
-                    onToggleDecoderMode = { toggled = true },
                 )
             }
         }
-        compose.onNodeWithText("HW").assertIsDisplayed().performClick()
-        assertTrue("tapping the HW chip must toggle the decoder mode", toggled)
+        compose.onNodeWithText("HW").assertDoesNotExist()
+        compose.onNodeWithText("SW").assertDoesNotExist()
+        compose.onNodeWithText("Jawan").assertIsDisplayed()
     }
 
     @Test
-    fun `the decoder chip shows SW when the player runs in software`() {
+    fun `the top bar shows no decoder chip even in software mode`() {
+        // P0-10 (audit B-16): the decoder mode is no longer printed in the
+        // top bar at all — not even when the player runs in software. The
+        // switch lives in More -> "Playback issue?" -> Decoder, error-gated.
         compose.setContent {
             RaddStreamTheme {
                 TopBar(
                     state = vodBase().copy(decoderMode = DecoderMode.SOFTWARE),
                     onBack = {},
                     onLock = {},
-                    onToggleDecoderMode = {},
                 )
             }
         }
-        compose.onNodeWithText("SW").assertIsDisplayed()
+        compose.onNodeWithText("SW").assertDoesNotExist()
         compose.onNodeWithText("HW").assertDoesNotExist()
+        compose.onNodeWithText("Jawan").assertIsDisplayed()
     }
 
     @Test
     fun `the top bar carries no source-switch button`() {
         // MX #6 (chrome diet, D1): the print switch left the top bar — its
         // "Switch version" button duplicated the More sheet's Prints row.
-        // The title, the lock and the decoder chip stay; the speed pill
-        // moved to the bottom row (P1).
+        // The title and the lock stay; the speed pill moved to the bottom
+        // row (P1), and the decoder chip left with P0-10 (audit B-16) —
+        // its switch lives in More -> "Playback issue?" -> Decoder now.
         compose.setContent {
             RaddStreamTheme {
                 TopBar(
                     state = vodBase(),
                     onBack = {},
                     onLock = {},
-                    onToggleDecoderMode = {},
                 )
             }
         }
         compose.onNodeWithContentDescription("Switch version").assertDoesNotExist()
         compose.onNodeWithText("Jawan").assertIsDisplayed()
-        compose.onNodeWithText("HW").assertIsDisplayed()
+        compose.onNodeWithText("HW").assertDoesNotExist()
+        compose.onNodeWithText("SW").assertDoesNotExist()
     }
 
     @Test

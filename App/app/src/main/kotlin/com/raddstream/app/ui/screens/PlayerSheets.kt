@@ -55,6 +55,7 @@ import com.raddstream.app.player.AudioBoost
 import com.raddstream.app.player.AudioBoostUi
 import com.raddstream.app.player.AudioTrackMatcher
 import com.raddstream.app.player.AudioTrackPolicy
+import com.raddstream.app.player.DecoderMode
 import com.raddstream.app.player.chapterTicks
 import com.raddstream.app.player.GestureMapper
 import com.raddstream.app.player.PlayerUiState
@@ -903,6 +904,27 @@ internal fun MoreSheet(state: PlayerUiState, vm: PlayerViewModel, onEnterPip: ()
             SheetRow(label = stringResource(R.string.player_pip)) {
                 vm.hideMoreSheet()
                 onEnterPip()
+            }
+            // P0-10 (road to 100/100, audit B-16): the decoder switch lives
+            // here now — the top bar no longer carries HW/SW text. It shows
+            // only after a playback error (giveUp / deadlineGiveUp /
+            // connectionError): a decoder switch is a support tool, not
+            // everyday chrome. The row names the switch target and the mode
+            // the player is in now, so the viewer knows what a tap changes.
+            if (state.giveUp != null || state.deadlineGiveUp || state.connectionError != null) {
+                SheetSection(stringResource(R.string.player_playback_issue))
+                SheetRow(
+                    label = if (state.decoderMode == DecoderMode.HARDWARE) {
+                        stringResource(R.string.player_decoder_switch_to_software) +
+                            " · " + stringResource(R.string.player_decoder_hw)
+                    } else {
+                        stringResource(R.string.player_decoder_switch_to_hardware) +
+                            " · " + stringResource(R.string.player_decoder_sw)
+                    },
+                ) {
+                    vm.hideMoreSheet()
+                    vm.toggleDecoderMode()
+                }
             }
         }
     }

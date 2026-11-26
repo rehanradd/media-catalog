@@ -120,12 +120,7 @@ private fun playerChromeRail(): Dp {
 }
 
 @Composable
-// P0-10: onToggleDecoderMode is temporarily unused in this bar - the
-// decoder switch moved to the More sheet (see the note at the end of
-// TopBar). The parameter stays so PlayerScreen and the Paparazzi
-// previews keep compiling until that row lands.
-@Suppress("UNUSED_PARAMETER")
-internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit, onToggleDecoderMode: () -> Unit, scrimScale: Float = 1f) {
+internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit, scrimScale: Float = 1f) {
     val print = state.activeRendition
     val rail = playerChromeRail()
     // P3 (round 2): the scrim scales with the staged poster's luminance —
@@ -283,13 +278,11 @@ internal fun TopBar(state: PlayerUiState, onBack: () -> Unit, onLock: () -> Unit
         // More instead of a permanent 48dp slot crowding the title.
         // P0-10 (road to 100/100, audit B-16): the decoder switch is gone
         // from this bar - plain jade "HW"/"SW" text was engineer-facing
-        // diagnostic chrome in a prime slot. The switch moves to More ->
+        // diagnostic chrome in a prime slot. The switch lives in More ->
         // "Playback issue?" -> Decoder (PlayerSheets.kt, error-gated - shown
         // only after a playback error); the auto-fallback HW->SW with its
         // settled banner already lives in PlaybackService, so nothing is
-        // lost. onToggleDecoderMode is retained until that More-sheet row
-        // lands - PlayerScreen and the Paparazzi previews still pass
-        // vm.toggleDecoderMode() - and can go with it.
+        // lost.
         // P0-10 (audit B-23): Cast is back in the top bar, far right -
         // removing it was a regression. The same standard route-picker
         // Detail uses, composed only when a receiver is actually there

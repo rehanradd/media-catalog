@@ -1410,7 +1410,6 @@ class PaparazziPreviewTest {
                     state = playerBase(),
                     onBack = {},
                     onLock = {},
-                    onToggleDecoderMode = {},
                 )
             }
         }
@@ -1428,7 +1427,6 @@ class PaparazziPreviewTest {
                     ),
                     onBack = {},
                     onLock = {},
-                    onToggleDecoderMode = {},
                 )
             }
         }
@@ -1450,7 +1448,6 @@ class PaparazziPreviewTest {
                     ),
                     onBack = {},
                     onLock = {},
-                    onToggleDecoderMode = {},
                 )
             }
         }
