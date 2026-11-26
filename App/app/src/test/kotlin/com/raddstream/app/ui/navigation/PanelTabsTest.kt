@@ -3,84 +3,81 @@ package com.raddstream.app.ui.navigation
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
+/**
+ * P0-1: the tab set is locked in code — Home · Search · Downloads ·
+ * Profile, in that order. The operator `tabs` key can no longer reorder
+ * the bar or resurrect a removed tab, so every remote list resolves to
+ * the same locked set; only the Search feature flag still removes a tab.
+ */
 class PanelTabsTest {
 
+    private val lockedFour = listOf("home", "search", "downloads", "profile")
+
     @Test
-    fun `empty remote list falls back to the shipped five`() {
+    fun `empty remote list falls back to the locked four`() {
         assertEquals(
-            listOf("home", "live_tv", "search", "my_list", "settings"),
+            lockedFour,
             PanelTabs.resolve(emptyList(), searchEnabled = true),
         )
     }
 
     @Test
-    fun `live tv resolves from the operator list and is not gated by search`() {
+    fun `operator list naming removed tabs changes nothing`() {
+        // The old tab set — settings, live_tv, my_list — is gone. An
+        // operator list still naming them must not resurrect any of them.
         assertEquals(
-            listOf("home", "live_tv", "settings"),
-            PanelTabs.resolve(listOf("live_tv", "settings"), searchEnabled = false),
+            lockedFour,
+            PanelTabs.resolve(listOf("live_tv", "settings", "my_list"), searchEnabled = true),
         )
-    }
-
-    @Test
-    fun `operator order stands and unknown ids drop out`() {
         assertEquals(
-            listOf("home", "my_list", "settings"),
-            PanelTabs.resolve(listOf("my_list", "home", "nope", "settings"), searchEnabled = true),
-        )
-    }
-
-    @Test
-    fun `home is pinned first even when listed last`() {
-        assertEquals(
-            listOf("home", "settings"),
-            PanelTabs.resolve(listOf("settings", "home"), searchEnabled = true),
-        )
-    }
-
-    @Test
-    fun `home is added when the operator omitted it`() {
-        assertEquals(
-            listOf("home", "settings"),
+            lockedFour,
             PanelTabs.resolve(listOf("settings"), searchEnabled = true),
         )
     }
 
     @Test
-    fun `duplicates collapse and casing and spaces are forgiven`() {
+    fun `operator order cannot reorder the locked set`() {
         assertEquals(
-            listOf("home", "search"),
-            PanelTabs.resolve(listOf(" Home ", "SEARCH", "home"), searchEnabled = true),
+            lockedFour,
+            PanelTabs.resolve(listOf("profile", "downloads", "search", "home"), searchEnabled = true),
+        )
+        assertEquals(
+            lockedFour,
+            PanelTabs.resolve(listOf("downloads", "home"), searchEnabled = true),
+        )
+    }
+
+    @Test
+    fun `duplicates and casing in the operator list change nothing`() {
+        assertEquals(
+            lockedFour,
+            PanelTabs.resolve(listOf(" Home ", "SEARCH", "home", "Downloads"), searchEnabled = true),
+        )
+    }
+
+    @Test
+    fun `all-unknown remote list falls back to the locked four`() {
+        assertEquals(
+            lockedFour,
+            PanelTabs.resolve(listOf("nope", "alsono"), searchEnabled = true),
         )
     }
 
     @Test
     fun `search drops out when its feature flag is off`() {
         assertEquals(
-            listOf("home", "my_list"),
-            PanelTabs.resolve(listOf("search", "my_list"), searchEnabled = false),
+            listOf("home", "downloads", "profile"),
+            PanelTabs.resolve(emptyList(), searchEnabled = false),
+        )
+        assertEquals(
+            listOf("home", "downloads", "profile"),
+            PanelTabs.resolve(listOf("search", "settings", "live_tv"), searchEnabled = false),
         )
     }
 
     @Test
-    fun `settings moves last even when the operator listed it mid-list`() {
-        // Home review, Nov 2026: the live panel put Live TV after Settings.
-        // The operator's order stands for every other tab; only Settings is
-        // pinned to the end.
-        assertEquals(
-            listOf("home", "live_tv", "search", "my_list", "settings"),
-            PanelTabs.resolve(listOf("settings", "live_tv", "search", "my_list"), searchEnabled = true),
-        )
-        assertEquals(
-            listOf("home", "live_tv", "settings"),
-            PanelTabs.resolve(listOf("live_tv", "settings", "home"), searchEnabled = false),
-        )
-    }
-
-    @Test
-    fun `all-unknown remote list falls back to the shipped five`() {
-        assertEquals(
-            listOf("home", "live_tv", "search", "my_list", "settings"),
-            PanelTabs.resolve(listOf("nope", "alsono"), searchEnabled = true),
-        )
+    fun `home stays first in the locked set`() {
+        assertEquals("home", PanelTabs.resolve(emptyList(), searchEnabled = true).first())
+        assertEquals("home", PanelTabs.resolve(emptyList(), searchEnabled = false).first())
     }
 }

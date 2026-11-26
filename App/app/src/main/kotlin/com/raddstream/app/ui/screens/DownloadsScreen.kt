@@ -552,7 +552,7 @@ internal fun StorageCard(
                         .heightIn(min = 48.dp)
                         .semantics { contentDescription = "How to free space" },
                 ) {
-                    Text("HOW TO FREE SPACE")
+                    Text("Free up space")
                 }
             }
         }

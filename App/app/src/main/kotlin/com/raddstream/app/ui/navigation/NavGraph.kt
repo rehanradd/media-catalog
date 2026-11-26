@@ -8,8 +8,8 @@ import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -132,10 +132,45 @@ internal const val BottomNavIndicatorTag = "bottomNavIndicator"
 internal const val BottomNavLabelTag = "bottomNavLabel"
 
 /**
+ * P0-3 (audit B-5/C-5): the lateral destinations — a switch between two
+ * of these is a tab switch and fades through, never slides. (Search's
+ * entry is its route pattern with the optional arguments; the NavHost
+ * reports the pattern as the destination's route.)
+ */
+private val tabRoutes: Set<String> = setOf(
+    Screen.Home.route,
+    Screen.Search.route,
+    Screen.Downloads.route,
+    Screen.Profile.route,
+)
+
+/** P0-3: the player destinations — fade-through, never slide. */
+private val playerRoutes: Set<String> = setOf(
+    Screen.Player.route,
+    Screen.PlayerLocal.route,
+)
+
+/** P0-3: tab-switch fade-through, incoming leg, ms (M3 fade-through is ~90 out / ~210 in). */
+private const val TabFadeInMs = 180
+
+/** P0-3: tab-switch fade-through, outgoing leg, ms. */
+private const val TabFadeOutMs = 90
+
+/** P0-3: player fade-through, ms, both legs. */
+private const val PlayerFadeMs = 200
+
+/**
+ * P0-3: push container-transform settle scale — the entering screen grows
+ * from 96% while fading in (and shrinks back to it on pop), so the poster
+ * shared-element morph carries the motion instead of a slide.
+ */
+private const val PushSettleScale = 0.96f
+
+/**
  * APP-09 (mobile-tester run 4, 00:26 PKT 24 Nov): the bottom-nav label
  * shrinks to fit its slot instead of truncating — "Settings" read
- * "Settin..." at 1.3x font scale on a small phone, because five tabs share
- * the width and labelMedium at 1.3x needs more than a fifth of it. The
+ * "Settin..." at 1.3x font scale on a small phone, because four tabs share
+ * the width and labelMedium at 1.3x needs more than a quarter of it. The
  * label backs off in 15% steps until it fits, never below this floor; the
  * ellipsis stays as the last resort for a slot narrower than the floor can
  * fit. The floor is still a readable 10sp (via brandSp, the only sanctioned
@@ -398,7 +433,7 @@ fun RaddStreamNavGraph(
     navController: NavHostController = rememberNavController(),
     startDestination: String,
     features: RemoteFeatures = RemoteFeatures(),
-    /** The operator's tab order from the panel (`tabs` tuning key), as the activity last received it; empty means "never received", and the bar falls back to its own five. */
+    /** The operator's tab order from the panel (`tabs` tuning key), as the activity last received it; empty means "never received", and the bar falls back to its own locked four. P0-1: the list itself no longer reorders the bar (see PanelTabs). */
     tabs: List<String> = emptyList(),
     /** The operator's theme, for the hero knobs Home reads from it. */
     theme: PanelTheme = PanelTheme(),
@@ -440,8 +475,9 @@ fun RaddStreamNavGraph(
     LaunchedEffect(kidsMode) {
         if (!kidsMode) adultUnlocked = false
     }
-    // Entering kids mode pops everything above Home: My List, Settings and
-    // Downloads cannot linger on the stack for a kid to reach with Back.
+    // Entering kids mode pops everything above Home: Downloads (now a
+    // tab) and Settings cannot linger on the stack for a kid to reach
+    // with Back.
     LaunchedEffect(kidsMode) {
         if (kidsMode) navController.popBackStack(Screen.Home.route, false)
     }
@@ -490,29 +526,32 @@ fun RaddStreamNavGraph(
         onUnknownDeepLinkConsumed()
     }
 
-    // The operator's tab order, resolved against what this build can show: Home is always
-    // first, Search only when its feature flag is on, and an empty or all-unknown list falls
-    // back to the five tabs this build has always shipped. The routes stay registered even
-    // for a tab the operator hid — a back stack that already holds that screen must not name
-    // a destination the graph cannot resolve.
-    // The five tabs wear the brand's own icons (res/drawable/ic_tab_*.xml,
+    // P0-1/P0-2: the tab set is locked in code — Home · Search ·
+    // Downloads · Profile (PanelTabs.resolve). The operator list can no
+    // longer reorder it or resurrect a removed tab, and Live TV is a
+    // route, not a tab (its rail lands on Home separately). The routes
+    // stay registered even for a tab the operator hid — a back stack
+    // that already holds that screen must not name a destination the
+    // graph cannot resolve.
+    // The tabs wear the brand's own icons (res/drawable/ic_tab_*.xml,
     // the stroke set from the brand pack — the `?attr/colorControlNormal`
     // tint the pack files carried was stripped on copy-in, because this app
     // has no such attr; the NavigationBarItem tint is the only tint). The
     // vectors are stroke-black; Icon's tint recolours them to the bar's
     // selected/unselected colours, exactly as the Material icons did.
+    // Downloads and Profile have no filled tab variants, so they wear
+    // their house action glyphs (ic_action_download, ic_action_user) in
+    // both states — the same stroke language, no new drawables.
     val bottomNavItems = PanelTabs.resolve(tabs, features.search)
-        // MX #7 — Kids Lock: My List and Live TV leave the bar. Their rows
-        // are unfiltered — a kid's own saves can hold adult titles, and a
-        // live channel carries no rating at all — so they are not reachable
-        // in kids mode at all. Home, Search and Settings stay.
-        .filterNot { kidsMode && (it == "my_list" || it == "live_tv") }
+        // MX #7 — Kids Lock: Downloads leaves the bar in kids mode — a
+        // kid's downloads are unfiltered, so they are not reachable in
+        // kids mode at all. Home, Search and Profile stay.
+        .filterNot { kidsMode && it == "downloads" }
         .map { id ->
         when (id) {
-            "live_tv" -> BottomNavItem("Live TV", Screen.LiveTv.route, ImageVector.vectorResource(R.drawable.ic_tab_live_tv), selectedIcon = ImageVector.vectorResource(R.drawable.ic_tab_live_tv_filled))
             "search" -> BottomNavItem("Search", Screen.Search.route, ImageVector.vectorResource(R.drawable.ic_tab_search), selectedIcon = ImageVector.vectorResource(R.drawable.ic_tab_search_filled), navigateRoute = Screen.Search.PLAIN_ROUTE)
-            "my_list" -> BottomNavItem("My List", Screen.MyList.route, ImageVector.vectorResource(R.drawable.ic_tab_my_list), selectedIcon = ImageVector.vectorResource(R.drawable.ic_action_favorite_filled))
-            "settings" -> BottomNavItem("Settings", Screen.Settings.route, ImageVector.vectorResource(R.drawable.ic_tab_settings), selectedIcon = ImageVector.vectorResource(R.drawable.ic_tab_settings_filled), navigateRoute = Screen.Settings.PLAIN_ROUTE)
+            "downloads" -> BottomNavItem("Downloads", Screen.Downloads.route, ImageVector.vectorResource(R.drawable.ic_action_download))
+            "profile" -> BottomNavItem("Profile", Screen.Profile.route, ImageVector.vectorResource(R.drawable.ic_action_user))
             else -> BottomNavItem("Home", Screen.Home.route, ImageVector.vectorResource(R.drawable.ic_tab_home), selectedIcon = ImageVector.vectorResource(R.drawable.ic_tab_home_filled))
         }
     }
@@ -583,8 +622,11 @@ fun RaddStreamNavGraph(
             }
         },
     ) { innerPadding ->
-        // UI-fix P1-X1: screens no longer cut between each other. Slide + fade
-        // on the motion tokens (250–320 ms); reduced-motion users get a pure
+        // P0-3 (audit B-5/C-5): no slide anywhere. Tab switches fade
+        // through (180 ms in / 90 ms out, no direction — tabs are
+        // lateral); pushes use the container transform (fade + settle
+        // scale, the poster morphing through the shared-element keys);
+        // the player fades through. Reduced-motion users get a pure
         // 30 ms alpha crossfade, never movement.
         val reduceMotion = rememberReduceMotion()
         // Round 6 motion infra: the shared-transition scope lives here —
@@ -602,41 +644,84 @@ fun RaddStreamNavGraph(
             enterTransition = {
                 if (reduceMotion) {
                     fadeIn(animationSpec = tween(RaddMotion.FadeWhenReduced))
+                } else if (targetState.destination.route in tabRoutes) {
+                    // P0-3: landing on a tab — the incoming leg of the
+                    // fade-through, no direction.
+                    fadeIn(animationSpec = tween(TabFadeInMs, easing = RaddMotion.EmphasizedDecelerate))
+                } else if (targetState.destination.route in playerRoutes) {
+                    // P0-3: the player fades through, never slides.
+                    fadeIn(animationSpec = tween(PlayerFadeMs, easing = RaddMotion.EmphasizedDecelerate))
                 } else {
-                    slideInHorizontally(
-                        initialOffsetX = { it / 4 },
-                        animationSpec = tween(RaddMotion.DurationDefault, easing = RaddMotion.EmphasizedDecelerate),
-                    ) + fadeIn(animationSpec = tween(RaddMotion.DurationDefault))
+                    // P0-3: push — container transform. The poster morphs
+                    // into the Detail hero through the shared-element keys
+                    // (Motion.kt posterSharedElement); the screen itself
+                    // fades in with a slight settle-scale instead of
+                    // sliding — a slide would fight the morph.
+                    fadeIn(animationSpec = tween(RaddMotion.DurationDefault, easing = RaddMotion.EmphasizedDecelerate)) +
+                        scaleIn(
+                            initialScale = PushSettleScale,
+                            animationSpec = tween(RaddMotion.DurationDefault, easing = RaddMotion.EmphasizedDecelerate),
+                        )
                 }
             },
             exitTransition = {
                 if (reduceMotion) {
                     fadeOut(animationSpec = tween(RaddMotion.FadeWhenReduced))
+                } else if (initialState.destination.route in tabRoutes) {
+                    // P0-3: leaving a tab — the outgoing leg of the
+                    // fade-through, a quick fade out.
+                    fadeOut(animationSpec = tween(TabFadeOutMs))
+                } else if (initialState.destination.route in playerRoutes) {
+                    // P0-3: leaving the player — fade-through out.
+                    fadeOut(animationSpec = tween(PlayerFadeMs, easing = RaddMotion.EmphasizedAccelerate))
                 } else {
-                    slideOutHorizontally(
-                        targetOffsetX = { -it / 4 },
-                        animationSpec = tween(RaddMotion.DurationDefault, easing = RaddMotion.EmphasizedAccelerate),
-                    ) + fadeOut(animationSpec = tween(RaddMotion.DurationDefault))
+                    // P0-3: leaving a pushed screen — it fades out under
+                    // the entering screen; the scale lives on the enter
+                    // side, not here, so the two never fight.
+                    fadeOut(animationSpec = tween(RaddMotion.DurationDefault))
                 }
             },
             popEnterTransition = {
                 if (reduceMotion) {
                     fadeIn(animationSpec = tween(RaddMotion.FadeWhenReduced))
+                } else if (targetState.destination.route in tabRoutes) {
+                    // P0-3: back onto a tab — fade-through in.
+                    fadeIn(animationSpec = tween(TabFadeInMs, easing = RaddMotion.EmphasizedDecelerate))
+                } else if (targetState.destination.route in playerRoutes) {
+                    // P0-3: back to the player — fade-through in.
+                    fadeIn(animationSpec = tween(PlayerFadeMs, easing = RaddMotion.EmphasizedDecelerate))
                 } else {
-                    slideInHorizontally(
-                        initialOffsetX = { -it / 4 },
-                        animationSpec = tween(RaddMotion.DurationDefault, easing = RaddMotion.EmphasizedDecelerate),
-                    ) + fadeIn(animationSpec = tween(RaddMotion.DurationDefault))
+                    // P0-3: back to a pushed screen (e.g. Detail from the
+                    // player) — fade in; the container scale lives on the
+                    // pop-exit side.
+                    fadeIn(animationSpec = tween(RaddMotion.DurationDefault, easing = RaddMotion.EmphasizedDecelerate))
                 }
             },
             popExitTransition = {
                 if (reduceMotion) {
                     fadeOut(animationSpec = tween(RaddMotion.FadeWhenReduced))
+                } else if (initialState.destination.route in tabRoutes) {
+                    // P0-3: popping a tab root — the outgoing leg of the
+                    // fade-through.
+                    fadeOut(animationSpec = tween(TabFadeOutMs))
+                } else if (initialState.destination.route in playerRoutes) {
+                    // P0-3: popping the player — fade-through out.
+                    fadeOut(animationSpec = tween(PlayerFadeMs, easing = RaddMotion.EmphasizedAccelerate))
                 } else {
-                    slideOutHorizontally(
-                        targetOffsetX = { it / 4 },
-                        animationSpec = tween(RaddMotion.DurationDefault, easing = RaddMotion.EmphasizedAccelerate),
-                    ) + fadeOut(animationSpec = tween(RaddMotion.DurationDefault))
+                    // P0-3: popping a pushed screen — the container
+                    // transform in reverse: fade out while settling down
+                    // to 96%. Predictive back plays this leg against the
+                    // gesture (navigation-compose 2.8 drives the pop
+                    // transitions from the back preview when the system
+                    // offers it — the app-level opt-in is the manifest's
+                    // android:enableOnBackInvokedCallback, still needed
+                    // while targetSdk stays 35; Android 16 enables it by
+                    // default for targetSdk 36).
+                    fadeOut(animationSpec = tween(RaddMotion.DurationDefault, easing = RaddMotion.EmphasizedAccelerate)) +
+                        scaleOut(
+                            targetScale = PushSettleScale,
+                            animationSpec = tween(RaddMotion.DurationDefault, easing = RaddMotion.EmphasizedAccelerate),
+                        )
                 }
             },
         ) {
@@ -884,6 +969,9 @@ fun RaddStreamNavGraph(
                 } else {
                     SettingsScreen(
                     features = features,
+                    // P0-1: Settings is a push destination from the Profile
+                    // hub now, not a tab — it needs a way back.
+                    onBackClick = { navController.popBackStack() },
                     onOpenDownloads = { navController.navigate(Screen.Downloads.route) },
                     onOpenVipUpgrade = { navController.navigate(Screen.VipUpgrade.route) },
                     onOpenRegionChoice = { navController.navigate(Screen.Region.route) },
@@ -956,8 +1044,11 @@ fun RaddStreamNavGraph(
             }
 
             // Session 123: the account screens — the dashboard that answers
-            // "where do I stand?" and the profile. None of them is a tab;
-            // Settings, Home and VIP link here.
+            // "where do I stand?" and the profile. The dashboard is a push
+            // destination (Settings, Profile and VIP link here); the profile
+            // is the hub tab since P0-1, so it shows no back arrow when it
+            // is reached as a tab and keeps it when pushed from Settings
+            // or Dashboard.
             composable(Screen.Dashboard.route) {
                 DashboardScreen(
                     onBackClick = { navController.popBackStack() },
@@ -967,9 +1058,36 @@ fun RaddStreamNavGraph(
             }
 
             composable(Screen.Profile.route) {
+                // P0-1: a tab tap pops to Home first, so a Profile reached
+                // as a tab has Home underneath it; pushed from Settings or
+                // Dashboard it has that screen underneath. The hub shows
+                // no back arrow as a tab root.
+                val isTab = navController.previousBackStackEntry?.destination?.route == Screen.Home.route
                 ProfileScreen(
                     onBackClick = { navController.popBackStack() },
                     onOpenDashboard = { navController.navigate(Screen.Dashboard.route) },
+                    onOpenVipUpgrade = { navController.navigate(Screen.VipUpgrade.route) },
+                    onOpenDownloads = {
+                        // The hub's Downloads row switches to the Downloads
+                        // tab — the same block as a bottom-bar tap, so the
+                        // tab is selected and no second Downloads stacks.
+                        navController.navigate(Screen.Downloads.route) {
+                            popUpTo(Screen.Home.route) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                    onOpenWatchHistory = { navController.navigate(Screen.WatchHistory.route) },
+                    onOpenSettings = { navController.navigate(Screen.Settings.PLAIN_ROUTE) },
+                    onOpenHelp = { navController.navigate(Screen.Help.route) },
+                    // Kids Lock lives in Settings (its card is in the
+                    // Playback group); the hub row opens Settings, where
+                    // the PIN flow already is.
+                    onOpenKidsLock = { navController.navigate(Screen.Settings.PLAIN_ROUTE) },
+                    isTab = isTab,
+                    kidsMode = kidsMode,
                 )
             }
 

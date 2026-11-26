@@ -1,42 +1,40 @@
 package com.raddstream.app.ui.navigation
 
 /**
- * The bottom bar's tabs, as the operator ordered them in the panel's `tabs`
- * tuning key, resolved against what this build can actually show.
+ * The bottom bar's tabs: Home · Search · Downloads · Profile, in that
+ * order, locked in code (P0-1, audit B-1/B-2/C-1).
  *
- * The operator's list is authoritative: a tab it does not name does not show,
- * and the order it names is the order the bar shows. Three rules sit above it
- * and cannot be overridden from the panel, because the app breaks without
- * them: Home is always first (a bar with no way back to Home strands the
- * viewer), Settings is always last (a mid-list Settings reads as a bug — the
- * live panel once put Live TV after it; home review, Nov 2026), and Search
- * only shows when its feature flag is on (the flag is the operator's
- * kill-switch for Search, and the tab list must not resurrect a feature the
- * flag turned off).
+ * The order is locked — the operator's panel `tabs` key can no longer
+ * reorder the bar or resurrect a removed tab. Whatever the panel lists,
+ * the bar shows this set: an operator list naming "settings",
+ * "live_tv" or "my_list" (the old tab set) changes nothing, and an
+ * operator list in a different order changes nothing either. Spatial
+ * memory ("Home is always bottom-left") is the whole point of a tab
+ * bar; a remote list must never move the chrome (audit B-4). The full
+ * removal of the `tabs` key is P1-1; until then [resolve] accepts the
+ * remote list and ignores it, so the callers keep compiling.
  *
- * An empty or all-unknown list means "the deployment never set tabs" — an
- * older server, an unwired panel — and the bar falls back to the five tabs
- * this build has always shipped, in their shipped order. The function is
- * pure so the fallback can be tested without a server.
+ * One thing the panel still controls: Search, through its feature flag
+ * ([resolve]'s `searchEnabled`). The flag is the operator's kill-switch
+ * for Search, and the tab list must not resurrect a feature the flag
+ * turned off — that rule survives the lock.
+ *
+ * Kids mode (NavGraph) drops Downloads from this set, leaving
+ * Home / Search / Profile.
+ *
+ * An empty or all-unknown list means the same as any other list now:
+ * the locked set. The function stays pure so the lock can be tested
+ * without a server.
  */
 object PanelTabs {
 
-    /** The five tabs this build has always shipped, in their shipped order. */
-    val DEFAULT: List<String> = listOf("home", "live_tv", "search", "my_list", "settings")
-
-    private val KNOWN: Set<String> = DEFAULT.toSet()
+    /** The locked tab set, in locked order: Home · Search · Downloads · Profile. */
+    val DEFAULT: List<String> = listOf("home", "search", "downloads", "profile")
 
     fun resolve(remote: List<String>, searchEnabled: Boolean): List<String> {
-        val named = remote
-            .map { it.trim().lowercase() }
-            .filter { it in KNOWN }
-            .distinct()
-        val ordered = if (named.isEmpty()) DEFAULT else (listOf("home") + named).distinct()
-        // Settings is always last, whatever the operator listed: a mid-list
-        // Settings is a bug the bar wears in public (home review, Nov 2026 —
-        // the live panel put Live TV after it). Home stays first; only
-        // Settings moves.
-        val settled = (ordered - "settings") + listOf("settings").filter { it in ordered }
-        return if (searchEnabled) settled else settled.filter { it != "search" }
+        // P0-1: `remote` is intentionally unread — the order is locked in
+        // code and no operator entry may add, remove or reorder a tab.
+        // (P1-1 removes the key and this parameter with it.)
+        return if (searchEnabled) DEFAULT else DEFAULT - "search"
     }
 }

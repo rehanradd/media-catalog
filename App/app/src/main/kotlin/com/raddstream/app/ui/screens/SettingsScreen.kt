@@ -323,6 +323,12 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
     /** MX #7: the PIN + mode controller. The card below is its screen. */
     kidsLockViewModel: KidsLockViewModel = hiltViewModel(),
+    /**
+     * P0-1: Settings is a push destination from the Profile hub now, not
+     * a tab. The hub passes a back action; null keeps the old tab look
+     * (previews, tests that render the screen standalone).
+     */
+    onBackClick: (() -> Unit)? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
     // ST5: the search query lives in the wrapper so tests can drive SettingsContent
@@ -400,6 +406,7 @@ fun SettingsScreen(
         onOpenDiagnostics = onOpenDiagnostics,
         showDiagnostics = showDiagnostics,
         scrollToContact = scrollToContact,
+        onBackClick = onBackClick,
     )
 }
 
@@ -432,6 +439,8 @@ internal fun SettingsContent(
     onOpenDiagnostics: () -> Unit,
     showDiagnostics: Boolean,
     scrollToContact: Boolean,
+    /** P0-1: the back action when pushed (Profile hub); null renders no back arrow. */
+    onBackClick: (() -> Unit)? = null,
 ) {
     // Audit #51: the server switcher lives behind Advanced — closed until
     // the viewer asks for it, so a casual tap can never disconnect the app.
@@ -535,6 +544,20 @@ internal fun SettingsContent(
                         style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
                         modifier = Modifier.clearAndSetSemantics { },
                     )
+                },
+                navigationIcon = {
+                    // P0-1: Settings is a push destination from the Profile
+                    // hub now, not a tab — a pushed Settings needs a way
+                    // back. Null keeps the old tab look for previews and
+                    // tests that render the content standalone.
+                    onBackClick?.let { back ->
+                        IconButton(onClick = back) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_action_arrow_left),
+                                contentDescription = "Back",
+                            )
+                        }
+                    }
                 },
             )
         },
