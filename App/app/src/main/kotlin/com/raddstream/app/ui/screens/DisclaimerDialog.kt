@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.raddstream.app.R
+import com.raddstream.app.brand.Brand
 import com.raddstream.app.network.models.PanelDisclaimer
 import com.raddstream.app.ui.components.RaddDialogTitle
 import com.raddstream.app.ui.theme.RaddTokens
@@ -133,7 +134,10 @@ internal fun DisclaimerDialog(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         Text(
-                            "Radd Stream doesn't own, host, upload or store any content — " +
+                            // BrandDriftTest: the brand name is never a
+                            // literal outside the brand files — read it
+                            // from Brand, so a rebrand moves this line too.
+                            "${Brand.name} doesn't own, host, upload or store any content — " +
                                 "it only opens links that are already public, like a web browser.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
