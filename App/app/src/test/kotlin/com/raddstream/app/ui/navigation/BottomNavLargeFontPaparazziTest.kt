@@ -2,12 +2,6 @@ package com.raddstream.app.ui.navigation
 
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
@@ -16,6 +10,7 @@ import androidx.compose.ui.unit.dp
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
 import com.android.resources.Density
+import com.raddstream.app.R
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import org.junit.Rule
 import org.junit.Test
@@ -25,16 +20,28 @@ import org.junit.Test
  * "Settings" label truncated to "Settin..." at 1.3x font scale on a small
  * phone. This shot renders the real bar (RaddBottomBar + BottomNavTab) at
  * 360dp wide with fontScale 1.3 — the configuration that truncated — so a
- * regression shows up as a changed golden. Icons are the material set the
- * touch-target test uses, not the brand vectors: the label layout is what
- * this shot judges, and the brand vectors are proven only under
- * Robolectric. Record with `:app:recordPaparazziDebug` (paparazzi.yml,
- * workflow_dispatch); verify runs as ci.yml's explicit
- * `:app:verifyPaparazziDebug` step. Both are modes on testDebugUnitTest
- * in Paparazzi 2.x (not separate tasks): build.gradle.kts runs
- * Paparazzi-only when the invocation names a record/verify task, and
- * excludes the Paparazzi classes from the plain suite run, so no
- * Robolectric class loads first in the fork (paparazzi#1979).
+ * regression shows up as a changed golden. Record with
+ * `:app:recordPaparazziDebug` (paparazzi.yml, workflow_dispatch); verify
+ * runs as ci.yml's explicit `:app:verifyPaparazziDebug` step. Both are
+ * modes on testDebugUnitTest in Paparazzi 2.x (not separate tasks):
+ * build.gradle.kts runs Paparazzi-only when the invocation names a
+ * record/verify task, and excludes the Paparazzi classes from the plain
+ * suite run, so no Robolectric class loads first in the fork
+ * (paparazzi#1979).
+ *
+ * P1 goldens (Nov 2026): the items come from [PanelTabs.DEFAULT], not a
+ * hand-written list. The old list still named the retired 5-tab set
+ * (Home/Search/Live TV/My List/Settings) — the golden proved a bar the
+ * app no longer ships, and the new 4-tab set (Home · Search · Downloads ·
+ * Profile) was code-proven only. The id -> label/icon mapping below is
+ * the same one NavGraph's bottomNavItems uses; only the SET comes from
+ * the lock, so a future set change re-renders this golden instead of
+ * silently testing a stale bar. The icons are the house stroke vectors
+ * the shipped bar wears, not the Material set the touch-target test
+ * uses: the label layout is what this shot judges, and the brand
+ * vectors are proven only under Robolectric — but the golden now shows
+ * the real bar's glyphs at 1.3x, so a glyph that crowds its label at
+ * large font shows up here too.
  */
 class BottomNavLargeFontPaparazziTest {
 
@@ -56,24 +63,46 @@ class BottomNavLargeFontPaparazziTest {
         ),
     )
 
-    private val items: List<Pair<String, ImageVector>> = listOf(
-        "Home" to Icons.Default.Home,
-        "Search" to Icons.Default.Search,
-        "Live TV" to Icons.Default.Tv,
-        "My List" to Icons.Default.Favorite,
-        "Settings" to Icons.Default.Settings,
-    )
+    // The tab set is PanelTabs.DEFAULT — the id -> (label, icon,
+    // selectedIcon) mapping is NavGraph's bottomNavItems mapping, kept
+    // beside the test so the golden renders exactly what the app ships.
+    // Downloads and Profile have no filled tab variants, so they wear
+    // their house action glyphs in both states (same as NavGraph).
+    private fun tabItem(id: String): Triple<String, ImageVector, ImageVector> = when (id) {
+        "search" -> Triple(
+            "Search",
+            ImageVector.vectorResource(R.drawable.ic_tab_search),
+            ImageVector.vectorResource(R.drawable.ic_tab_search_filled),
+        )
+        "downloads" -> Triple(
+            "Downloads",
+            ImageVector.vectorResource(R.drawable.ic_action_download),
+            ImageVector.vectorResource(R.drawable.ic_action_download),
+        )
+        "profile" -> Triple(
+            "Profile",
+            ImageVector.vectorResource(R.drawable.ic_action_user),
+            ImageVector.vectorResource(R.drawable.ic_action_user),
+        )
+        else -> Triple(
+            "Home",
+            ImageVector.vectorResource(R.drawable.ic_tab_home),
+            ImageVector.vectorResource(R.drawable.ic_tab_home_filled),
+        )
+    }
 
     @Test
     fun bottomNavLargeFont() {
+        val items = PanelTabs.DEFAULT.map(::tabItem)
         paparazzi.snapshot {
             RaddStreamTheme(darkTheme = true) {
                 Surface(color = MaterialTheme.colorScheme.background) {
                     RaddBottomBar(modifier = Modifier.windowInsetsPadding(WindowInsets(bottom = 0.dp))) {
-                        items.forEach { (label, icon) ->
+                        items.forEach { (label, icon, selectedIcon) ->
                             BottomNavTab(
                                 label = label,
                                 icon = icon,
+                                selectedIcon = selectedIcon,
                                 selected = label == "Home",
                                 onClick = {},
                             )

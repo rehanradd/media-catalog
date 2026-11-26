@@ -507,6 +507,14 @@ tasks.withType<Test>().configureEach {
                 // Bridge.init (Android 45539693673, same trap as APP-09's
                 // BottomNavLargeFont class above).
                 includeTestsMatching("com.raddstream.app.ui.screens.MyListLargeFontPaparazziTest")
+                // P1 goldens (Nov 2026): the Profile hub and Live TV
+                // shots, 1.0x and 1.3x - same trap, same pattern. A
+                // class missing here never records and the plain run
+                // dies at Bridge.init.
+                includeTestsMatching("com.raddstream.app.ui.screens.ProfilePaparazziTest")
+                includeTestsMatching("com.raddstream.app.ui.screens.ProfileLargeFontPaparazziTest")
+                includeTestsMatching("com.raddstream.app.ui.screens.LiveTvPaparazziTest")
+                includeTestsMatching("com.raddstream.app.ui.screens.LiveTvLargeFontPaparazziTest")
             } else {
                 excludeTestsMatching("com.raddstream.app.ui.PaparazziPreviewTest")
                 excludeTestsMatching("com.raddstream.app.ui.PlayerLandscapePaparazziTest")
@@ -517,6 +525,10 @@ tasks.withType<Test>().configureEach {
                 excludeTestsMatching("com.raddstream.app.ui.screens.DetailLargeFontPaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.screens.SettingsLargeFontPaparazziTest")
                 excludeTestsMatching("com.raddstream.app.ui.screens.MyListLargeFontPaparazziTest")
+                excludeTestsMatching("com.raddstream.app.ui.screens.ProfilePaparazziTest")
+                excludeTestsMatching("com.raddstream.app.ui.screens.ProfileLargeFontPaparazziTest")
+                excludeTestsMatching("com.raddstream.app.ui.screens.LiveTvPaparazziTest")
+                excludeTestsMatching("com.raddstream.app.ui.screens.LiveTvLargeFontPaparazziTest")
             }
         }
     }

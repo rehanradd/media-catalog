@@ -1109,6 +1109,85 @@ class PaparazziPreviewTest {
         }
     }
 
+    // P1 goldens (Nov 2026): the hero + PrimaryActions, in the settled
+    // state. The full-page Detail shots never show them: DetailEntrance
+    // collapses the hero, the actions and the quality selector to zero
+    // height while its stagger waits on a frozen clock (LocalInspectionMode
+    // is false in Paparazzi unless a test provides it), so detailMovie
+    // starts at the synopsis and carries zero jade pixels. Providing
+    // inspection mode renders the entrances settled — this golden proves
+    // the P0-8 one-CTA row (Play full-width jade, weight 2f, + Download
+    // tonal pill, weight 1f, same row) where viewers see it.
+    @Test
+    fun detailMovieHeroActions() {
+        paparazzi.snapshot {
+            themed {
+                CompositionLocalProvider(LocalInspectionMode provides true) {
+                    DetailContent(
+                        post = jawanDetail,
+                        seasons = emptyList(),
+                        workPrints = moviePrints,
+                        capabilities = listOf("Hindi audio"),
+                        isSeries = false,
+                        resume = null,
+                        includedPill = "VIP",
+                        playLabel = "Play",
+                        playEnabled = true,
+                        videoQualityText = "Auto · up to 1080p",
+                        downloadLabel = "Download · 1080p · 1.3 GB",
+                        downloadEnabled = true,
+                        onOpenSeason = {},
+                        similarTitles = listOf(salaars, mclintock),
+                        reloadError = null,
+                        onRetryReload = {},
+                        isFavorite = false,
+                        onToggleFavorite = {},
+                        onShare = {},
+                        contentPadding = PaddingValues(0.dp),
+                    )
+                }
+            }
+        }
+    }
+
+    // P1 goldens (Nov 2026): the same hero shot mid-resolve — the Play
+    // button morphs into its spinner reading "Finding the best stream…"
+    // (P0-8). The retired determinate arc + stage label are gone:
+    // playProgress/playStage are retained-but-ignored params, so this
+    // test passes neither — the morph is the whole state.
+    @Test
+    fun detailMovieHeroActionsResolving() {
+        paparazzi.snapshot {
+            themed {
+                CompositionLocalProvider(LocalInspectionMode provides true) {
+                    DetailContent(
+                        post = jawanDetail,
+                        seasons = emptyList(),
+                        workPrints = moviePrints,
+                        capabilities = listOf("Hindi audio"),
+                        isSeries = false,
+                        resume = null,
+                        includedPill = "VIP",
+                        playLabel = "Play",
+                        playEnabled = true,
+                        playStarting = true,
+                        videoQualityText = "Auto · up to 1080p",
+                        downloadLabel = "Download · 1080p · 1.3 GB",
+                        downloadEnabled = true,
+                        onOpenSeason = {},
+                        similarTitles = listOf(salaars, mclintock),
+                        reloadError = null,
+                        onRetryReload = {},
+                        isFavorite = false,
+                        onToggleFavorite = {},
+                        onShare = {},
+                        contentPadding = PaddingValues(0.dp),
+                    )
+                }
+            }
+        }
+    }
+
     // The episode rows live below the fold of the full detail page (the
     // LazyColumn only composes the viewport), so they get their own shot:
     // a watched episode, one in progress, and one never started.
@@ -1424,6 +1503,26 @@ class PaparazziPreviewTest {
             themed {
                 TopBar(
                     state = playerBase(),
+                    onBack = {},
+                    onLock = {},
+                )
+            }
+        }
+    }
+
+    // P1 goldens (Nov 2026): Cast back in the top bar (P0-10) renders
+    // only when state.castAvailable — the plain playerTopBar golden
+    // proves the bar without it. This shot sets it true so Cast is
+    // render-proven. The button is a MediaRouteButton AndroidView
+    // (CastButtonFactory.setUpMediaRouteButton), so if Layoutlib refuses
+    // it this is the test that fails — remove it and leave Cast
+    // code-proven rather than burning the run on it.
+    @Test
+    fun playerTopBarCast() {
+        paparazzi.snapshot {
+            themed {
+                TopBar(
+                    state = playerBase().copy(castAvailable = true),
                     onBack = {},
                     onLock = {},
                 )

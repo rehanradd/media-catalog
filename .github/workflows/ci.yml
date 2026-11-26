@@ -185,12 +185,17 @@ jobs:
           ./gradlew :app:verifyPaparazziDebug \
             --tests "com.raddstream.app.ui.PaparazziPreviewTest" \
             --tests "com.raddstream.app.ui.PlayerLandscapePaparazziTest" \
+            --tests "com.raddstream.app.ui.navigation.BottomNavLargeFontPaparazziTest" \
             --tests "com.raddstream.app.ui.screens.DetailLargeFontPaparazziTest" \
             --tests "com.raddstream.app.ui.screens.SettingsLargeFontPaparazziTest" \
             --tests "com.raddstream.app.ui.DownloadsPaparazziTest" \
             --tests "com.raddstream.app.ui.DownloadsPaparazziLargeFontTest" \
             --tests "com.raddstream.app.ui.screens.MyListLargeFontPaparazziTest" \
             --tests "com.raddstream.app.ui.SearchLargeFontPaparazziTest" \
+            --tests "com.raddstream.app.ui.screens.ProfilePaparazziTest" \
+            --tests "com.raddstream.app.ui.screens.ProfileLargeFontPaparazziTest" \
+            --tests "com.raddstream.app.ui.screens.LiveTvPaparazziTest" \
+            --tests "com.raddstream.app.ui.screens.LiveTvLargeFontPaparazziTest" \
             --no-daemon --stacktrace --console=plain
 
       - name: 📤 Upload debug APK

@@ -99,6 +99,46 @@ fun LiveTvScreen(
     viewModel: LiveTvViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    LiveTvContent(
+        state = state,
+        onRefresh = { viewModel.refresh() },
+        onQueryChanged = viewModel::onQueryChanged,
+        onCategorySelected = viewModel::onCategorySelected,
+        onFavouritesSelected = viewModel::onFavouritesSelected,
+        onToggleFavorite = { channel -> viewModel.toggleFavorite(channel.id) },
+        onChannelClick = { channel ->
+            // Batch C: warm the channel's link in parallel
+            // with the navigation, so the player 302s from
+            // the banked answer instead of paying the live
+            // resolve inside "Finding your video".
+            viewModel.warmChannel(channel.streamId)
+            // A channel is always HLS: stage the manifest MIME
+            // so the player declares it before the first frame
+            // instead of opening the playlist with the
+            // progressive reader (Robo #4).
+            viewModel.stageLiveChannel(channel.streamId)
+            onPlayChannel(channel.streamId, channel.name)
+        },
+    )
+}
+
+/**
+ * The Live TV body, split from the screen so tests can render it with a
+ * fake state (the Home pattern: HomeScreen + HomeContent). No behaviour
+ * change here — the ViewModel calls live in [LiveTvScreen]'s delegation
+ * above, so this function is pure state in, taps out.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun LiveTvContent(
+    state: LiveTvViewModel.UiState,
+    onRefresh: () -> Unit,
+    onQueryChanged: (String) -> Unit,
+    onCategorySelected: (String?) -> Unit,
+    onFavouritesSelected: (Boolean) -> Unit,
+    onToggleFavorite: (LiveTvChannel) -> Unit,
+    onChannelClick: (LiveTvChannel) -> Unit,
+) {
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -125,7 +165,7 @@ fun LiveTvScreen(
                     // (D1), which puts yesterday's list on screen while
                     // the fresh one loads behind it.
                     IconButton(
-                        onClick = { viewModel.refresh() },
+                        onClick = { onRefresh() },
                         enabled = !state.isLoading,
                         modifier = Modifier.semantics { contentDescription = "Refresh channels" },
                     ) {
@@ -158,7 +198,7 @@ fun LiveTvScreen(
             state.error != null && state.channels.isEmpty() -> ErrorState(
                 title = "Live TV isn't available",
                 message = state.error ?: "Could not load live channels.",
-                onRetry = { viewModel.refresh() },
+                onRetry = { onRefresh() },
                 modifier = Modifier.fillMaxSize().padding(contentPadding),
             )
             state.channels.isEmpty() -> EmptyState(
@@ -180,7 +220,7 @@ fun LiveTvScreen(
                     // Live TV review D6: the empty state's only way out
                     // sits on the 48dp floor with every other control.
                     Button(
-                        onClick = { viewModel.refresh() },
+                        onClick = { onRefresh() },
                         modifier = Modifier.heightIn(min = 48.dp),
                     ) { Text("Retry") }
                 },
@@ -221,7 +261,7 @@ fun LiveTvScreen(
                         // Live TV review D6: the cached-notice Retry sits
                         // on the 48dp floor with every other control.
                         TextButton(
-                            onClick = { viewModel.refresh() },
+                            onClick = { onRefresh() },
                             modifier = Modifier.heightIn(min = 48.dp),
                         ) { Text("Retry") }
                     }
@@ -234,7 +274,7 @@ fun LiveTvScreen(
                 // only dismisses the keyboard.
                 SearchField(
                     query = state.query,
-                    onQueryChanged = viewModel::onQueryChanged,
+                    onQueryChanged = onQueryChanged,
                     onSubmit = {},
                     label = "Filter channels",
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -242,16 +282,16 @@ fun LiveTvScreen(
                 LiveTvCategoryRow(
                     categories = state.categories,
                     selectedCategory = state.selectedCategory,
-                    onCategorySelected = viewModel::onCategorySelected,
+                    onCategorySelected = onCategorySelected,
                     // E2 slice 1: the Favourites chip owns the grid while
                     // selected — only starred channels show, in starred order.
                     showFavoritesOnly = state.showFavoritesOnly,
-                    onFavouritesSelected = viewModel::onFavouritesSelected,
+                    onFavouritesSelected = onFavouritesSelected,
                     // A4-F2: the row owns the "All"-while-searching state —
                     // the query rides here as a removable pill, and "All"
                     // dims while it is up (see LiveTvCategoryRow).
                     query = state.query,
-                    onQueryCleared = { viewModel.onQueryChanged("") },
+                    onQueryCleared = { onQueryChanged("") },
                 )
                 // Live TV review D7: the biggest list in the app says how
                 // big it is — "759 channels" unfiltered, "12 of 759
@@ -298,22 +338,22 @@ fun LiveTvScreen(
                         action = {
                             if (noFavouritesYet) {
                                 Button(
-                                    onClick = { viewModel.onFavouritesSelected(false) },
+                                    onClick = { onFavouritesSelected(false) },
                                     modifier = Modifier.heightIn(min = 48.dp),
                                 ) { Text("Show all channels") }
                             } else if (state.query.isNotBlank()) {
                                 Button(
-                                    onClick = { viewModel.onQueryChanged("") },
+                                    onClick = { onQueryChanged("") },
                                     modifier = Modifier.heightIn(min = 48.dp),
                                 ) { Text("Clear search") }
                             } else if (state.showFavoritesOnly) {
                                 Button(
-                                    onClick = { viewModel.onFavouritesSelected(false) },
+                                    onClick = { onFavouritesSelected(false) },
                                     modifier = Modifier.heightIn(min = 48.dp),
                                 ) { Text("Show all channels") }
                             } else if (state.selectedCategory != null) {
                                 Button(
-                                    onClick = { viewModel.onCategorySelected(null) },
+                                    onClick = { onCategorySelected(null) },
                                     modifier = Modifier.heightIn(min = 48.dp),
                                 ) { Text("Show all channels") }
                             }
@@ -326,7 +366,7 @@ fun LiveTvScreen(
                         // E2 slice 1: the star state rides with the card,
                         // and the tap writes Room through the ViewModel.
                         favoriteChannelIds = state.favoriteChannelIds,
-                        onFavoriteClick = { channel -> viewModel.toggleFavorite(channel.id) },
+                        onFavoriteClick = { channel -> onToggleFavorite(channel) },
                         // A4-F5: the filtered list ends with its own footer —
                         // "End of results · 1 of 759 channels" plus the way
                         // back to the full list. The counts are the same
@@ -336,23 +376,11 @@ fun LiveTvScreen(
                         visibleCount = state.visibleChannels.size,
                         totalCount = state.channels.size,
                         onClearFilter = {
-                            viewModel.onQueryChanged("")
-                            viewModel.onCategorySelected(null)
-                            viewModel.onFavouritesSelected(false)
+                            onQueryChanged("")
+                            onCategorySelected(null)
+                            onFavouritesSelected(false)
                         },
-                        onChannelClick = { channel ->
-                            // Batch C: warm the channel's link in parallel
-                            // with the navigation, so the player 302s from
-                            // the banked answer instead of paying the live
-                            // resolve inside "Finding your video".
-                            viewModel.warmChannel(channel.streamId)
-                            // A channel is always HLS: stage the manifest MIME
-                            // so the player declares it before the first frame
-                            // instead of opening the playlist with the
-                            // progressive reader (Robo #4).
-                            viewModel.stageLiveChannel(channel.streamId)
-                            onPlayChannel(channel.streamId, channel.name)
-                        },
+                        onChannelClick = onChannelClick,
                     )
                 }
             }
