@@ -1,7 +1,6 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
