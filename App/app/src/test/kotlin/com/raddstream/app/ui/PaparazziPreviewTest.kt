@@ -16,6 +16,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.LoadStates
@@ -35,6 +36,7 @@ import com.raddstream.app.network.models.Playability
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.network.models.ReleaseLabelParsing
+import com.raddstream.app.R
 import com.raddstream.app.network.models.currentCalendarYear
 import com.raddstream.app.player.LadderRung
 import com.raddstream.app.player.PlaybackInfo
@@ -49,7 +51,8 @@ import com.raddstream.app.ui.components.RaddChip
 import com.raddstream.app.ui.components.ScrollingChipRow
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.screens.DetailContent
-import com.raddstream.app.ui.screens.EpisodeRowSection
+import com.raddstream.app.ui.screens.EpisodeListRow
+import com.raddstream.app.ui.screens.SeasonDropdown
 import com.raddstream.app.ui.screens.EpisodeTile
 import com.raddstream.app.ui.screens.SettingsActions
 import com.raddstream.app.ui.screens.SettingsContent
@@ -76,7 +79,6 @@ import com.raddstream.app.ui.screens.ZoomResetChip
 import com.raddstream.app.ui.screens.SearchContent
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.EpisodeGroup
-import com.raddstream.app.viewmodel.EpisodeProgress
 import com.raddstream.app.viewmodel.HomeFilter
 import com.raddstream.app.viewmodel.HomeMood
 import com.raddstream.app.viewmodel.HomeSection
@@ -1039,32 +1041,41 @@ class PaparazziPreviewTest {
         }
     }
 
-    // DT-3 (round 2, Nov 2026): the episode row's golden. The row lives
-    // below the fold of the full detail page (the LazyColumn only
-    // composes the viewport), so it is shot on its own, like the season
-    // tiles below: E1 watched (tick), E2 next (jade "Next" mark), a
-    // per-episode download icon on each card, and the legend line above
-    // the row. The fixture has two seasons, so the S1/S2 chips above
-    // the row are part of the shot too.
+    // P1-8 (Nov 2026): the season dropdown + inline episode list's
+    // golden. The section lives below the fold of the full detail page
+    // (the LazyColumn only composes the viewport), so it is shot on
+    // its own, like the season tiles below: the "Season 1 · 2
+    // episodes" dropdown row, the legend line, E1 watched (tick) and
+    // E2 next (jade "Next" mark), each with its download icon. The
+    // dropdown is closed in the shot — the open menu is a Popup the
+    // record cannot pin.
     @Test
-    fun detailEpisodeRow() {
+    fun detailSeasonEpisodes() {
         paparazzi.snapshot {
             themed {
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    EpisodeRowSection(
+                    SeasonDropdown(
                         seasons = seriesSeasons,
                         selectedSeason = 1,
-                        episodeProgress = mapOf(
-                            (1 to 1) to EpisodeProgress(fraction = 1f, watched = true, remainingLabel = null),
-                        ),
-                        nextEpisode = 1 to 2,
                         onSelectSeason = {},
-                        onPlayEpisode = { _, _ -> },
-                        onDownloadEpisode = { _, _ -> },
                     )
+                    Text(
+                        text = stringResource(R.string.detail_episode_legend),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    seriesSeasons.first().episodes.forEach { episode ->
+                        EpisodeListRow(
+                            episode = episode,
+                            isWatched = episode.numberWithinSeason == 1,
+                            isNext = episode.numberWithinSeason == 2,
+                            onPlay = {},
+                            onDownload = {},
+                        )
+                    }
                 }
             }
         }

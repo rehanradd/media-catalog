@@ -82,13 +82,15 @@ class SkeletonParityTest {
     fun `detail skeleton sections follow the real page order`() {
         // Detail review (Nov 2026, P1): the skeleton reordered to the
         // redesigned page — synopsis before rungs, the utility row's
-        // shape instead of the removed three-button row, the audio line
-        // between them. The section tags below are the skeleton's own
-        // testTags; the order is DetailContent's item order (hero, Play,
-        // synopsis, utility row, audio line, quality, cast, print
-        // summary, similar), minus the lists the skeleton cannot know at
-        // load time — episodes/files need movie-vs-series, which only the
-        // load itself answers. The quality section is the wrapped
+        // shape instead of the removed three-button row. P1-8 (Nov
+        // 2026): the audio line moved into the Details block after
+        // Cast, so its skeleton tag moves with it. The section tags
+        // below are the skeleton's own testTags; the order is
+        // DetailContent's item order (hero, Play, synopsis, utility
+        // row, quality, cast, Details, print summary, similar),
+        // minus the lists the skeleton cannot know at load time —
+        // episodes/files need movie-vs-series, which only the load
+        // itself answers. The quality section is the wrapped
         // QualityRungsSkeleton() call — its tag sits at the call site,
         // not inside the helper (the helper is defined after
         // DetailSkeleton in the file, so its inner tag would read after
@@ -100,9 +102,9 @@ class SkeletonParityTest {
             "detailPlaySkeleton",
             "detailSkeletonSynopsis",
             "detailSkeletonUtilityRow",
-            "detailSkeletonAudioLine",
             "detailSkeletonQuality",
             "detailSkeletonCast",
+            "detailSkeletonAudioLine",
             "detailSkeletonPrintSummary",
             "detailSkeletonSimilar",
         )

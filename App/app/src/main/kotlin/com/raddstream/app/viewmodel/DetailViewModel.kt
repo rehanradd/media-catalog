@@ -2148,6 +2148,16 @@ class DetailViewModel @Inject constructor(
                             // "For you" row on screen, or null when no row
                             // scored it.
                             matchPercent = MatchScoreStore.get(detail.id),
+                            // P1-9 (Nov 2026): the similar rail is pending
+                            // from the moment the detail paints — the
+                            // fetch starts below, after the pre-resolve
+                            // and the live fill, so without this the page
+                            // would end at Cast with no placeholder
+                            // until the fetch raised the flag. The old
+                            // titles are cleared with it: a reload never
+                            // shows the previous title's rail.
+                            similarTitles = emptyList(),
+                            similarLoading = true,
                         )
                     }
                     // P2 cast (Nov 2026): the cast row's photos, resolved
@@ -2189,6 +2199,11 @@ class DetailViewModel @Inject constructor(
                         loadSimilarTitles(detail.id, detail)
                     } else if (postId > 0) {
                         loadSimilarTitles(postId, detail)
+                    } else {
+                        // P1-9: no id to ask the catalog about — the rail
+                        // will never answer, so its skeleton must not
+                        // stand forever.
+                        _uiState.update { it.copy(similarLoading = false) }
                     }
                 } else {
                     // F9 (Batch B): the server answered "no such title" — the

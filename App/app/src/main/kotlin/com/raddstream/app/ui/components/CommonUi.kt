@@ -636,10 +636,11 @@ fun PosterRailSkeleton(
 
 /**
  * The loading stand-in for the detail page, mirroring [DetailContent]'s item
- * order block for block — hero, Play, synopsis, utility row, audio line,
- * quality rungs, cast, print summary, similar titles — with each block the
- * same height as the real one, so nothing below the fold reflows when the
- * data lands. Blocks are 16dp apart, the LazyColumn's own spacing.
+ * order block for block — hero, Play, synopsis, utility row, quality
+ * rungs, cast, Details (genres + audio line), print summary, similar
+ * titles — with each block the same height as the real one, so nothing
+ * below the fold reflows when the data lands. Blocks are 16dp apart,
+ * the LazyColumn's own spacing.
  * ([SkeletonParityTest] pins the section order, so a redesign that moves
  * a section moves the skeleton with it.)
  *
@@ -651,8 +652,10 @@ fun PosterRailSkeleton(
  * The hero mirrors the common case — the full-bleed 16:9 backdrop (most
  * titles carry a TMDB backdrop) with the title block bottom-aligned in
  * a 296dp-min box: two headlineMedium lines (36dp), the bodySmall meta
- * (16dp), the pill + rating row (24dp) and the 22dp genre chips, 6dp
- * apart, 16dp sides, 16dp bottom. The old skeleton mirrored a 176dp band
+ * (16dp), and the pill + rating row (24dp), 6dp apart, 16dp sides,
+ * 16dp bottom. P1-8 (Nov 2026): the genre chips left the hero, so
+ * the skeleton's 22dp chip bar goes with them. The old skeleton
+ * mirrored a 176dp band
  * + 92dp spacer + poster header that no longer exists anywhere on the
  * page (Detail review P1), so the hero jumped on every load. A title
  * with no backdrop renders the poster header instead; that jump is the
@@ -697,10 +700,6 @@ fun DetailSkeleton(modifier: Modifier = Modifier) {
                     Modifier.width(120.dp).height(24.dp),
                     shape = RoundedCornerShape(8.dp),
                 )
-                SkeletonBox(
-                    Modifier.fillMaxWidth(0.6f).height(22.dp),
-                    shape = RoundedCornerShape(8.dp),
-                )
             }
         }
         DetailBodySkeleton()
@@ -709,7 +708,8 @@ fun DetailSkeleton(modifier: Modifier = Modifier) {
 
 /**
  * Feel-instant S4: everything below the detail hero — Play, synopsis,
- * utility row, audio line, quality rungs, cast, print summary, similar.
+ * utility row, quality rungs, cast, Details (genres + audio line),
+ * print summary, similar.
  * Split out of [DetailSkeleton] so the optimistic load can paint the real
  * hero from the tapped row and skeleton only the body: the same pieces,
  * in the same order, with the same tags, so [SkeletonParityTest] still
@@ -770,16 +770,6 @@ fun DetailBodySkeleton(modifier: Modifier = Modifier) {
                 }
             }
         }
-        // Audio line: one 48dp tappable row, text + chevron.
-        Box(
-            Modifier.fillMaxWidth().height(48.dp).testTag("detailSkeletonAudioLine"),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            SkeletonBox(
-                Modifier.fillMaxWidth(0.55f).height(16.dp),
-                shape = RoundedCornerShape(8.dp),
-            )
-        }
         // Quality rungs: "Quality" + subtitle + three rung rows. The
         // section carries its own tag at the call site — the helper's
         // inner tag reads after "similar" in a raw source scan (the
@@ -808,6 +798,35 @@ fun DetailBodySkeleton(modifier: Modifier = Modifier) {
                 )
                 SkeletonBox(
                     Modifier.width(96.dp).height(48.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+            }
+        }
+        // Details block (P1-8, Nov 2026): genres + Languages, after
+        // Cast — the audio line moved here from between the utility
+        // row and the quality section, so its skeleton moves with it.
+        // Genre chips as two pill bars, then one 48dp tappable row,
+        // text + chevron.
+        Column(
+            Modifier.testTag("detailSkeletonAudioLine"),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SkeletonBox(
+                    Modifier.width(88.dp).height(22.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+                SkeletonBox(
+                    Modifier.width(72.dp).height(22.dp),
+                    shape = RoundedCornerShape(8.dp),
+                )
+            }
+            Box(
+                Modifier.fillMaxWidth().height(48.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                SkeletonBox(
+                    Modifier.fillMaxWidth(0.55f).height(16.dp),
                     shape = RoundedCornerShape(8.dp),
                 )
             }

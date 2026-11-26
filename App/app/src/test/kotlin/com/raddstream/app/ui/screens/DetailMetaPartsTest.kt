@@ -10,11 +10,12 @@ import org.junit.Test
  * no-backdrop poster header. "Movie" adds nothing — the page IS a
  * movie — while a series keeps its type word and its season count.
  *
- * S2 (round 2, Nov 2026): the brief's meta convention — year ·
- * duration · quality. Language is NOT in this line any more: it lives
- * in the Audio row below ("Audio: Hindi ›"), where a viewer goes to
- * change it. The quality is the picked band ("1080p") or what Auto
- * reaches ("Auto · up to 4K").
+ * P1-8 (Nov 2026): the meta convention changed — a series is
+ * "Series · N Seasons" (no runtime, no resolution: resolution
+ * belongs in the quality row only), a movie keeps its runtime.
+ * Language is NOT in this line: it lives in the Details block's
+ * Languages row, where a viewer goes to change it. Quality never
+ * paints here any more, whatever the caller passes.
  */
 class DetailMetaPartsTest {
 
@@ -111,12 +112,12 @@ class DetailMetaPartsTest {
         )
     }
 
-    // ── S2 (round 2): quality in the meta line ──
+    // ── P1-8 (Nov 2026): quality never paints in the meta line ──
 
     @Test
-    fun qualityFollowsDurationInTheMetaLine() {
+    fun qualityIsDroppedFromTheMetaLine() {
         assertEquals(
-            listOf("2023", "2 h 49 m", "1080p"),
+            listOf("2023", "2 h 49 m"),
             detailMetaParts(
                 post(contentType = "movie", year = 2023, runtimeMinutes = 169),
                 seasonCount = 0,
@@ -126,9 +127,9 @@ class DetailMetaPartsTest {
     }
 
     @Test
-    fun qualityShowsAutoUpToTheBestBand() {
+    fun autoQualityIsDroppedFromTheMetaLine() {
         assertEquals(
-            listOf("2023", "2 h 49 m", "Auto · up to 4K"),
+            listOf("2023", "2 h 49 m"),
             detailMetaParts(
                 post(contentType = "movie", year = 2023, runtimeMinutes = 169),
                 seasonCount = 0,
@@ -158,9 +159,12 @@ class DetailMetaPartsTest {
     }
 
     @Test
-    fun fullMetaLineOrderIsMatchYearTypeDurationQualitySeasons() {
+    fun seriesDropsRuntimeAndQuality() {
+        // P1-8: a series has no single runtime, and resolution belongs
+        // in the quality row only — so a series with a runtime and a
+        // picked band still reads "97% Match · 2021 · Series · 2 seasons".
         assertEquals(
-            listOf("97% Match", "2021", "Series", "45 min", "720p", "2 seasons"),
+            listOf("97% Match", "2021", "Series", "2 seasons"),
             detailMetaParts(
                 post(contentType = "series", year = 2021, runtimeMinutes = 45),
                 seasonCount = 2,

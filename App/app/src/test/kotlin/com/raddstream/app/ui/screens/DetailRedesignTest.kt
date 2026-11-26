@@ -1,10 +1,11 @@
 package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -15,6 +16,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
@@ -34,10 +36,11 @@ import org.robolectric.RobolectricTestRunner
 /**
  * Detail redesign (Nov 2026): the synopsis moves directly under the Play
  * actions, the version list and its summary are gone, the similar rail is
- * "More Like This", a series shows one simple row per season ("Season 1
- * — 12 episodes ›") that opens the season's own numbered-tile sub-page,
- * and a title with nothing to play gets its reason in plain words plus a
- * way out. 2-button detail (Nov 2026): the page shows exactly two
+ * "More Like This", and a title with nothing to play gets its reason in
+ * plain words plus a way out. P1-8 (Nov 2026): a series shows one
+ * season dropdown + an inline episode list — no season rows, no
+ * sub-page — and the genres live in a Details block, not the hero.
+ * 2-button detail (Nov 2026): the page shows exactly two
  * buttons — Play, then Download — and no quality ladder, no file cards,
  * no "Show all files" expander. The overflow menu itself (Report moved
  * out of the top bar) is covered by the Paparazzi detailMovie golden,
@@ -90,6 +93,16 @@ class DetailRedesignTest {
         downloadHint: String? = null,
         onTryAgain: () -> Unit = {},
         onShowAllVersions: () -> Unit = {},
+        onPlayEpisode: (Int, Int) -> Unit = { _, _ -> },
+        onDownloadEpisode: (Int, Int) -> Unit = { _, _ -> },
+        // P1-8 fixup 2: the dropdown is stateless — the selection
+        // lives in the ViewModel (DetailContent's episodeRowSeason).
+        // The helper takes the selection as STATE and reads it inside
+        // setContent: passing a plain Int? evaluates it once at the
+        // call, so a later menu pick never recomposes the list (the
+        // fixup-2 shape — Android 45810913696 failed the same way).
+        episodeRowSeason: State<Int?>? = null,
+        onSelectEpisodeRowSeason: (Int) -> Unit = {},
     ) {
         compose.setContent {
             RaddStreamTheme {
@@ -112,6 +125,10 @@ class DetailRedesignTest {
                     downloadHint = downloadHint,
                     onTryAgain = onTryAgain,
                     onShowAllVersions = onShowAllVersions,
+                    onPlayEpisode = onPlayEpisode,
+                    onDownloadEpisode = onDownloadEpisode,
+                    episodeRowSeason = episodeRowSeason?.value,
+                    onSelectEpisodeRowSeason = onSelectEpisodeRowSeason,
                     onOpenSeason = onOpenSeason,
                     onActorClick = {},
                     similarTitles = similarTitles,
@@ -158,11 +175,11 @@ class DetailRedesignTest {
     }
 
     @Test
-    fun seasonsAreSimpleRowsThatOpenTheirSubPage() {
-        // Detail redesign (Nov 2026): a series shows one simple row per
-        // season — "Season 1 — 1 episode ›" — and tapping a row opens
-        // that season's sub-page. No chips, no dropdown, no episode list
-        // on this page: six seasons read as six rows.
+    fun seasonsAreOneDropdownPlusInlineEpisodeList() {
+        // P1-8 (Nov 2026): one path to the episodes — a season
+        // dropdown + an inline episode list on this page. No season
+        // rows, no sub-page: six seasons read as one dropdown, and
+        // picking one lists its episodes below it.
         val seasons = (1..6).map { number ->
             SeasonGroup(
                 number = number,
@@ -171,7 +188,7 @@ class DetailRedesignTest {
                         season = number,
                         numberWithinSeason = 1,
                         absoluteNumber = number,
-                        title = "Pilot",
+                        title = if (number == 2) "Second" else "Pilot",
                         prints = emptyList(),
                     ),
                 ),
@@ -179,36 +196,75 @@ class DetailRedesignTest {
             )
         }
         var opened: Int? = null
-        content(isSeries = true, seasons = seasons, onOpenSeason = { opened = it })
-        // The rows sit below the fold in the test window, so like the
-        // similar rail they may not even be composed yet — swipe until
-        // they appear, then bring them fully into view.
+        var played: Pair<Int, Int>? = null
+        // P1-8 fixup 2: the dropdown only paints the selection — the
+        // test holds it in state, the way the ViewModel does in
+        // production, and the helper reads that state inside
+        // setContent, so the menu pick recomposes the list.
+        val selectedSeason = mutableStateOf<Int?>(null)
+        content(
+            isSeries = true,
+            seasons = seasons,
+            episodeRowSeason = selectedSeason,
+            onSelectEpisodeRowSeason = { selectedSeason.value = it },
+            onOpenSeason = { opened = it },
+            onPlayEpisode = { season, episode -> played = season to episode },
+        )
+        // The dropdown sits below the fold in the test window, so like
+        // the similar rail it may not even be composed yet — swipe until
+        // it appears, then bring it fully into view.
         for (i in 0 until 5) {
-            if (compose.onAllNodesWithText("Season 6").fetchSemanticsNodes().isNotEmpty()) break
+            if (compose.onAllNodesWithText("Season 1").fetchSemanticsNodes().isNotEmpty()) break
             compose.onRoot().performTouchInput { swipeUp() }
         }
+        // The first season's episode is listed inline, under the dropdown.
         compose.onNodeWithText("Season 1").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Season 6").performScrollTo().assertIsDisplayed()
-        // The old dropdown's combined label is gone with it.
-        compose.onNodeWithText("Season 1 · 1 episode").assertDoesNotExist()
-        compose.onNodeWithText("Season 2").performScrollTo().performClick()
-        assertEquals(2, opened)
+        compose.onNodeWithText("Pilot").performScrollTo().assertIsDisplayed()
+        // Picking Season 2 in the dropdown swaps the list to its episode.
+        compose.onNodeWithText("Season 1").performScrollTo().performClick()
+        // The menu item is already visible in its Popup — no scroll-to.
+        compose.onNodeWithText("Season 2 · 1 episode").performClick()
+        compose.onNodeWithText("Season 2").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Second").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Pilot").assertDoesNotExist()
+        // Nothing here opens the season sub-page any more.
+        assertEquals(null, opened)
+        // Tapping an episode row plays it.
+        compose.onNodeWithText("Second").performScrollTo().performClick()
+        assertEquals(2 to 1, played)
     }
 
     @Test
-    fun genreChipsFadeIsTwentyTwoDp() {
-        // Detail review (Nov 2026, P1): the genre row shares the
-        // ScrollingChipRow fade at the chips' own height — 22dp for a Pill, not
-        // the shared 48dp, and not the invisible local fade it replaces.
-        // The fade is conditional on canScrollForward now (P2, Nov 2026),
-        // so the row must actually overflow for the fade to exist: the
-        // two short genres the default post carries fit under
-        // Robolectric metrics, so this test renders a long genre list
-        // instead — the fade pins the overflow cue, not a fitting row.
-        content(
-            postDetail = post.copy(genres = "Action, Adventure, Science Fiction, Thriller, Crime, Mystery, Romance, Drama, Fantasy, Horror"),
-        )
-        compose.onNodeWithTag(GenreChipsFadeTag).assertHeightIsEqualTo(22.dp)
+    fun genresLiveInTheDetailsBlockNotTheHero() {
+        // P1-8 (Nov 2026): the genre chips left the hero — chips on
+        // a backdrop read as a filter affordance. They live in the
+        // Details block now, as wrapping chips under a "Details"
+        // header, and the hero carries no chip fade any more.
+        content()
+        // P1-8 fixup 4: the swipe loop never reliably composes the
+        // Details item — the block sits below the fold and five swipes
+        // do not deterministically bring it into the LazyColumn's
+        // composition range, so performScrollTo cannot find it at all
+        // (Android 45814176899 attempt 2: third failure on this test).
+        // Scroll by index instead — the repo's own deterministic
+        // pattern (PickThreeVisitTest: "performScrollToIndex is
+        // deterministic"). This fixture's page is hero(0), actions(1),
+        // quality selector(2, empty), synopsis(3), utility(4),
+        // cast(5), details(6).
+        // P1-8 resume: scroll the LIST, not the root — onRoot() is a
+        // 320×470 wrapper with 1 child, not the LazyColumn, so the
+        // index scroll could never find the item (Android 45810913696,
+        // 45814176899, 45822497145: "Failed to scroll to index 6, the
+        // node is missing"). The tag is DetailContentListTag.
+        compose.onNodeWithTag(DetailContentListTag).performScrollToIndex(6)
+        // The rows still ride DetailEntrance (index 7) — settle it
+        // before asserting the chips; the header sits outside the
+        // entrance since fixup 3, so it is placed as soon as the item
+        // composes.
+        compose.mainClock.advanceTimeBy(2000L)
+        compose.onNodeWithText("Details").assertIsDisplayed()
+        compose.onNodeWithText("Action").assertIsDisplayed()
+        compose.onNodeWithText("Thriller").assertIsDisplayed()
     }
 
     @Test

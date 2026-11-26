@@ -9,7 +9,6 @@ import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -18,9 +17,9 @@ import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -52,7 +51,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -143,9 +141,6 @@ import com.raddstream.app.ui.components.UserWords
 import com.raddstream.app.ui.components.RatingBadge
 import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.prefetchPosterArt
-import com.raddstream.app.ui.components.RaddChip
-import com.raddstream.app.ui.components.raddFilterChipColors
-import com.raddstream.app.ui.components.ScrollingChipRow
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.player.LadderForScope
@@ -184,7 +179,13 @@ fun DetailScreen(
     onOpenDownloads: () -> Unit = {},
     /** 2-button detail (Nov 2026): play a file already on this device ("✓ Downloaded"). */
     onPlayLocal: (uri: String, title: String) -> Unit = { _, _ -> },
-    /** Detail redesign (Nov 2026): a season row opens its sub-page. */
+    /**
+     * P1-8 (Nov 2026): retired — the season sub-page is no longer
+     * linked from this screen; seasons open inline (dropdown +
+     * episode list) in [DetailContent]. Retained for API
+     * compatibility (tests + previews pass it); the sub-page itself
+     * ([SeasonScreen]) stays in the app.
+     */
     onOpenSeason: (Int) -> Unit = {},
     /** An actor in the cast row: open that actor's page. */
     onActorClick: (String) -> Unit = {},
@@ -456,7 +457,6 @@ fun DetailScreen(
             ) {
                 DetailHeroSection(
                     post = optimistic,
-                    capabilities = emptyList(),
                     seasonCount = 0,
                     includedPill = null,
                     pageSides = Modifier.padding(horizontal = 16.dp),
@@ -613,19 +613,30 @@ fun DetailScreen(
                 // a paged detail endpoint and the ViewModel a load-more.
                 onShowAllVersions = { viewModel.loadDetail() },
                 videoQualityText = state.videoQualityText,
-                // Detail redesign (Nov 2026): a season row opens its
-                // sub-page — the episode list no longer lives here.
+                // P1-8 (Nov 2026): retired — seasons open inline now
+                // (dropdown + episode list); the sub-page is no longer
+                // linked from this page. Still forwarded: tests and
+                // previews pass it, and the parameter stays.
                 onOpenSeason = onOpenSeason,
-                // DT-3: the episode row — the current season's episodes
-                // on this page, with a per-episode download icon. The
-                // download tap goes through the same storage-permission
-                // wrapper as the primary Download button.
+                // P1-8 (Nov 2026): the season the dropdown shows — the
+                // ViewModel publishes the next unwatched season first,
+                // then the resume season, then Season 1; a tap in the
+                // dropdown re-publishes it. The download tap goes
+                // through the same storage-permission wrapper as the
+                // primary Download button.
                 episodeProgress = state.episodeProgress,
                 episodeRowSeason = state.episodeRowSeason,
                 nextEpisode = state.nextEpisode,
                 onPlayEpisode = viewModel::playEpisode,
                 onDownloadEpisode = { season, episode ->
                     downloadWithStoragePermission { viewModel.downloadEpisode(season, episode) }
+                },
+                // P1-8 (Nov 2026): a whole-season file is one video, not
+                // episodes — the inline pack row plays / keeps it through
+                // the same print calls the season sub-page used.
+                onPlayPack = viewModel::playPrint,
+                onDownloadPack = { print ->
+                    downloadWithStoragePermission { viewModel.keepPrint(print) }
                 },
                 onSelectEpisodeRowSeason = viewModel::selectEpisodeRowSeason,
                 castPhotos = state.castPhotos,
@@ -1024,26 +1035,32 @@ internal fun DetailContent(
      */
     videoQualityText: String? = null,
     /**
-     * Detail redesign (Nov 2026): a season row opens that season's
-     * sub-page, where the episodes live as plain numbered tiles. The
-     * episode list no longer lives on this page at all.
+     * P1-8 (Nov 2026): retired — seasons open inline now (one
+     * dropdown + an episode list on this page), so nothing here
+     * opens the season sub-page any more. Retained for API
+     * compatibility (tests + previews pass it).
      */
     onOpenSeason: (Int) -> Unit,
     /**
-     * DT-3 (round 2, Nov 2026): the episode row — this page shows the
-     * current season's episodes as a swipeable row with a per-episode
-     * download icon, so a series no longer needs a sub-page visit to
-     * reach an episode. The season rows below stay as the all-seasons
-     * deep-dive. [episodeProgress] is keyed by (season, episode);
-     * [nextEpisode] marks the next unwatched one; [episodeRowSeason]
-     * is the season the row shows (a chip tap changes it); the row
-     * hides when the season's episodes live only in a pack.
+     * P1-8 (Nov 2026): the season the dropdown shows — [episodeRowSeason]
+     * is the season the list shows (a dropdown pick changes it via
+     * [onSelectEpisodeRowSeason]); [episodeProgress] is keyed by
+     * (season, episode); [nextEpisode] marks the next unwatched one.
+     * A season whose episodes live only in a pack shows its pack row
+     * instead of an episode list.
      */
     episodeProgress: Map<Pair<Int, Int>, EpisodeProgress> = emptyMap(),
     episodeRowSeason: Int? = null,
     nextEpisode: Pair<Int, Int>? = null,
     onPlayEpisode: (Int, Int) -> Unit = { _, _ -> },
     onDownloadEpisode: (Int, Int) -> Unit = { _, _ -> },
+    /**
+     * P1-8 (Nov 2026): a whole-season file's own Play / Download —
+     * the pack row's taps. A season with episodes never calls these;
+     * a pack-only season never calls the episode taps above.
+     */
+    onPlayPack: (RankedPrint) -> Unit = {},
+    onDownloadPack: (RankedPrint) -> Unit = {},
     onSelectEpisodeRowSeason: (Int) -> Unit = {},
     /**
      * P2 cast (Nov 2026): the cast row's photos, name → TMDb w185 photo
@@ -1056,10 +1073,15 @@ internal fun DetailContent(
     onActorClick: (String) -> Unit = {},
     similarTitles: List<Post> = emptyList(),
     /**
-     * Detail review (Nov 2026, P1): the similar rail loads after the
-     * page — while it does, a rail skeleton stands in its place (below),
-     * so the page does not end in a bare gap that reads as "no similar
-     * titles". False once the rail answers, titles or none.
+     * P1-9 (Nov 2026): the similar rail loads after the page — while
+     * it does, a fixed-height rail skeleton stands in its place
+     * (below), so the page does not end in a bare gap that reads as
+     * "no similar titles", and nothing below the fold reflows when
+     * the titles land. True from the moment the detail paints (the
+     * ViewModel raises it with the detail itself, before the fetch
+     * starts — the flag is never false-then-true), false once the
+     * rail answers, titles or none. A finished load with no titles
+     * shows no rail at all, never a standing skeleton.
      */
     similarLoading: Boolean = false,
     onPostClick: (Post) -> Unit = {},
@@ -1142,7 +1164,7 @@ internal fun DetailContent(
         bottom = contentPadding.calculateBottomPadding(),
     )
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().testTag(DetailContentListTag),
         contentPadding = listPadding,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -1175,7 +1197,6 @@ internal fun DetailContent(
             ) {
                 DetailHeroSection(
                     post = post,
-                    capabilities = capabilities,
                     seasonCount = if (isSeries) seasons.size else 0,
                     includedPill = includedPill,
                     pageSides = pageSides,
@@ -1304,44 +1325,11 @@ internal fun DetailContent(
             )
         }
 
-        // One consolidated "Audio & Subtitles" line, built from the
-        // prints' own data — the per-print badges stay on the cards for
-        // the few who expand them, but the discovery surface is this line.
-        // Detail review (Nov 2026, P1): the line is tappable — it opens
-        // the Languages screen, where the viewer picks their audio and
-        // subtitle languages. The chevron is the affordance; the whole
-        // row is the target, 48dp tall.
-        // Audit Detail #4 (Nov 2026): the work's own languages, so a
-        // dubbed audio track can say so instead of contradicting the
-        // header ("English" work, "Audio: Hindi"). Plain val, not
-        // remember: this runs in the LazyColumn's scope, which is not
-        // a @Composable context, and the list is one short parse.
-        val originalLanguages =
-            WireText.listOf(post.language).map { it.trim() }.filter(::isKnownLanguage)
-        audioSubtitleLine(allPrints, originalLanguages)?.let { line ->
-            item {
-                Row(
-                    modifier = pageSides
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .clickable(onClick = onOpenLanguages, role = Role.Button),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = line,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Icon(
-                        painterResource(R.drawable.ic_action_chevron_right),
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
+        // P1-8 (Nov 2026): the languages line lived here — "Audio &
+        // Subtitles", a name that matched neither its destination
+        // (Languages) nor its place on the page. It lives in the
+        // Details block now (after Cast), as a "Languages" row that
+        // opens the same screen; the genres ride with it.
 
         // P0-9 (Nov 2026): the server caps the detail at 1,000
         // releases — but the cap is the app's problem, not the
@@ -1364,54 +1352,82 @@ internal fun DetailContent(
             }
         }
 
-        // Detail redesign (Nov 2026): a series shows only its seasons
-        // here — one simple row each, "Season 1 — 12 episodes ›". The
-        // episodes live on the season's own sub-page, as plain numbered
-        // tiles; the episode rows and their print lists are gone from
-        // this page. The per-season counts ARE corrected (B2): the v2
-        // `episode_guide` carries the true total per season, and the rows
-        // read it — but the sub-page tiles are still only the capped
-        // releases, so the "Show all versions" affordance above stays as
-        // the way forward for the list itself.
+        // P1-8 (Nov 2026): one path to the episodes, Netflix shape — a
+        // season dropdown + an inline episode list on this page. The
+        // swipeable episode row AND the season rows that opened a
+        // sub-page were two paths to the same content; both are gone.
+        // The per-season counts ARE corrected (B2): the v2
+        // `episode_guide` carries the true total per season, and the
+        // dropdown reads it — but the episodes behind it are still
+        // only the capped releases, so the "Show all versions"
+        // affordance above stays as the way forward for the list
+        // itself. A season whose episodes live only in a pack shows
+        // its pack row instead of a list; a mixed season shows both.
+        // The episode rows are LazyColumn items (not a nested list),
+        // so a 100+ episode season still recycles.
         if (isSeries) {
             item(contentType = "seasons-header") {
                 Box(pageSides) {
                     SectionHeader(title = "Seasons", modifier = Modifier.padding(horizontal = 0.dp))
                 }
             }
-            // DT-3: the current season's episodes, right on this page —
-            // a horizontal swipeable row with a per-episode download
-            // icon. The season rows below stay as the all-seasons
-            // deep-dive (the sub-page is untouched). A season whose
-            // episodes live only in a pack has no row to show: the row
-            // hides, and the season row still opens the sub-page.
-            val rowSeason = seasons.firstOrNull { it.number == episodeRowSeason }
-            if (rowSeason != null && rowSeason.episodes.isNotEmpty()) {
-                item(contentType = "episode-row") {
+            // The ViewModel publishes the next unwatched season first,
+            // then the resume season, then Season 1; until it does, the
+            // first season stands in — a series never shows an empty
+            // Seasons section waiting for a selection.
+            val selectedSeason =
+                seasons.firstOrNull { it.number == episodeRowSeason } ?: seasons.firstOrNull()
+            if (selectedSeason != null) {
+                item(contentType = "season-dropdown") {
                     DetailEntrance(
                         index = 5,
                         enteredIds = enteredSectionIndices,
                         onEntered = { enteredSectionIndices = enteredSectionIndices + it },
                     ) {
-                        EpisodeRowSection(
-                            seasons = seasons,
-                            selectedSeason = episodeRowSeason,
-                            episodeProgress = episodeProgress,
-                            nextEpisode = nextEpisode,
-                            onSelectSeason = onSelectEpisodeRowSeason,
-                            onPlayEpisode = onPlayEpisode,
-                            onDownloadEpisode = onDownloadEpisode,
-                            modifier = pageSides,
-                        )
+                        Box(pageSides) {
+                            SeasonDropdown(
+                                seasons = seasons,
+                                selectedSeason = selectedSeason.number,
+                                onSelectSeason = onSelectEpisodeRowSeason,
+                            )
+                        }
                     }
                 }
-            }
-            items(seasons, key = { "season-${it.number}" }) { season ->
-                Box(pageSides) {
-                    SeasonRow(
-                        season = season,
-                        onClick = { onOpenSeason(season.number) },
-                    )
+                selectedSeason.packedPrints.maxByOrNull { it.rankKey }?.let { packPrint ->
+                    item(contentType = "season-pack") {
+                        Box(pageSides) {
+                            SeasonPackRow(
+                                season = selectedSeason,
+                                onPlay = { onPlayPack(packPrint) },
+                                onKeep = { onDownloadPack(packPrint) },
+                            )
+                        }
+                    }
+                }
+                if (selectedSeason.episodes.isNotEmpty()) {
+                    item(contentType = "episode-legend") {
+                        Box(pageSides) {
+                            Text(
+                                text = stringResource(R.string.detail_episode_legend),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    items(
+                        selectedSeason.episodes,
+                        key = { "episode-${selectedSeason.number}-${it.numberWithinSeason}" },
+                    ) { episode ->
+                        Box(pageSides) {
+                            EpisodeListRow(
+                                episode = episode,
+                                isWatched = episodeProgress[selectedSeason.number to episode.numberWithinSeason]?.watched == true,
+                                isNext = nextEpisode == (selectedSeason.number to episode.numberWithinSeason),
+                                onPlay = { onPlayEpisode(selectedSeason.number, episode.numberWithinSeason) },
+                                onDownload = { onDownloadEpisode(selectedSeason.number, episode.numberWithinSeason) },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1433,14 +1449,65 @@ internal fun DetailContent(
             }
         }
 
-        // Detail review (Nov 2026, P1): the similar rail loads after the
-        // page — while it does, a rail skeleton stands in its place, so
-        // the page does not end in a bare gap that reads as "no similar
-        // titles". The header is the real one (a section name, not data);
-        // the rail is PosterRailSkeleton, the same shape the real rail
-        // fills in with — it carries its own 16dp sides, so it needs no
-        // pageSides of its own. Only while the rail is empty: once
-        // titles land the skeleton is gone.
+        // P1-8 (Nov 2026): the Details block — genres, languages, and
+        // the Match % disclosure, in one place, after Cast. The genre
+        // chips left the hero (chips on a backdrop read as a filter
+        // affordance); the languages line left its standalone slot
+        // (its name matched neither its destination, Languages, nor
+        // its place on the page). Nothing here reorders the page: the
+        // block sits between Cast and More Like This, and renders
+        // nothing at all when the title carries none of the three.
+        // The work's own languages are a plain val, not remember: this
+        // runs in the LazyColumn's scope, which is not a @Composable
+        // context, and the list is one short parse.
+        val originalLanguages =
+            WireText.listOf(post.language).map { it.trim() }.filter(::isKnownLanguage)
+        val detailsAudioLine = audioSubtitleLine(allPrints, originalLanguages)
+        if (post.genreList.isNotEmpty() || capabilities.isNotEmpty() ||
+            detailsAudioLine != null || matchPercent != null
+        ) {
+            item(contentType = "details") {
+                // P1-8 fixup: the header stays outside the entrance —
+                // it is the anchor the tests swipe to, so it is always
+                // in the semantics tree and placed (the P1-9 rail does
+                // the same; DetailEntrance hid the header until its
+                // delay elapsed, Android 45538692963, and the
+                // genresLiveInTheDetailsBlockNotTheHero test caught the
+                // same shape here in Android 45810913696). Only the
+                // rows ride the entrance now; the gaps are unchanged
+                // (12dp between header and rows, as inside the block).
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(pageSides) {
+                        SectionHeader(title = "Details", modifier = Modifier.padding(horizontal = 0.dp))
+                    }
+                    DetailEntrance(
+                        index = 7,
+                        enteredIds = enteredSectionIndices,
+                        onEntered = { enteredSectionIndices = enteredSectionIndices + it },
+                    ) {
+                        Box(pageSides) {
+                            DetailsSection(
+                                genres = post.genreList,
+                                capabilities = capabilities,
+                                audioLine = detailsAudioLine,
+                                matchPercent = matchPercent,
+                                onOpenLanguages = onOpenLanguages,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // P1-9 (Nov 2026): the similar rail's reserved height. While the
+        // rail loads, a fixed-height skeleton stands in its place — the
+        // real header (a section name, not data) over PosterRailSkeleton,
+        // the same shape the real rail fills in with, so nothing below
+        // the fold reflows when the titles land. The skeleton is the
+        // rail's own height: the header plus one rail of poster cells,
+        // the same geometry the loaded rail paints. Only while the rail
+        // is empty AND still loading: a finished load with no titles
+        // shows no rail at all, never a standing skeleton.
         if (similarLoading && similarTitles.isEmpty()) {
             item(contentType = "similar-loading") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1452,18 +1519,20 @@ internal fun DetailContent(
 
         if (similarTitles.isNotEmpty()) {
             item(contentType = "similar-titles") {
-                // DT-4 (round 2): the rail is the page's LAST item and
-                // arrives via scroll, not via page entrance — it carries
-                // no staggered entrance. Wrapping it in DetailEntrance
-                // hid the rail from the semantics tree until its 420ms
-                // delay elapsed, so DetailRedesignTest's swipe-to-rail
-                // could not find "More Like This" (Android 45538692963).
-                // Round-6 tried a graphicsLayer entrance instead, but
-                // Paparazzi captures the spring mid-flight (LocalInspectionMode
-                // is false in PaparazziPreviewTest, and the animation clock
-                // does not settle the spring), so the whole rail vanished
-                // from all 7 Detail goldens (records 199 + 205). No
-                // entrance here: the rail renders settled, as before.
+                // P1-9 (Nov 2026): the rail staggers in — the My List
+                // entered-ids pattern, one card at a time (index × 40ms,
+                // capped at 400ms), settled in inspection mode so a
+                // golden pins the finished rail. The header stays
+                // outside the animation: it is the anchor the dead end
+                // scrolls to and the tests swipe to, so it is always in
+                // the semantics tree. Two earlier entrances failed here
+                // and are NOT revived: DetailEntrance hid the header
+                // until its delay elapsed (Android 45538692963), and a
+                // graphicsLayer spring was captured mid-flight by
+                // Paparazzi, vanishing the rail from all 7 Detail
+                // goldens (records 199 + 205).
+                val inPreview = LocalInspectionMode.current
+                var similarEnteredIds by remember { mutableStateOf(setOf<Int>()) }
                 Column(
                     modifier = Modifier
                         .bringIntoViewRequester(similarBringIntoView)
@@ -1476,10 +1545,28 @@ internal fun DetailContent(
                         key = { it.id },
                         contentPadding = PaddingValues(0.dp),
                     ) { similar ->
-                        PosterCard(
-                            post = similar,
-                            onClick = { onPostClick(similar) },
-                        )
+                        val index = similarTitles.indexOf(similar)
+                        val isEntered = similar.id in similarEnteredIds
+                        LaunchedEffect(Unit) {
+                            if (inPreview) return@LaunchedEffect
+                            if (similar.id in similarEnteredIds) return@LaunchedEffect
+                            delay(minOf(index * 40, 400).toLong())
+                            similarEnteredIds = similarEnteredIds + similar.id
+                        }
+                        AnimatedVisibility(
+                            visible = isEntered || inPreview,
+                            enter = fadeIn(
+                                animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+                            ) + scaleIn(
+                                animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
+                                initialScale = 0.96f,
+                            ),
+                        ) {
+                            PosterCard(
+                                post = similar,
+                                onClick = { onPostClick(similar) },
+                            )
+                        }
                     }
                 }
             }
@@ -1519,7 +1606,6 @@ private fun heroSharedElementModifier(
 @Composable
 private fun DetailHeroSection(
     post: PostDetail,
-    capabilities: List<String>,
     seasonCount: Int,
     includedPill: String?,
     /** The page's side padding — the fallback pads itself with it; the bleed does not. */
@@ -1553,7 +1639,6 @@ private fun DetailHeroSection(
         Box(pageSides.statusBarsPadding().padding(top = 64.dp)) {
             PosterHeader(
                 post = post,
-                capabilities = capabilities,
                 seasonCount = seasonCount,
                 includedPill = includedPill,
                 matchPercent = matchPercent,
@@ -1612,7 +1697,6 @@ private fun DetailHeroSection(
         }
         DetailTitleBlock(
             post = post,
-            capabilities = capabilities,
             seasonCount = seasonCount,
             includedPill = includedPill,
             matchPercent = matchPercent,
@@ -1631,16 +1715,22 @@ private fun DetailHeroSection(
 }
 
 /**
- * Detail review (Nov 2026, P1): the hero's meta line, built once and
- * shared by the full-bleed overlay and the no-backdrop poster header —
- * the two must never drift apart. Pure so the meta rules are testable
- * without a device.
+ * P1-8 (Nov 2026): the hero's meta line, built once and shared by the
+ * full-bleed overlay and the no-backdrop poster header — the two must
+ * never drift apart. Pure so the meta rules are testable without a
+ * device. A series is "Series · N Seasons": no runtime (a series has
+ * no single runtime) and no resolution (resolution belongs in the
+ * quality row only — the old line duplicated the QualitySelector two
+ * modules down). A movie keeps its runtime. [quality] is retained
+ * for API compatibility (callers still pass it) and ignored: the
+ * picked band lives in the Video row, never in this line.
  */
 internal fun detailMetaParts(post: PostDetail, seasonCount: Int, matchPercent: Int? = null, quality: String? = null): List<String> =
     listOfNotNull(
         // REA #2 (Netflix, Nov 2026): the Match % leads the line — "97%
         // Match · 2023 · Series" — and only when a row scored this title.
-        // Null means no score: the line is exactly as before.
+        // Null means no score: the line is exactly as before. What the
+        // % means lives in the Details block ("How we compute Match %").
         matchPercent?.let { "$it% Match" },
         // M3 (home review, Nov 2026): the year comes from [Post.yearLabel],
         // the guarded choke point — the old inline `takeIf { it > 0 }`
@@ -1650,16 +1740,11 @@ internal fun detailMetaParts(post: PostDetail, seasonCount: Int, matchPercent: I
         // IS a movie. Any other type word stays: a series is named by
         // its type here and counted by its seasons below.
         post.typeLabel?.takeIf { it != "Movie" },
-        // S2 (round 2, Nov 2026): the brief's meta convention is
-        // year · duration · quality — "2023 · 2h 18m · 1080p". The
-        // duration comes from the title's own runtime; the quality is
-        // the picked band ("1080p") or "Auto · up to 4K" from
-        // [DetailViewModel.videoQualityText]. Language is NOT in this
-        // line any more — it lives in the Audio row below ("Audio:
-        // Hindi ›"), which is where a viewer goes to change it, and a
-        // meta line with five parts reads as clutter, not information.
-        formatRuntimeMinutes(post.runtimeMinutes),
-        quality?.takeIf { it.isNotBlank() },
+        // P1-8: a runtime next to a season count is wrong — a series
+        // has no single runtime — so only a movie (no seasons) paints
+        // one. Language is NOT in this line: it lives in the Details
+        // block's Languages row, where a viewer goes to change it.
+        if (seasonCount == 0) formatRuntimeMinutes(post.runtimeMinutes) else null,
         if (seasonCount > 0) "$seasonCount ${if (seasonCount == 1) "season" else "seasons"}" else null,
     )
 
@@ -1672,7 +1757,6 @@ internal fun detailMetaParts(post: PostDetail, seasonCount: Int, matchPercent: I
 @Composable
 private fun DetailTitleBlock(
     post: PostDetail,
-    capabilities: List<String>,
     seasonCount: Int,
     includedPill: String?,
     modifier: Modifier = Modifier,
@@ -1740,50 +1824,19 @@ private fun DetailTitleBlock(
                 rating?.let { RatingBadge(rating = it) }
             }
         }
-        GenreChipsRow(chips = post.genreList + capabilities)
+        // P1-8 (Nov 2026): the genre chips are gone from the hero —
+        // chips on a backdrop read as a filter affordance, and the
+        // hero already says what the title is. Genres live in the
+        // Details block now, with the Languages row.
     }
 }
 
-/** The scrollable genre + capability chips, shared by both hero shapes. */
-@Composable
-private fun GenreChipsRow(
-    chips: List<String>,
-    modifier: Modifier = Modifier,
-) {
-    // UI-fix P1-D5: genres + capabilities were two identical scrolling
-    // pill rows under the title. One row now; capabilities ride with
-    // the genres.
-    // Detail review (Nov 2026, P1): the last chip hard-clipped at the
-    // right edge reads as broken — the shared ScrollingChipRow fade, the
-    // same treatment Search's filter rail gets, so the row reads as
-    // scrollable. 22dp, not the shared 48dp: a CapabilityChip is a Pill
-    // (labelSmall 11sp/16sp line height + 3dp vertical padding × 2), so
-    // the fade is exactly as tall as the row it covers. The local 32dp
-    // fade it replaces painted nothing: fillMaxHeight() in a
-    // wrap-content Box inside a scrolling column collapses to 0px
-    // (Home §3.4), and the detailMovie golden shows the last chip as
-    // "E…" hard-clipped with no fade at all.
-    if (chips.isEmpty()) return
-    // A4-F3: rides ScrollingChipRow now — the fade and the row are the
-    // shared component, not a hand-rolled copy. 6dp gaps, as before.
-    ScrollingChipRow(
-        modifier = modifier,
-        contentPadding = PaddingValues(end = 16.dp),
-        horizontalSpacing = 6.dp,
-        fadeHeight = 22.dp,
-        fadeTestTag = GenreChipsFadeTag,
-    ) {
-        items(chips) { CapabilityChip(it) }
-    }
-}
-
-/** Test tag for the genre-chips right-edge fade (see [GenreChipsRow]). */
-internal const val GenreChipsFadeTag = "genre-chips-fade"
-
+// P1-8 (Nov 2026): GenreChipsRow is gone with the hero chips —
+// genres live in the Details block now, as wrapping chips with no
+// scroll and no fade. Its 22dp fade tag goes with it.
 @Composable
 private fun PosterHeader(
     post: PostDetail,
-    capabilities: List<String>,
     /** Seasons, for a series — 0 for a movie, which has none to count. */
     seasonCount: Int = 0,
     /** What this viewer can watch of this title, as a pill — null when it has no prints. */
@@ -1859,7 +1912,6 @@ private fun PosterHeader(
         // the full-bleed hero overlay — one block, two placements.
         DetailTitleBlock(
             post = post,
-            capabilities = capabilities,
             seasonCount = seasonCount,
             includedPill = includedPill,
             matchPercent = matchPercent,
@@ -1942,6 +1994,18 @@ internal const val PrimaryDownloadPillTag = "primary-download-pill"
 
 /** Test tag for the utility row's Download mirror (see [PrimaryDownloadPillTag]). */
 internal const val UtilityDownloadTag = "utility-download"
+
+/**
+ * Test tag for [DetailContent]'s LazyColumn. P1-8 resume (Nov 2026):
+ * the genres test used to scroll by index on onRoot() — but the root
+ * is a 320×470 wrapper with 1 child, not the list, so
+ * performScrollToIndex could never reach the Details item (Android
+ * 45810913696, 45814176899, 45822497145: "Failed to scroll to index 6,
+ * the node is missing"). The repo's own deterministic pattern
+ * (PickThreeVisitTest, SearchPagingTest, LiveTvMockupTest) scrolls the
+ * list itself by tag, so the tag lives here.
+ */
+internal const val DetailContentListTag = "detailContentList"
 
 /**
  * P0-8 (Nov 2026): exactly ONE primary CTA. Play takes the wider share
@@ -2900,44 +2964,9 @@ private fun ExpandableSynopsis(text: String) {
  * named one, "Full season" for a whole-season file) and where the tap
  * goes. A whole row, 48dp tall, so the target is a thumb, not a word.
  */
-@Composable
-private fun SeasonRow(
-    season: SeasonGroup,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .clickable(onClick = onClick, role = Role.Button)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(
-            text = "Season ${season.number}",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f, fill = false),
-        )
-        Text(
-            text = season.episodeCountLabel,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f),
-        )
-        Icon(
-            painterResource(R.drawable.ic_action_chevron_right),
-            contentDescription = null,
-            modifier = Modifier.size(20.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
+// P1-8 (Nov 2026): SeasonRow is gone with the sub-page link — the
+// dropdown below is the one season control now. Its 48dp surface
+// row (title + count + chevron) lives on in [SeasonDropdown].
 
 /**
  * DT-4 (round 2, partial — no BOM): Detail's entrance motion, the Home
@@ -2998,98 +3027,88 @@ private fun DetailEntrance(
 }
 
 /**
- * DT-3 (round 2, Nov 2026): the current season's episodes, on this
- * page — a horizontal swipeable row with a per-episode download icon.
- * The season chips appear only when the title has more than one season;
- * with one season there is nothing to switch between, so the header is
- * just "Episodes" + the legend. The row shows the season the ViewModel
- * published (next unwatched season first, then the resume season, then
- * Season 1) until the viewer picks another chip. A season whose
- * episodes live only in a pack renders no row at all — the caller hides
- * the whole section.
+ * P1-8 (Nov 2026): the one season control — a dropdown, Netflix
+ * shape. One row names the season on screen ("Season 1 · 2
+ * episodes"); tapping it opens the menu with every season, the
+ * current one ticked. A single-season title shows the row with no
+ * menu — there is nothing to switch between, so no chevron and no
+ * tap target. The selection itself lives in the ViewModel
+ * ([DetailContent]'s episodeRowSeason); this composable only paints
+ * it. The old season chips + swipeable episode row are gone with
+ * the two-paths problem they were.
  */
 @Composable
-internal fun EpisodeRowSection(
+internal fun SeasonDropdown(
     seasons: List<SeasonGroup>,
-    selectedSeason: Int?,
-    episodeProgress: Map<Pair<Int, Int>, EpisodeProgress>,
-    nextEpisode: Pair<Int, Int>?,
+    selectedSeason: Int,
     onSelectSeason: (Int) -> Unit,
-    onPlayEpisode: (Int, Int) -> Unit,
-    onDownloadEpisode: (Int, Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val season = seasons.firstOrNull { it.number == selectedSeason } ?: return
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
+    var expanded by remember { mutableStateOf(false) }
+    val selected = seasons.firstOrNull { it.number == selectedSeason } ?: return
+    Box(modifier = modifier.fillMaxWidth()) {
         Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .then(
+                    if (seasons.size > 1) {
+                        Modifier.clickable(onClick = { expanded = true }, role = Role.Button)
+                    } else {
+                        Modifier
+                    },
+                )
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = "Episodes",
+                text = "Season ${selected.number}",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f, fill = false),
             )
             Text(
-                text = stringResource(R.string.detail_episode_legend),
-                style = MaterialTheme.typography.bodySmall,
+                text = selected.episodeCountLabel,
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
             )
-        }
-        if (seasons.size > 1) {
-            ScrollingChipRow(
-                contentPadding = PaddingValues(0.dp),
-                horizontalSpacing = 6.dp,
-                fadeHeight = 48.dp,
-            ) {
-                items(seasons, key = { it.number }) { chipSeason ->
-                    // P2-chip2027: rides RaddChip now, so the selected
-                    // season wears the 8dp shape + check like every other
-                    // selected filter chip (the raw FilterChip hid both).
-                    RaddChip(
-                        selected = chipSeason.number == selectedSeason,
-                        onClick = { onSelectSeason(chipSeason.number) },
-                        label = { Text("Season ${chipSeason.number}") },
-                        colors = raddFilterChipColors(),
-                    )
-                }
+            if (seasons.size > 1) {
+                Icon(
+                    painterResource(R.drawable.ic_action_keyboard_arrow_down),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
-        // Round-6 motion: the episode row crossfades + slides when the
-        // season chip changes — AnimatedContent on the selected season,
-        // expressive effects + spatial specs. The season is resolved
-        // from the target state inside the content, so the outgoing
-        // row shows the old season and the incoming row the new one.
-        // In inspection mode (Paparazzi) it shows the settled season
-        // with no animation, so no golden moves.
-        AnimatedContent(
-            targetState = selectedSeason,
-            transitionSpec = {
-                (fadeIn(animationSpec = RaddMotion.defaultEffects()) +
-                    slideInVertically(animationSpec = RaddMotion.defaultSpatial()) { it / 4 }) togetherWith
-                    (fadeOut(animationSpec = RaddMotion.defaultEffects()) +
-                        slideOutVertically(animationSpec = RaddMotion.defaultSpatial()) { it / 4 })
-            },
-            label = "episodeRowSeason",
-        ) { targetSeasonNumber ->
-            val targetSeason = seasons.firstOrNull { it.number == targetSeasonNumber } ?: return@AnimatedContent
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(end = 16.dp),
+        if (seasons.size > 1) {
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
             ) {
-                items(targetSeason.episodes, key = { "episode-${it.numberWithinSeason}" }) { episode ->
-                    val progress = episodeProgress[targetSeason.number to episode.numberWithinSeason]
-                    EpisodeCard(
-                        episode = episode,
-                        isWatched = progress?.watched == true,
-                        isNext = nextEpisode == (targetSeason.number to episode.numberWithinSeason),
-                        onPlay = { onPlayEpisode(targetSeason.number, episode.numberWithinSeason) },
-                        onDownload = { onDownloadEpisode(targetSeason.number, episode.numberWithinSeason) },
+                seasons.forEach { season ->
+                    DropdownMenuItem(
+                        text = { Text("Season ${season.number} · ${season.episodeCountLabel}") },
+                        onClick = {
+                            expanded = false
+                            onSelectSeason(season.number)
+                        },
+                        trailingIcon = if (season.number == selectedSeason) {
+                            {
+                                Icon(
+                                    painterResource(R.drawable.ic_action_check),
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        } else {
+                            null
+                        },
                     )
                 }
             }
@@ -3098,15 +3117,17 @@ internal fun EpisodeRowSection(
 }
 
 /**
- * DT-3: one episode as a card in the swipeable row — the still (or the
- * episode-number fallback), the episode number + title, the watched
- * tick and the jade "Next" mark, and a 48dp download button. The whole
- * card plays the episode; only the download icon downloads it. The
- * spoken name is the SeasonScreen wording ("Episode 3, next to
- * watch"), so a TalkBack user hears the same sentence on both pages.
+ * P1-8 (Nov 2026): one episode as a row in the inline list — the
+ * still (or the episode-number fallback), "Episode N" + title, the
+ * watched tick and the jade "Next" mark, and a 48dp download button.
+ * The whole row plays the episode; only the download icon downloads
+ * it. The spoken name is the SeasonScreen wording ("Episode 3, next
+ * to watch"), so a TalkBack user hears the same sentence on both
+ * pages. The still is the Continue Watching thumb width (96dp):
+ * big enough to read, small enough that the list stays a list.
  */
 @Composable
-private fun EpisodeCard(
+internal fun EpisodeListRow(
     episode: EpisodeGroup,
     isWatched: Boolean,
     isNext: Boolean,
@@ -3114,7 +3135,7 @@ private fun EpisodeCard(
     onDownload: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // DT-3: EpisodeGroup carries no playable flag of its own — the
+    // P1-8: EpisodeGroup carries no playable flag of its own — the
     // same derivation SeasonScreen's seasonTiles uses: any print that
     // plays here or opens a provider page.
     val playable = episode.prints.any { it.playableHere || it.opensProviderPage }
@@ -3124,26 +3145,23 @@ private fun EpisodeCard(
         isWatched -> "Episode ${episode.numberWithinSeason}, watched"
         else -> "Episode ${episode.numberWithinSeason}"
     }
-    // Round-6 motion: the episode card presses like the Play button —
-    // the established pressScale (0.97 + haptic) on the card's own
-    // interaction source, expressive effects spring. The ripple stays.
     val episodeSource = remember { MutableInteractionSource() }
     PressHaptics(episodeSource)
-    Column(
+    Row(
         modifier = modifier
-            .width(160.dp)
+            .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surface)
             .clickable(onClick = onPlay, role = Role.Button, interactionSource = episodeSource)
             .pressScale(episodeSource)
-            .semantics { contentDescription = description },
+            .semantics { contentDescription = description }
+            .padding(start = 10.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                // CardGeometryTest: every aspect ratio comes from a
-                // CardGeometry constant — the 16:9 still is
-                // WIDE_ART_ASPECT, never a literal in a screen.
+                .width(96.dp)
                 .aspectRatio(CardGeometry.WIDE_ART_ASPECT),
             contentAlignment = Alignment.Center,
         ) {
@@ -3196,45 +3214,161 @@ private fun EpisodeCard(
                 }
             }
         }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 10.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Episode ${episode.numberWithinSeason}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (!episode.title.isNullOrBlank()) {
                 Text(
-                    text = "Episode ${episode.numberWithinSeason}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    text = episode.title,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (!episode.title.isNullOrBlank()) {
+            }
+        }
+        IconButton(
+            onClick = onDownload,
+            modifier = Modifier.size(48.dp),
+        ) {
+            Icon(
+                painterResource(R.drawable.ic_action_download),
+                contentDescription = "Download episode ${episode.numberWithinSeason}",
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * P1-8 (Nov 2026): the Details block — what the hero used to carry
+ * as decoration, as information. Genres ride as wrapping chips (no
+ * scroll, no fade: they are facts here, not a filter). Languages is
+ * the old "Audio & Subtitles" line, renamed to match the screen it
+ * opens, with its value beside it. Match % carries its own
+ * disclosure: the % is an on-device estimate, and the row says how
+ * it is computed instead of leaving the number unexplained. The
+ * "Details" header itself lives with the caller, outside the
+ * entrance — see the details item above.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DetailsSection(
+    genres: List<String>,
+    capabilities: List<String>,
+    audioLine: String?,
+    matchPercent: Int?,
+    onOpenLanguages: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var showMatchInfo by remember { mutableStateOf(false) }
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        val chips = genres + capabilities
+        if (chips.isNotEmpty()) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                chips.forEach { CapabilityChip(it) }
+            }
+        }
+        audioLine?.let { line ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .clickable(onClick = onOpenLanguages, role = Role.Button)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = episode.title,
+                        text = "Languages",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = line,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
                 }
-            }
-            IconButton(
-                onClick = onDownload,
-                modifier = Modifier.size(48.dp),
-            ) {
                 Icon(
-                    painterResource(R.drawable.ic_action_download),
-                    contentDescription = "Download episode ${episode.numberWithinSeason}",
+                    painterResource(R.drawable.ic_action_chevron_right),
+                    contentDescription = null,
                     modifier = Modifier.size(20.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
+        matchPercent?.let { percent ->
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .clickable(
+                            onClick = { showMatchInfo = !showMatchInfo },
+                            role = Role.Button,
+                        )
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "How we compute Match %",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = "$percent%",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Icon(
+                        painterResource(R.drawable.ic_action_keyboard_arrow_down),
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                AnimatedVisibility(visible = showMatchInfo) {
+                    Text(
+                        text = "Match is our estimate of how much you'll like this title. " +
+                            "It compares this title with ones you've watched, saved or followed " +
+                            "— shared genres, language and similar titles — plus your thumbs-up " +
+                            "votes. It is a guide, not a guarantee.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                    )
+                }
+            }
+        }
     }
 }
+
+// P1-8 (Nov 2026): EpisodeCard is gone with the swipeable row —
+// its still + number + title + tick + "Next" + download live on in
+// [EpisodeListRow], laid out as a row instead of a card.
 
 /**
  * The spoken name for a print card's best-option line. The painted text is

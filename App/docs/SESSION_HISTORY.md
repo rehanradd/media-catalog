@@ -3516,3 +3516,67 @@ Push + Backend/Android CI + Paparazzi record on the exact tip owed before landin
 **Fixup (same branch, 2026-11-27):** Android CI 45886522329 on 959a3113 failed 2/3256, both pins on the old 48dp fade — not a flake (0 Maven 429 lines), lint SUCCESS, Backend 45886557363 SUCCESS, Paparazzi record 45886566922 SUCCESS. (1) `SearchAuditFixesTest.railFadeIs48dpWide` asserted the rendered fade is 48dp — renamed to `railFadeIs64dpWide` with the 64dp expectation (re-rate 8 note added). (2) `HomeSpacingTokenTest.homeScopeHasNoRawSpacingLiterals` flagged the new `64.dp` at ScrollingChipRow.kt:179 — only `0.dp`/`48.dp` are allowed by value; the fade strip width is geometry, not spacing, so the line carries `// token-exempt: fade strip width, not spacing` (the file's own exemption pattern). No UI change in this fixup — the record artifact from 959a3113 stays valid for the goldens.
 
 **Fixup 2 — parent-directed correction (same branch, 2026-11-27):** the 64dp strip was the WRONG fix — it contradicted two tests that pin the 48dp width by design (parent-verified diagnosis on Android 45886522329). Reverted: fade width back to 48dp expressed as `RaddTokens.Space.Step48` (the 48dp grid step — no raw literal, no exemption needed), ramp steepening KEPT within the 48dp width (80% background at 30%, full at 60%; outer ~19dp fully opaque). `railFadeIs48dpWide` restored (name, 48dp expectation, message). The 64dp goldens committed in fec81393 are superseded — the record on this tip re-renders them at 48dp + steep ramp; the Actor 3-up goldens should be identical to the 64dp record (grid untouched). CI on fec81393 (Android 45888031208, Backend 45888043331) went moot when this tip superseded it.
+Append to `App/docs/SESSION_HISTORY.md` (end of file) when landing
+branch `muse/p1-detail-b-20261126`:
+
+### P1-8 + P1-9 — Detail: one season dropdown + inline episodes; meta fix; Details block; More Like This reserved skeleton (branch muse/p1-detail-b-20261126, 2026-11-26)
+
+**Built (audit B-30/B-31, P1-8 + P1-9):**
+- `DetailScreen.kt`: seasons are one dropdown + an inline episode list
+  (Netflix shape). The swipeable episode row (`EpisodeRowSection`,
+  `EpisodeCard`) AND the season rows that opened the sub-page
+  (`SeasonRow`) are both deleted — one path to the episodes. The
+  dropdown reuses the ViewModel's `episodeRowSeason` selection (next
+  unwatched first, then resume, then Season 1; first season stands in
+  until it publishes). Episode rows are LazyColumn items (recycled, no
+  cap); a pack-only season shows the inline `SeasonPackRow` (new
+  `onPlayPack`/`onDownloadPack` params, wired to
+  `viewModel.playPrint`/`keepPrint`), a mixed season shows both.
+  `onOpenSeason` is kept as a retired API-compat parameter; the
+  `SeasonScreen` sub-page stays in the app.
+- Hero meta (`detailMetaParts`): a series is now "Series · N Seasons"
+  — no runtime (a series has no single runtime) and no resolution
+  (resolution belongs in the quality row only; the `quality` param is
+  kept and ignored). A movie keeps its runtime.
+- Genre chips left the hero (`GenreChipsRow` + `GenreChipsFadeTag`
+  deleted); genres + capabilities live in a new `Details` block after
+  Cast as wrapping chips. The standalone "Audio & Subtitles" line is
+  the Details block's "Languages" row (same destination, same
+  `audioSubtitleLine` value). Match % gains a "How we compute Match %"
+  disclosure row (on-device ranker: watched/saved/followed anchor +
+  shared genres/language/similar titles + thumbs-up votes; a guide,
+  not a guarantee). Page order untouched; dead-end handling, "My List"
+  naming and jade brand untouched.
+- More Like This (P1-9): `DetailViewModel` raises `similarLoading`
+  with the detail itself (and clears the old titles), so the skeleton
+  is never false-then-true — the page always reserves the rail's
+  height while it loads, and a finished empty load shows no rail. The
+  loaded rail staggers in with the My List entered-ids pattern
+  (index × 40 ms, capped 400 ms, settled in inspection mode); the
+  header stays outside the animation (the two earlier entrances —
+  DetailEntrance hiding the header, graphicsLayer spring vanishing
+  from goldens — are not revived).
+- `CommonUi.kt` (`DetailSkeleton`/`DetailBodySkeleton`): the hero's
+  22dp genre bar is gone; the audio-line skeleton moved into a
+  Details skeleton block after Cast (genre pill bars + 48dp row).
+- Tests: `DetailMetaPartsTest` (series drops runtime + quality,
+  quality never paints), `DetailRedesignTest` (dropdown + inline
+  list test incl. sub-page never opened + episode tap plays; genres
+  in Details test), `PaparazziPreviewTest` (`detailSeasonEpisodes`
+  golden replaces `detailEpisodeRow`),
+  `DetailLargeFontPaparazziTest` (`detailSeasonEpisodesLargeFont`
+  replaces `detailEpisodeRowLargeFont`), `SkeletonParityTest`
+  (audio-line tag after Cast). No new test class — no
+  build.gradle.kts filter / workflow --tests changes needed.
+- Orphaned goldens to delete with the re-record:
+  `detailEpisodeRow` + `detailEpisodeRowLargeFont` (old tests gone).
+
+**Delivery note:** the change was authored as the exact-match apply
+script `~/workspace/p1-detail-b-20261126-apply.py` (60 edits, all
+verified to match be90abbb exactly once; 24/24 in-memory simulation
+checks pass) because the builder session hit a runtime
+execution-risk block on running git inside the fresh clone and could
+not commit/push itself. Run the script in the branch clone, commit,
+push via the VM bundle route, Backend CI (398476976) + Android CI
+(398476977) on the rebased tip, Paparazzi record (418582550), then
+merge via the refs API and delete the branch.

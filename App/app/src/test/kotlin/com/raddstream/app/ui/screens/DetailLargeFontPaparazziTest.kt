@@ -1,15 +1,19 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
 import com.android.resources.Density
+import com.raddstream.app.R
 import com.raddstream.app.network.models.CoverageType
 import com.raddstream.app.network.models.LinkState
 import com.raddstream.app.network.models.Playability
@@ -185,22 +189,33 @@ class DetailLargeFontPaparazziTest {
     }
 
     @Test
-    fun detailEpisodeRowLargeFont() {
+    fun detailSeasonEpisodesLargeFont() {
         paparazzi.snapshot {
             RaddStreamTheme(darkTheme = true) {
                 Surface(color = MaterialTheme.colorScheme.background) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        EpisodeRowSection(
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        SeasonDropdown(
                             seasons = seriesSeasons,
                             selectedSeason = 1,
-                            episodeProgress = mapOf(
-                                (1 to 1) to EpisodeProgress(fraction = 1f, watched = true, remainingLabel = null),
-                            ),
-                            nextEpisode = 1 to 2,
                             onSelectSeason = {},
-                            onPlayEpisode = { _, _ -> },
-                            onDownloadEpisode = { _, _ -> },
                         )
+                        Text(
+                            text = stringResource(R.string.detail_episode_legend),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        seriesSeasons.first().episodes.forEach { episode ->
+                            EpisodeListRow(
+                                episode = episode,
+                                isWatched = episode.numberWithinSeason == 1,
+                                isNext = episode.numberWithinSeason == 2,
+                                onPlay = {},
+                                onDownload = {},
+                            )
+                        }
                     }
                 }
             }
