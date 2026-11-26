@@ -261,8 +261,22 @@ class DetailRedesignTest {
         // before asserting the chips; the header sits outside the
         // entrance since fixup 3, so it is placed as soon as the item
         // composes.
-        compose.mainClock.advanceTimeBy(2000L)
+        // P1-8 resume 2: a fixed advance guessed the settle time and
+        // guessed short once (2000ms, Android 45880340223 — the 420ms
+        // stagger delay plus the fade/slide springs were still in
+        // flight, so the chips existed but were not displayed). Advance
+        // past the whole entrance (3000ms, the repo's bounded settle —
+        // ScrollingChipRowTest), then poll for the settled state:
+        // waitUntil advances the test clock while it polls, and fails
+        // after a bounded timeout if the chips never land — a missing
+        // chip is not papered over, it is waited for. (waitForIdle is
+        // not used: it can hang on an animation that never idles —
+        // ScrollingChipRowTest.)
+        compose.mainClock.advanceTimeBy(3000L)
         compose.onNodeWithText("Details").assertIsDisplayed()
+        compose.waitUntil(timeoutMillis = 5_000) {
+            runCatching { compose.onNodeWithText("Action").assertIsDisplayed() }.isSuccess
+        }
         compose.onNodeWithText("Action").assertIsDisplayed()
         compose.onNodeWithText("Thriller").assertIsDisplayed()
     }

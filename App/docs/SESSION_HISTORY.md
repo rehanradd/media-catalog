@@ -3580,3 +3580,7 @@ not commit/push itself. Run the script in the branch clone, commit,
 push via the VM bundle route, Backend CI (398476976) + Android CI
 (398476977) on the rebased tip, Paparazzi record (418582550), then
 merge via the refs API and delete the branch.
+
+### P1-8/9 resume 2 — genres test settle: bounded advance + waitUntil poll (2026-11-27)
+
+**Built (test-only, branch muse/p1-detail-b-20261126, on 1e50968a):** the 4th failure of `DetailRedesignTest.genresLiveInTheDetailsBlockNotTheHero` (Android 45880340223, 3256 tests, 1 failed) was "Action" exists but is not displayed — the scroll fix worked (Details header passes) but the DetailEntrance(7) chips were still mid-flight: 420ms stagger delay + fade/slide springs vs a 2000ms clock advance. Fix in the test only, production animation untouched: advance 3000ms (the repo's bounded settle — ScrollingChipRowTest), then `waitUntil(timeoutMillis = 5_000)` polling `runCatching { onNodeWithText("Action").assertIsDisplayed() }.isSuccess` — waitUntil advances the test clock while it polls and fails after a bounded timeout if the chips never land. waitForIdle not used (can hang on an animation that never idles — ScrollingChipRowTest). No UI change, so no new Paparazzi record: goldens come from artifact paparazzi-snapshots-320 (record 45880461742 on 1e50968a — 10 changed + 2 new, orphans detailEpisodeRow + detailEpisodeRowLargeFont to delete). No local Gradle — CI is the gate. Backend + Android CI on the exact tip owed before landing; a 5th failure on the same test parks the branch permanently.
