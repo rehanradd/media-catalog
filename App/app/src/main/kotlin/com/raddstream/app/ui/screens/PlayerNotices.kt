@@ -310,29 +310,13 @@ internal fun GiveUpCard(
                 color = Color.White,
             )
         },
+        // Popup cleanup (26 Nov 2026): title + one-line message only. The
+        // second body paragraph (the per-cause "why") is gone — at the
+        // moment a play has just failed, "what now" (the actions below)
+        // matters and the diagnosis does not. The message itself is
+        // unchanged, and every action stays.
         text = {
-            Column {
-                Text(message, color = Color.White.copy(alpha = 0.85f), fontSize = brandSp(14))
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    when (why) {
-                        HandoffWhy.DOWNLOAD_ONLY ->
-                            stringResource(R.string.player_giveup_download_body)
-                        HandoffWhy.NO_CANDIDATE_LEFT ->
-                            stringResource(R.string.player_giveup_no_candidate_body)
-                        HandoffWhy.START_TIMEOUT ->
-                            stringResource(R.string.player_giveup_timeout_body)
-                        HandoffWhy.EXPIRED_LINK ->
-                            stringResource(R.string.player_giveup_expired_body)
-                        HandoffWhy.GATE_REFUSED ->
-                            stringResource(R.string.player_giveup_gate_refused_body)
-                        HandoffWhy.RATE_LIMITED ->
-                            stringResource(R.string.player_giveup_rate_limited_body)
-                    },
-                    color = Color.White.copy(alpha = 0.6f),
-                    fontSize = brandSp(12),
-                )
-            }
+            Text(message, color = Color.White.copy(alpha = 0.85f), fontSize = brandSp(14))
         },
         // Session 120: five actions in one horizontal row overflowed a 360 dp
         // phone — AlertDialog lays its two button slots side by side, so
@@ -344,7 +328,7 @@ internal fun GiveUpCard(
         // actions in the same stack, not a second row fighting for width.
         // Samsung RTL retest (Issue 7): the player forces landscape, so
         // this dialog is short — up to six full-width 48dp actions plus
-        // icon, title and two text blocks can exceed a ~360dp landscape
+        // icon, title and one text line can exceed a ~360dp landscape
         // screen, and the lower actions ("Back to details", "Keep
         // waiting") fall off the bottom edge, where a tap hits the scrim
         // and — dismissOnClickOutside is false — does nothing at all.
@@ -363,7 +347,7 @@ internal fun GiveUpCard(
                 // for the title) stay green and the two alternates read as
                 // secondary white; the dismiss stays the quietest white.
                 // P7 (player fixes, verify-first): the card already had the S4
-                // bones — error icon, per-cause title + diagnosis body,
+                // bones — error icon, per-cause title + one-line message,
                 // landscape-safe scrolling action stack — and the one breach
                 // was the Retry: jade text where the error family puts a
                 // filled pill. Retry is the pill now; the alternates stay

@@ -3,32 +3,32 @@ package com.raddstream.app.ui.navigation
 /**
  * Where a cold start lands, as a pure rule — no store, no network, no clock.
  *
- * A fresh install never sees the Setup form when the shipped server answers: the
- * caller probes the shipped default once, in the background, and passes the
- * answer in as [defaultServerReachable]. The rule is fail-closed on purpose — a
- * default that was never probed, or one that did not answer, is Setup, never a
- * silent guess at Home. An install that already chose a server skips the probe
- * entirely ([defaultServerReachable] is null) and goes by the region answer.
+ * Popup cleanup (26 Nov 2026): the Setup screen is no longer a welcome
+ * gate. A fresh install used to be fail-closed — a shipped default that
+ * did not answer the 1 s silent probe opened Setup, so a normal viewer on
+ * slow Wi-Fi met a "Connect" screen before they could watch anything.
+ * The rule is fail-open now: a dead, slow, or never-probed default routes
+ * to Home (or Region, when the region question is still unanswered), the
+ * connection retries in the background from Home's own catalog load, and
+ * if it stays down Home shows its existing inline offline notice /
+ * ErrorState ("Couldn't reach the catalog" + Retry + "Change server
+ * address"). Setup itself still exists as a destination, reachable from
+ * Settings, from Home's error state, and from the maintenance notice —
+ * that is where a custom address is entered, never on the way in.
  *
- * `savedUrl` is the [com.raddstream.app.data.ServerSettingsRepository.serverUrl]
- * flow's value, which already falls back to the brand default when nothing is
- * saved — so a blank value here means "no server anywhere", i.e. an unbranded
- * build with no default to probe.
+ * `regionUnanswered` is the only input left: whether this install has
+ * been through the region screen. The saved-url / probe inputs are gone
+ * with the gate — nothing about the server decides the first route any
+ * more, so there is nothing for a slow network to fail.
  */
 enum class StartDestination {
-    Setup,
     Region,
     Home,
 }
 
 fun resolveStartDestination(
-    savedUrl: String?,
-    hasSavedServerUrl: Boolean,
-    defaultServerReachable: Boolean?,
     regionUnanswered: Boolean,
 ): StartDestination = when {
-    savedUrl.isNullOrBlank() -> StartDestination.Setup
-    !hasSavedServerUrl && defaultServerReachable != true -> StartDestination.Setup
     regionUnanswered -> StartDestination.Region
     else -> StartDestination.Home
 }

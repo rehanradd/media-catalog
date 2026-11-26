@@ -513,8 +513,9 @@ class PlayerControlSemanticsTest {
             "the timeout must have its own title, not the no-candidate one",
             card.contains("R.string.player_giveup_timeout"),
         )
-        assertTrue(
-            "the timeout must have its own body, not the no-candidate one",
+        assertFalse(
+            "popup cleanup (26 Nov 2026): the give-up card is title + " +
+                "one-line message only — the per-cause body paragraph is gone",
             card.contains("R.string.player_giveup_timeout_body"),
         )
         assertTrue(

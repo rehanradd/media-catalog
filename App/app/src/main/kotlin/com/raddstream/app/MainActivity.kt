@@ -40,7 +40,6 @@ import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.data.Telemetry
 import com.raddstream.app.network.models.PanelDisclaimer
 import com.raddstream.app.network.models.PanelTheme
-import com.raddstream.app.repository.CatalogRepository
 import com.raddstream.app.ui.navigation.DeepLink
 import com.raddstream.app.ui.navigation.DeepLinks
 import com.raddstream.app.ui.navigation.LocalVideoOpen
@@ -57,17 +56,18 @@ import com.raddstream.app.ui.theme.parseAccentHex
 import com.raddstream.app.ui.theme.resolveThemeDark
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Single-activity host.
- * Routes an install with no server to setup, one that has a server but has never been asked
- * what it watches to the region screen, and a returning viewer straight to the catalog.
+ * Routes an install that has never been asked what it watches to the
+ * region screen, and everyone else straight to the catalog — the server
+ * is never a gate on the way in (popup cleanup, 26 Nov 2026): a dead or
+ * slow default lands on Home, where the catalog load retries and the
+ * offline ErrorState offers Retry and "Change server address".
  *
  * This activity also owns the app-wide theme, which is why the wallpaper-colour
  * preference is read *here*: it is the only place where the answer can reach
@@ -82,9 +82,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 class MainActivity : ComponentActivity() {
     @Inject
     lateinit var serverSettingsRepository: ServerSettingsRepository
-
-    @Inject
-    lateinit var catalogRepository: CatalogRepository
 
     @Inject
     lateinit var remoteConfigWatcher: RemoteConfigWatcher
@@ -164,7 +161,7 @@ class MainActivity : ComponentActivity() {
                 serverSettingsRepository.dynamicColorEnabled
                     // A DataStore read that throws (corrupt file, disk failure) must not kill the
                     // activity mid-setContent. Handled the same way as the try/catch around
-                    // serverUrl.first() below: hold the brand default, let the app open.
+                    // the region read below: hold the brand default, let the app open.
                     // What is NOT protected: the exception is swallowed here, so a store that keeps
                     // failing means this toggle can never take effect for the life of the process,
                     // and nothing on screen will ever say so out loud.
@@ -278,37 +275,17 @@ class MainActivity : ComponentActivity() {
             ) {
                 var startDestination by remember { mutableStateOf<String?>(null) }
                 LaunchedEffect(Unit) {
-                    val savedUrl = try {
-                        serverSettingsRepository.serverUrl.first()
-                    } catch (_: Exception) {
-                        null
-                    }
-                    val hasSavedServer = try {
-                        serverSettingsRepository.hasSavedServerUrl.first()
-                    } catch (_: Exception) {
-                        false
-                    }
-                    // A fresh install never sees the Setup form when the shipped server
-                    // answers: the default is probed twice (one retry) in the background,
-                    // and saved only when it answers. A dead default — or an unbranded
-                    // build with no default at all — still opens Setup, with the address
-                    // held but never shown until the viewer asks for a different server.
-                    val defaultReachable: Boolean? = if (savedUrl.isNullOrBlank() || hasSavedServer) {
-                        null
-                    } else {
-                        trySilentDefaultConnect(catalogRepository, savedUrl)
-                    }
+                    // Popup cleanup (26 Nov 2026): no silent probe, no Setup
+                    // gate. The first route is decided by the region answer
+                    // alone — a dead or slow server is Home-with-retry now,
+                    // never a "Connect" screen before the viewer can watch.
                     val destination = resolveStartDestination(
-                        savedUrl = savedUrl,
-                        hasSavedServerUrl = hasSavedServer,
-                        defaultServerReachable = defaultReachable,
                         // First install after the server is connected gets one chance to say what
                         // they watch; a store that cannot answer is treated as "already asked",
                         // because onboarding is a convenience and must never become the door.
                         regionUnanswered = regionChoiceUnanswered(serverSettingsRepository),
                     )
                     startDestination = when (destination) {
-                        StartDestination.Setup -> Screen.Setup.route
                         StartDestination.Region -> Screen.Region.route
                         StartDestination.Home -> Screen.Home.route
                     }
@@ -541,45 +518,6 @@ class MainActivity : ComponentActivity() {
  */
 private fun effectiveDynamicColor(storedEnabled: Boolean, panelAllowed: Boolean): Boolean =
     storedEnabled && Brand.dynamicColorAllowed && panelAllowed
-
-/**
- * Two bounded probes of the shipped server, for a fresh install only.
- *
- * `testAndSaveServer` saves the address when it answers, so a fresh install that
- * reaches Home through here has a saved server from then on — the probe runs
- * once per install, never on every cold start. A slow first network can lose
- * one probe, so a failure earns exactly one retry before the caller opens
- * Setup: a slow answer must not become a leaked address on a form. The 15s
- * bound is the whole point: a dead default must not hold the first frame
- * hostage; the OkHttp timeouts underneath are 10s connect / 15s read, so this
- * is the tighter ceiling. A timeout reads as "did not answer" and the caller
- * opens Setup.
- */
-/**
- * Audit #42: the branded loading screen (logo + RADD Stream + spinner,
- * Session 120) must never wait on the network. The silent default-server
- * probe used to get two 15 s attempts — up to 30 s of splash when the
- * default answered slowly — before the first route appeared. One cheap
- * GET /api/v1/stats either answers inside a second or the app goes to
- * Setup, which re-probes with its own budget; a slow first connect must
- * never hold the splash hostage.
- */
-private const val SILENT_CONNECT_TIMEOUT_MS = 1_000L
-
-private suspend fun trySilentDefaultConnect(
-    catalogRepository: CatalogRepository,
-    url: String,
-): Boolean {
-    return try {
-        withTimeoutOrNull(SILENT_CONNECT_TIMEOUT_MS) {
-            catalogRepository.testAndSaveServer(url)
-        } != null
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (_: Exception) {
-        false
-    }
-}
 
 /**
  * Whether this install has never been through the region screen.

@@ -22,6 +22,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
@@ -61,6 +65,16 @@ import com.raddstream.app.ui.theme.RaddTokens
  * buttons can never be pushed off the screen, however long the panel's
  * text is or however large the viewer's font scale is.
  *
+ * Popup cleanup (26 Nov 2026): the dialog used to open on the whole text —
+ * up to 4000 characters at 85% of the screen height — before the viewer
+ * could watch anything. It opens on a 2–3 line summary now, with a "Read
+ * full disclaimer" link that expands to the full text in the same dialog.
+ * The legal text itself is untouched and verbatim behind the link (Session
+ * 122: "do not rewrite or shorten it" covers the text, not its
+ * presentation); only what is shown first changed. The hard gate is
+ * unchanged: first run still needs "I understand" (or Decline, which
+ * exits), and the full text is one tap away before either is pressed.
+ *
  * Two uses, one dialog: on first run the confirm button is the
  * acknowledgement ("I understand") and the dialog cannot be dismissed
  * any other way — except by declining, which exits the app, because
@@ -81,6 +95,10 @@ internal fun DisclaimerDialog(
     // tapping outside: the only ways out are the two buttons. Re-reading
     // from Settings dismisses like any dialog.
     val firstRun = dismissLabel != null && onDecline != null
+    // Popup cleanup (26 Nov 2026): collapsed by default — the summary
+    // plus the link, not the wall of text. Expanding shows the full
+    // verbatim text in place; nothing about the text itself changes.
+    var expanded by remember { mutableStateOf(false) }
     Dialog(
         onDismissRequest = onDismissRequest,
         properties = DialogProperties(
@@ -96,94 +114,144 @@ internal fun DisclaimerDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .fillMaxHeight(0.85f)
+                    // Collapsed the dialog sizes to its content (summary +
+                    // link + buttons); expanded it takes the old 85% cap so
+                    // the full text can scroll without pushing the buttons
+                    // off the screen.
+                    .let { if (expanded) it.fillMaxHeight(0.85f) else it }
                     .padding(24.dp),
             ) {
                 // D-2: one dialog title style everywhere — display family,
                 // semibold, 20sp.
                 RaddDialogTitle("Disclaimer")
                 Spacer(Modifier.height(16.dp))
-                val scrollState = rememberScrollState()
-                val uriHandler = LocalUriHandler.current
-                Column(
-                    modifier = Modifier
-                        .weight(1f, fill = true)
-                        .verticalScroll(scrollState),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    // F13 (Batch B): the text arrives as one block from the
-                    // panel, and a wall of it is not read — each line break
-                    // is a paragraph, and each paragraph gets its own block
-                    // with air between them. A blank line is nothing to show.
-                    disclaimer.text.split("\n").map { it.trim() }
-                        .filter { it.isNotEmpty() }.forEach { paragraph ->
+                if (!expanded) {
+                    // The summary, not the terms: what the viewer is
+                    // agreeing to, in two lines. The full text is one tap
+                    // away, verbatim, before either button is pressed.
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(
+                            "Radd Stream doesn't own, host, upload or store any content — " +
+                                "it only opens links that are already public, like a web browser.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        if (disclaimer.email.isNotBlank()) {
                             Text(
-                                paragraph,
+                                "If you own content shown here, email ${disclaimer.email} — " +
+                                    "it will be hidden within 48 hours while your claim is checked.",
                                 style = MaterialTheme.typography.bodyMedium,
-                            )
-                        }
-                    // B8: no version in the painted text — acceptance is
-                    // already tracked per version, so the number says
-                    // nothing a viewer can act on.
-                    if (disclaimer.email.isNotBlank()) {
-                        // F13 (Batch B) & Small #5: ClickableText ignores LocalContentColor
-                        // and rendered "Contact: " in dark ink on a dark surface. Use M3 Text
-                        // with explicit high-contrast styling inside a 48dp touch target, while
-                        // preserving the single "Contact: <email>" semantics node.
-                        val contactText = buildAnnotatedString {
-                            withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
-                                append("Contact: ")
-                            }
-                            withStyle(
-                                SpanStyle(
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontWeight = FontWeight.Medium,
-                                    textDecoration = TextDecoration.Underline,
-                                ),
-                            ) {
-                                append(disclaimer.email)
-                            }
-                        }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 48.dp)
-                                .clickable(
-                                    role = Role.Button,
-                                    onClickLabel = "Send email to ${disclaimer.email}",
-                                ) {
-                                    runCatching { uriHandler.openUri("mailto:${disclaimer.email}") }
-                                },
-                            contentAlignment = Alignment.CenterStart,
-                        ) {
-                            Text(
-                                text = contactText,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
                             )
                         }
                     }
-                }
-                // F13 (Batch B): the scroll cue — a small line that says the
-                // text goes on, shown only while there is more below. A
-                // dialog that scrolls without saying so hides its own terms.
-                if (scrollState.canScrollForward) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(
+                        onClick = { expanded = true },
+                        modifier = Modifier.testTag("disclaimer_read_full"),
                     ) {
-                        Text(
-                            "Scroll for more",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        Text("Read full disclaimer")
                         Icon(
                             painterResource(R.drawable.ic_action_keyboard_arrow_down),
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(16.dp),
                         )
+                    }
+                } else {
+                    val scrollState = rememberScrollState()
+                    val uriHandler = LocalUriHandler.current
+                    Column(
+                        modifier = Modifier
+                            .weight(1f, fill = true)
+                            .verticalScroll(scrollState),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        // F13 (Batch B): the text arrives as one block from the
+                        // panel, and a wall of it is not read — each line break
+                        // is a paragraph, and each paragraph gets its own block
+                        // with air between them. A blank line is nothing to show.
+                        // Verbatim (Session 122): this renders the operator's
+                        // text exactly as served — never paraphrased, never
+                        // shortened. Only its presentation changed: it sits
+                        // behind the "Read full disclaimer" link now.
+                        disclaimer.text.split("\n").map { it.trim() }
+                            .filter { it.isNotEmpty() }.forEach { paragraph ->
+                                Text(
+                                    paragraph,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                        // B8: no version in the painted text — acceptance is
+                        // already tracked per version, so the number says
+                        // nothing a viewer can act on.
+                        if (disclaimer.email.isNotBlank()) {
+                            // F13 (Batch B) & Small #5: ClickableText ignores LocalContentColor
+                            // and rendered "Contact: " in dark ink on a dark surface. Use M3 Text
+                            // with explicit high-contrast styling inside a 48dp touch target, while
+                            // preserving the single "Contact: <email>" semantics node.
+                            val contactText = buildAnnotatedString {
+                                withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
+                                    append("Contact: ")
+                                }
+                                withStyle(
+                                    SpanStyle(
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontWeight = FontWeight.Medium,
+                                        textDecoration = TextDecoration.Underline,
+                                    ),
+                                ) {
+                                    append(disclaimer.email)
+                                }
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
+                                    .clickable(
+                                        role = Role.Button,
+                                        onClickLabel = "Send email to ${disclaimer.email}",
+                                    ) {
+                                        runCatching { uriHandler.openUri("mailto:${disclaimer.email}") }
+                                    },
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                Text(
+                                    text = contactText,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                        }
+                    }
+                    // F13 (Batch B): the scroll cue — a small line that says the
+                    // text goes on, shown only while there is more below. A
+                    // dialog that scrolls without saying so hides its own terms.
+                    if (scrollState.canScrollForward) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "Scroll for more",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Icon(
+                                painterResource(R.drawable.ic_action_keyboard_arrow_down),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(
+                        onClick = { expanded = false },
+                        modifier = Modifier.testTag("disclaimer_show_less"),
+                    ) {
+                        Text("Show less")
                     }
                 }
                 Spacer(Modifier.height(16.dp))

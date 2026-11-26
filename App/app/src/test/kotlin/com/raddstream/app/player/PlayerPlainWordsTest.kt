@@ -73,10 +73,9 @@ class PlayerPlainWordsTest {
             "This version is no longer available",
             context.getString(R.string.player_giveup_expired),
         )
-        assertEquals(
-            "Go back and pick another version.",
-            context.getString(R.string.player_giveup_expired_body),
-        )
+        // Popup cleanup (26 Nov 2026): the give-up card is title + one-line
+        // message only — the per-cause body paragraph is gone, and its
+        // string with it. The title above is the whole "says so" now.
     }
 
     @Test
