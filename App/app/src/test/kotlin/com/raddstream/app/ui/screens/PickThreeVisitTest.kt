@@ -1,12 +1,16 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.HomeSection
@@ -50,10 +54,10 @@ class PickThreeVisitTest {
     // slow drag hung the CI job in waitForIdle (run 45078087971, cancelled
     // at ~32 min). performScrollToIndex is deterministic: it puts the item
     // in view and composes it, no fling, no idle wait. The index is pinned
-    // to eligibleState()'s feed: 0 filter, 1 filterSpacer, 2 hero,
-    // 3 heroSpacer, 4 first rail, 5 pickThree — no broadcasts, no CW, no
-    // trial note in this state. If HomeContent's item order changes, this
-    // index must move with it.
+    // to eligibleState()'s feed: 0 hero, 1 heroSpacer, 2 filter,
+    // 3 filterSpacer, 4 first rail, 5 pickThree — no broadcasts, no CW,
+    // no trial note in this state. If HomeContent's item order changes,
+    // this index must move with it.
     private fun scrollToPickThree() {
         compose.onNodeWithTag(HomeFeedTag).performScrollToIndex(5)
         compose.waitForIdle()
@@ -86,12 +90,22 @@ class PickThreeVisitTest {
     ) {
         compose.setContent {
             RaddStreamTheme {
-                HomeContent(
-                    state = state,
-                    heroAutoplay = false,
-                    onPickThreeShown = onPickThreeShown,
-                    onPickThreeVisitEnded = onPickThreeVisitEnded,
-                )
+                // P1-5: pin a short viewport (400dp) for the scroll-out
+                // test. The hero item lost its below-card dots row (~52dp)
+                // when the dots moved on the art, so the card's top crossed
+                // the default Robolectric viewport edge at scroll 0 and
+                // scrollToTop() stopped disposing it — the visit never
+                // ended (Android CI 45779270124, 1 failed of 3233). A
+                // pinned viewport makes scroll-out disposal independent
+                // of hero height instead of balanced on the viewport edge.
+                Box(Modifier.height(400.dp)) { // token-exempt: test viewport height, not UI spacing
+                    HomeContent(
+                        state = state,
+                        heroAutoplay = false,
+                        onPickThreeShown = onPickThreeShown,
+                        onPickThreeVisitEnded = onPickThreeVisitEnded,
+                    )
+                }
             }
         }
     }
