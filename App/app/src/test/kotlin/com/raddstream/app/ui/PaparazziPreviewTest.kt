@@ -90,7 +90,6 @@ import com.raddstream.app.viewmodel.TypeGroup
 import com.raddstream.app.viewmodel.RankedLink
 import com.raddstream.app.viewmodel.RankedPrint
 import com.raddstream.app.viewmodel.ResumePoint
-import com.raddstream.app.viewmodel.ResumeTile
 import com.raddstream.app.viewmodel.SeasonGroup
 import org.junit.Rule
 import org.junit.Test
