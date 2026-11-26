@@ -250,8 +250,20 @@ class DetailRedesignTest {
         // even composed until the list scrolls near it — a scroll-to on
         // a node that does not exist yet cannot find it. Swipe until it
         // appears, then bring it fully into view.
-        for (i in 0 until 5) {
-            if (compose.onAllNodesWithTag("posterRailSkeleton").fetchSemanticsNodes().isNotEmpty()) break
+        //
+        // P2-iconfirst (Nov 2026): "appears" must mean it has SIZE, not
+        // merely that the tag exists. The Row carries its testTag from
+        // the first frame, but its ShimmerBox children paint nothing
+        // until the 200 ms delay gate opens (CommonUi ShimmerBox) — a
+        // gated Row is zero-height, so it exists without being
+        // displayed, and performScrollTo + assertIsDisplayed fails on
+        // it. That is exactly what Android 45860497163 hit (1/3253):
+        // the loop broke on existence before the gate opened. Swipe
+        // until the Row has height (gate open), then scroll it into
+        // view; the swipes' own idle-waits advance the gate.
+        for (i in 0 until 10) {
+            val nodes = compose.onAllNodesWithTag("posterRailSkeleton").fetchSemanticsNodes()
+            if (nodes.isNotEmpty() && nodes[0].boundsInRoot.height > 0f) break
             compose.onRoot().performTouchInput { swipeUp() }
         }
         compose.onNodeWithTag("posterRailSkeleton").performScrollTo().assertIsDisplayed()
