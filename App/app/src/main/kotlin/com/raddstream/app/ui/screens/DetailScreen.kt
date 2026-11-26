@@ -1926,6 +1926,19 @@ private fun DetailCastButton() {
 }
 
 /**
+ * P2 (Nov 2026): the page carries TWO Download actions that share the
+ * visible verb ("Download") and the spoken name (the full cost label,
+ * "Download · 720p · 1.3 GB") — the hero pill above and the utility
+ * row's mirror below, the same tap by design. A bare text or spoken-name
+ * query is ambiguous once both compose, so tests scope to one action
+ * by tag instead of by what it says.
+ */
+internal const val PrimaryDownloadPillTag = "primary-download-pill"
+
+/** Test tag for the utility row's Download mirror (see [PrimaryDownloadPillTag]). */
+internal const val UtilityDownloadTag = "utility-download"
+
+/**
  * P0-8 (Nov 2026): exactly ONE primary CTA. Play takes the wider share
  * of the row (filled jade) and Download sits beside it as a tonal pill
  * (Disney+ shape) — the old two stacked full-width buttons made
@@ -2061,6 +2074,7 @@ private fun PrimaryActions(
                 modifier = Modifier
                     .weight(1.25f)
                     .heightIn(min = 48.dp)
+                    .testTag(PrimaryDownloadPillTag)
                     .semantics { contentDescription = downloadLabel },
                 shape = CircleShape,
                 // P2 (Nov 2026): the default button padding (24dp a side)
@@ -2657,7 +2671,7 @@ private fun DetailUtilityRow(
             contentDescription = downloadLabel,
             onClick = onDownloadPrimary,
             enabled = downloadEnabled,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).testTag(UtilityDownloadTag),
         )
         // The overflow: everything that is not one of the four. The Box
         // anchors the menu; the action itself is a fixed 48dp target,

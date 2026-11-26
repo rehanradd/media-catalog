@@ -3,12 +3,15 @@ package com.raddstream.app.ui.screens
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -30,7 +33,12 @@ import org.robolectric.RobolectricTestRunner
  * pin: only the four are visible with the menu closed, the overflow
  * carries the rest and fires each one, Download mirrors the primary
  * Download (same tap, same enabled state, same spoken name), every
- * target is 48dp, and the labels hold at 200% font scale. The scroll to
+ * target is 48dp, and the labels hold at 200% font scale. The two
+ * Download actions share the visible verb and the spoken name (P2,
+ * Nov 2026 — the hero pill shows the short verb only, the full cost
+ * label as its TalkBack name), so the Download queries scope to one
+ * action by tag (UtilityDownloadTag / PrimaryDownloadPillTag) instead
+ * of by text or spoken name. The scroll to
  * the "More Like This" rail behind Similar is the dead end's
  * bringIntoView, owned by DetailContent — this file pins the tap reaches
  * it (the menu closes), not the scroll itself.
@@ -124,7 +132,7 @@ class DetailUtilityRowTest {
         compose.onNodeWithText("Save").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Rate").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Share").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Download").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag(UtilityDownloadTag).performScrollTo().assertIsDisplayed().assertTextEquals("Download")
         compose.onNodeWithText("More").performScrollTo().assertIsDisplayed()
         // The overflow's actions are not on the page while the menu is
         // closed — Report never at icon parity with Save, Similar never
@@ -195,18 +203,39 @@ class DetailUtilityRowTest {
         var downloaded = false
         content(onDownloadPrimary = { downloaded = true })
         // The utility action's spoken name is the primary's full label
-        // — the cost, not just the verb.
-        compose.onNodeWithContentDescription("Download · 720p · 1.3 GB")
+        // — the cost, not just the verb. The pill carries the same
+        // spoken name (same tap, same label), so the utility query
+        // scopes by tag, and the pill's own spoken name is pinned too.
+        compose.onNodeWithTag(PrimaryDownloadPillTag)
+            .assertContentDescriptionEquals("Download · 720p · 1.3 GB")
+        compose.onNodeWithTag(UtilityDownloadTag)
             .performScrollTo()
+            .assertContentDescriptionEquals("Download · 720p · 1.3 GB")
             .performClick()
         assertEquals(true, downloaded)
     }
 
     @Test
+    fun primaryPillShowsShortVerbWithFullSpokenName() {
+        // P2 (Nov 2026): the hero pill shows the short verb only — the
+        // full cost label never fit the narrow pill and wrapped
+        // mid-word — while TalkBack still hears the full label. The
+        // utility mirror shares both, so this pins the pill itself,
+        // by tag.
+        content()
+        compose.onNodeWithTag(PrimaryDownloadPillTag)
+            .performScrollTo()
+            .assertIsDisplayed()
+            .assertTextEquals("Download")
+            .assertContentDescriptionEquals("Download · 720p · 1.3 GB")
+    }
+
+    @Test
     fun disabledDownloadIsNotEnabled() {
         content(downloadEnabled = false)
-        compose.onNodeWithContentDescription("Download · 720p · 1.3 GB")
+        compose.onNodeWithTag(UtilityDownloadTag)
             .performScrollTo()
+            .assertContentDescriptionEquals("Download · 720p · 1.3 GB")
             .assertIsNotEnabled()
     }
 
@@ -227,8 +256,9 @@ class DetailUtilityRowTest {
         compose.onNodeWithContentDescription("Share")
             .performScrollTo()
             .assertHeightIsAtLeast(48.dp)
-        compose.onNodeWithContentDescription("Download · 720p · 1.3 GB")
+        compose.onNodeWithTag(UtilityDownloadTag)
             .performScrollTo()
+            .assertContentDescriptionEquals("Download · 720p · 1.3 GB")
             .assertHeightIsAtLeast(48.dp)
         compose.onNodeWithContentDescription("More actions")
             .performScrollTo()
@@ -245,13 +275,14 @@ class DetailUtilityRowTest {
         compose.onNodeWithText("Save").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Rate").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Share").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Download").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag(UtilityDownloadTag).performScrollTo().assertIsDisplayed().assertTextEquals("Download")
         compose.onNodeWithText("More").performScrollTo().assertIsDisplayed()
         compose.onNodeWithContentDescription("Save to My List")
             .performScrollTo()
             .assertHeightIsAtLeast(48.dp)
-        compose.onNodeWithContentDescription("Download · 720p · 1.3 GB")
+        compose.onNodeWithTag(UtilityDownloadTag)
             .performScrollTo()
+            .assertContentDescriptionEquals("Download · 720p · 1.3 GB")
             .assertHeightIsAtLeast(48.dp)
         compose.onNodeWithContentDescription("More actions")
             .performScrollTo()
@@ -267,7 +298,7 @@ class DetailUtilityRowTest {
         compose.onNodeWithText("Save").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Rate").assertDoesNotExist()
         compose.onNodeWithText("Share").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Download").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag(UtilityDownloadTag).performScrollTo().assertIsDisplayed().assertTextEquals("Download")
         compose.onNodeWithText("More").performScrollTo().assertIsDisplayed()
     }
 }

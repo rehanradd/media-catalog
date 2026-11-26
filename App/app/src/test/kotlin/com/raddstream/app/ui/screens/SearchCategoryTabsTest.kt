@@ -1,10 +1,15 @@
 package com.raddstream.app.ui.screens
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.LanguageFilter
@@ -36,15 +41,20 @@ class SearchCategoryTabsTest {
         onSelectGenre: (GenreFilter) -> Unit = {},
         onSelectLanguage: (LanguageFilter) -> Unit = {},
         onSetYearRange: (Int?, Int?) -> Unit = { _, _ -> },
+        // A narrow box the quick chips overflow in — the fade test
+        // passes one; the tap tests render full width.
+        width: Dp? = null,
     ) {
         compose.setContent {
             RaddStreamTheme {
-                CategoryTabs(
-                    state = state,
-                    onSelectGenre = onSelectGenre,
-                    onSelectLanguage = onSelectLanguage,
-                    onSetYearRange = onSetYearRange,
-                )
+                Box(if (width != null) Modifier.width(width) else Modifier) {
+                    CategoryTabs(
+                        state = state,
+                        onSelectGenre = onSelectGenre,
+                        onSelectLanguage = onSelectLanguage,
+                        onSetYearRange = onSetYearRange,
+                    )
+                }
             }
         }
     }
@@ -113,11 +123,15 @@ class SearchCategoryTabsTest {
     fun quickChipsRightEdgeFadeMaskExists() {
         // S3 (round 5): the last quick chip hard-clipped at the right edge
         // ("Thrill…") — a fade mask over the row's right edge replaces the
-        // hard clip. The mask is the shared ScrollingChipRow fade
-        // (unconditional), a plain overlay with no click handling, so the
-        // test only pins its presence — the chips beneath stay tappable
-        // through it.
-        setTabs()
+        // hard clip. The mask is the shared ScrollingChipRow fade, a plain
+        // overlay with no click handling, so the test only pins its
+        // presence — the chips beneath stay tappable through it. The fade
+        // is conditional on canScrollForward now (P2, Nov 2026), so the
+        // five quick chips must actually overflow: at full width they fit
+        // under Robolectric metrics, so the tabs render in a narrow box
+        // where the row overflows — the fade exists exactly when there
+        // is more to scroll to.
+        setTabs(width = 200.dp)
         compose.onNodeWithTag(QuickChipsFadeTag).assertExists()
     }
 }

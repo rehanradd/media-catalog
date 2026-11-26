@@ -5,7 +5,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
@@ -134,10 +134,8 @@ class DetailHeroPlayTest {
         compose.onNodeWithText("Play").assertIsNotEnabled()
         // P1-7 (Nov 2026): the page now carries two "Download" actions —
         // the primary button above and the utility row's mirror below —
-        // so the bare text query is ambiguous once the row composes. The
-        // primary is first in tree order (page order is protected), so
-        // [0] is the button this test pins.
-        compose.onAllNodesWithText("Download")[0].assertIsDisplayed().assertIsEnabled()
+        // so the query scopes to the primary by tag.
+        compose.onNodeWithTag(PrimaryDownloadPillTag).assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText("Try again").assertIsDisplayed()
     }
 
@@ -165,9 +163,9 @@ class DetailHeroPlayTest {
         )
         compose.onNodeWithText("Play").assertIsNotEnabled()
         // P1-7 (Nov 2026): two "Download" actions on the page now — the
-        // primary button above and the utility row's mirror below. [0]
-        // is the primary, first in tree order.
-        compose.onAllNodesWithText("Download")[0].assertIsDisplayed().assertIsNotEnabled()
+        // primary button above and the utility row's mirror below. The
+        // query scopes to the primary by tag.
+        compose.onNodeWithTag(PrimaryDownloadPillTag).assertIsDisplayed().assertIsNotEnabled()
         compose.onNodeWithText("Nothing to save for this title.").assertIsDisplayed()
     }
 }

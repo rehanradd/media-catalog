@@ -199,7 +199,14 @@ class DetailRedesignTest {
         // Detail review (Nov 2026, P1): the genre row shares the
         // ScrollingChipRow fade at the chips' own height — 22dp for a Pill, not
         // the shared 48dp, and not the invisible local fade it replaces.
-        content()
+        // The fade is conditional on canScrollForward now (P2, Nov 2026),
+        // so the row must actually overflow for the fade to exist: the
+        // two short genres the default post carries fit under
+        // Robolectric metrics, so this test renders a long genre list
+        // instead — the fade pins the overflow cue, not a fitting row.
+        content(
+            postDetail = post.copy(genres = "Action, Adventure, Science Fiction, Thriller, Crime, Mystery, Romance, Drama, Fantasy, Horror"),
+        )
         compose.onNodeWithTag(GenreChipsFadeTag).assertHeightIsEqualTo(22.dp)
     }
 
@@ -264,8 +271,8 @@ class DetailRedesignTest {
         )
         // P1-7 (Nov 2026): two "Download" actions on the page now — the
         // primary button above and the utility row's mirror below, which
-        // is the same tap. [0] is the primary, first in tree order.
-        compose.onAllNodesWithText("Download")[0].performScrollTo().assertIsEnabled().performClick()
+        // is the same tap. The query scopes to the pill by tag.
+        compose.onNodeWithTag(PrimaryDownloadPillTag).performScrollTo().assertIsEnabled().performClick()
         assertTrue(started)
     }
 
@@ -281,9 +288,9 @@ class DetailRedesignTest {
         )
         // P1-7 (Nov 2026): two "Download" actions on the page now — the
         // primary button above and the utility row's mirror below, which
-        // mirrors the same disabled state. [0] is the primary, first in
-        // tree order.
-        compose.onAllNodesWithText("Download")[0].performScrollTo().assertIsNotEnabled()
+        // mirrors the same disabled state. The query scopes to the pill
+        // by tag.
+        compose.onNodeWithTag(PrimaryDownloadPillTag).performScrollTo().assertIsNotEnabled()
         compose.onNodeWithText("Nothing to save for this title.").assertIsDisplayed()
     }
 
