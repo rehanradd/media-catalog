@@ -141,12 +141,15 @@ class SourceSiteHelperTests(unittest.TestCase):
     def test_explicit_source_site_wins(self):
         """The helper fills a gap; it never second-guesses an importer
         that names its site. (A stem heuristic cannot tell 'site_a' from
-        'site-a', so an explicit value is authoritative.)"""
+        'site-a', so an explicit value is authoritative.) An explicit
+        'vegamovies' is the one exception: it is the stale default the
+        backfill guard corrects to the URL-derived site, so this test
+        uses an explicit non-default label."""
         post_id = fast_fetch.save_scraped_data(
             _payload("https://9xmovie.cologne/movie/example-film-2024/",
-                     "Example Film", source_site="vegamovies"),
+                     "Example Film", source_site="multimovies"),
             enrich_metadata=False, ensure_db=False)
-        self.assertEqual(self._site_of(post_id), "vegamovies")
+        self.assertEqual(self._site_of(post_id), "multimovies")
 
     def test_unattributable_url_is_refused_not_mislabelled(self):
         """An IP host names no site. The write must fail loudly and write
