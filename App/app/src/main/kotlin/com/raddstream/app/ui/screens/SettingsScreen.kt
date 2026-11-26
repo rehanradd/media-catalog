@@ -1211,8 +1211,9 @@ internal fun SettingsContent(
                             "When this is off, the Home hero stays on the first poster until you swipe it.",
                             style = settingsHelperStyle,
                         )
-                        // PL-10: opt-in auto-enter picture-in-picture. Off by default: a
-                        // window the viewer did not open is a window they did not ask for.
+                        // P2-5 (B-23): auto-enter picture-in-picture, on by
+                        // default for VOD. The system setting still wins at
+                        // entry time, and live never auto-enters.
                         SwitchRow(
                             checked = state.prefs.autoPip,
                             onCheckedChange = actions.onSetAutoPip,

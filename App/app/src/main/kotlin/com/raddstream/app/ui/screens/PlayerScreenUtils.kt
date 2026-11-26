@@ -1,12 +1,15 @@
 package com.raddstream.app.ui.screens
 
 import android.app.Activity
+import android.app.AppOpsManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Process
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.clickable
@@ -152,6 +155,36 @@ internal fun rememberPipLauncher(aspectRatio: Float? = null, sourceRect: android
         } else {
             Toast.makeText(context, pipUnsupported, Toast.LENGTH_SHORT).show()
         }
+    }
+}
+
+/**
+ * P2-5 (B-23): whether the SYSTEM lets this app enter PiP right now — the
+ * per-app picture-in-picture toggle in the system settings, plus the
+ * device actually having PiP. This is the setting auto-PiP respects: a
+ * viewer who turned PiP off for Radd Stream never gets a window they did
+ * not ask for, and neither does a device without the feature. Below
+ * Android 8 there is no PiP at all. The AppOps mode is DEFAULT when the
+ * viewer never touched the toggle — the system's default is allowed — and
+ * IGNORED or ERRORED once they turn it off.
+ */
+internal fun isPipAllowedBySystem(context: Context): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+    if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return false
+    val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager ?: return false
+    return try {
+        when (
+            appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_PICTURE_IN_PICTURE,
+                Process.myUid(),
+                context.packageName,
+            )
+        ) {
+            AppOpsManager.MODE_ALLOWED, AppOpsManager.MODE_DEFAULT -> true
+            else -> false
+        }
+    } catch (_: Exception) {
+        false
     }
 }
 

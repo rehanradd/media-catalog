@@ -431,8 +431,8 @@ data class PlayerUiState(
      * PiP builds its params from this. Null until the first frame reports a size.
      */
     val videoAspectRatio: Float? = null,
-    /** PL-10: opt-in auto-enter PiP on leaving the player while playing (Settings; default off). */
-    val autoPip: Boolean = false,
+    /** PL-10: auto-enter PiP on leaving the player while playing (Settings; default on for VOD). */
+    val autoPip: Boolean = true,
     // tracks
     val audioTracks: List<TrackUiOption> = emptyList(),
     val subtitleTracks: List<TrackUiOption> = emptyList(),

@@ -6,8 +6,8 @@ import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Typeface
+import android.os.Build
 import android.provider.Settings
-import android.view.TextureView
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -89,8 +89,9 @@ import com.raddstream.app.player.PlayerOrientation
 import com.raddstream.app.player.PlayerUiState
 import com.raddstream.app.player.showInPlaybackNext
 import com.raddstream.app.player.bufferingPercent
-import com.raddstream.app.player.ScrubPreviewPlayer
 import com.raddstream.app.player.ScrubThumbnails
+import com.raddstream.app.player.SpriteThumbnailCache
+import com.raddstream.app.player.requestSpriteCapture
 import com.raddstream.app.player.StartDeadline
 import com.raddstream.app.player.StartDeadlineStage
 import com.raddstream.app.player.StartPhase
@@ -267,18 +268,26 @@ private fun PlayerScreenContent(
     var snackbar by remember { mutableStateOf<PlayerSnackbar?>(null) }
     var scrubPreviewMs by remember { mutableStateOf<Long?>(null) }
 
-    // Scrub thumbnails (API 23+ only): a second, muted ExoPlayer that renders
-    // the frame at the scrub target into the toast's TextureView. Created
-    // lazily on the first scrub; null on Android 5, where the toast stays
-    // time-only, exactly as now. Released when this screen leaves.
-    var scrubPreviewPlayer by remember { mutableStateOf<ScrubPreviewPlayer?>(null) }
-    // The target the thumbnail is actually showing. It trails scrubPreviewMs
-    // by ScrubThumbnails.SETTLE_MS (see the LaunchedEffect below): during a
-    // fast drag the preview player never settles, so the toast shows only
-    // the time until the finger pauses and a real frame is ready.
-    var scrubSettledMs by remember { mutableStateOf<Long?>(null) }
-    DisposableEffect(scrubPreviewPlayer) {
-        onDispose { scrubPreviewPlayer?.release() }
+    // Scrub thumbnails (P2-5, B-23): a sprite sheet built from the frames
+    // the main player already decoded — no second ExoPlayer. The sheet
+    // fills one bucket per capture while the title plays; the toast shows
+    // the target bucket's cell, or time only when it was never captured.
+    // Released when this screen leaves; reset when the rendition changes
+    // (see the LaunchedEffect below).
+    val spriteCache = remember { SpriteThumbnailCache() }
+    DisposableEffect(spriteCache) {
+        onDispose { spriteCache.release() }
+    }
+    // The PlayerView behind the surface the captures copy from. Set by
+    // PlayerSurface's factory; null until the view exists (audio-only
+    // never sets it, so nothing is ever captured there).
+    var playerView by remember { mutableStateOf<PlayerView?>(null) }
+    var spriteCaptureInFlight by remember { mutableStateOf(false) }
+    // The sprite frame for the scrub target, if its bucket was captured.
+    // Keyed on the cache version so a toast already showing time-only
+    // gains its picture the moment the cell lands.
+    val spriteFrame = remember(scrubPreviewMs, spriteCache.version) {
+        scrubPreviewMs?.let { spriteCache.frameFor(it, state.durationMs) }
     }
 
     // PL-10: the PiP window follows the video's own shape, and the source rect is
@@ -294,15 +303,27 @@ private fun PlayerScreenContent(
         onRequestKidsPin = { kidsPinRequested = true },
     )
 
-    // PL-10: opt-in auto-enter PiP — when the switch is on and the title is playing,
-    // leaving the player (home, recents, another app) keeps it playing in a window.
-    // Off by default: a window the viewer did not open is a window they did not ask for.
+    // P2-5 (B-23): auto-enter PiP is ON by default for VOD — when the
+    // switch is on and the title is playing, leaving the player (home,
+    // recents, another app) keeps it playing in a window. The viewer can
+    // turn it off in Settings → Player, and the system setting still wins:
+    // if PiP is off for this app in the system settings, the auto-enter
+    // silently skips — no toast on the way out the door (the manual PiP
+    // button still attempts and toasts on refusal). Live never auto-enters:
+    // a live window is not a title the viewer is mid-way through. Already
+    // in a window: entering PiP pauses the activity, which would re-fire
+    // this observer — skip when already in PiP.
     // The screen is always hosted by the Activity, so its context is the owner;
     // lifecycle-runtime-compose is not a dependency, so no LocalLifecycleOwner.
     val lifecycleOwner = context as LifecycleOwner
-    DisposableEffect(lifecycleOwner, state.autoPip, state.isPlaying) {
+    DisposableEffect(lifecycleOwner, state.autoPip, state.isPlaying, state.isLive) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE && state.autoPip && state.isPlaying) launchPip()
+            if (event == Lifecycle.Event.ON_PAUSE && state.autoPip && state.isPlaying && !state.isLive &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                isPipAllowedBySystem(context) && activity?.isInPictureInPictureMode != true
+            ) {
+                launchPip()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -444,36 +465,29 @@ private fun PlayerScreenContent(
         }
     }
 
-    // Scrub thumbnails (API 23+ only): every scrub target seeks the preview
-    // player at once — ExoPlayer coalesces rapid seeks, so a fast drag just
-    // keeps retargeting and the player renders once the finger pauses. The
-    // thumbnail itself waits SETTLE_MS after the last move: until then the
-    // TextureView would show the frame from the last settled position, which
-    // is the wrong scene for the time the toast prints. On Android 5 this
-    // whole effect is a no-op (no preview player exists) and the toast stays
-    // time-only, exactly as now. The Scrubber (bottom bar) does not come
-    // through here — it seeks the main player directly, so the picture
-    // itself is already the preview and no thumbnail is owed.
-    LaunchedEffect(scrubPreviewMs, state.activeRendition) {
-        val target = scrubPreviewMs
-        if (target == null) {
-            scrubSettledMs = null
-            return@LaunchedEffect
+    // Scrub thumbnails (P2-5, B-23): the sheet fills while the title plays.
+    // Every position tick that lands in an unfilled bucket copies the main
+    // surface's current frame into that bucket — one capture per bucket, at
+    // most one in flight, only while playing a VOD title with a known
+    // duration. The Scrubber (bottom bar) does not come through here — it
+    // seeks the main player directly, so the picture itself is already the
+    // preview and no thumbnail is owed. A rendition change (quality switch,
+    // next episode) drops the sheet: the frames belong to the old picture.
+    LaunchedEffect(state.activeRendition) {
+        spriteCache.reset()
+    }
+    LaunchedEffect(state.positionMs, state.isPlaying, state.isLive, state.durationMs, playerView) {
+        if (!state.isPlaying || state.isLive || state.durationMs <= 0L) return@LaunchedEffect
+        if (!ScrubThumbnails.isSupported()) return@LaunchedEffect
+        val bucket = ScrubThumbnails.bucketIndex(state.positionMs, state.durationMs)
+        if (bucket < 0 || spriteCache.isFilled(bucket) || spriteCaptureInFlight) return@LaunchedEffect
+        val surface = playerView?.videoSurfaceView?.holder?.surface?.takeIf { it.isValid }
+            ?: return@LaunchedEffect
+        spriteCaptureInFlight = true
+        requestSpriteCapture(surface) { frame ->
+            spriteCache.store(bucket, frame)
+            spriteCaptureInFlight = false
         }
-        // Hide the thumbnail the moment the target moves: the frame on screen
-        // is from the last settled position, and showing it against the new
-        // time would be the wrong scene. It comes back SETTLE_MS after the
-        // finger stops, once the preview player has rendered this target.
-        scrubSettledMs = null
-        if (ScrubThumbnails.isSupported()) {
-            val preview = scrubPreviewPlayer ?: ScrubPreviewPlayer(context.applicationContext).also {
-                scrubPreviewPlayer = it
-            }
-            state.activeRendition?.let { preview.setRendition(it) }
-            preview.previewAt(target)
-        }
-        delay(ScrubThumbnails.SETTLE_MS)
-        scrubSettledMs = target
     }
 
     Box(
@@ -488,7 +502,7 @@ private fun PlayerScreenContent(
                 isPlaying = state.isPlaying,
             )
         } else {
-            PlayerSurface(vm, state, onBounds = { pipSourceRect = it })
+            PlayerSurface(vm, state, onBounds = { pipSourceRect = it }, onPlayerView = { playerView = it })
         }
 
         // D-35: the poster's blurred shadow behind the loading state. The window before
@@ -585,15 +599,9 @@ private fun PlayerScreenContent(
             ScrubToast(
                 target = target,
                 durationMs = state.durationMs,
-                previewPlayer = scrubPreviewPlayer,
-                // The thumbnail only shows once the target has settled: while
-                // dragging, the frame on screen is from the last settled
-                // position — the wrong scene for the time the toast prints.
-                showThumbnail = ScrubThumbnails.shouldShowThumbnail(
-                    settledMs = scrubSettledMs,
-                    targetMs = target,
-                    previewAvailable = scrubPreviewPlayer != null,
-                ),
+                // The sprite frame for the target's bucket, or null when
+                // that stretch was never watched — then the toast is time-only.
+                thumbnail = spriteFrame,
             )
         }
         if (state.boosting) BoostBadge()
@@ -1155,6 +1163,9 @@ private fun PlayerSurface(
     // PL-10: the surface reports its own bounds so the PiP window can grow
     // out of the picture.
     onBounds: ((androidx.compose.ui.geometry.Rect) -> Unit)? = null,
+    // P2-5: the sprite captures copy frames off this view's surface, so the
+    // screen keeps the view itself.
+    onPlayerView: ((PlayerView) -> Unit)? = null,
 ) {
     val player by vm.player.collectAsState()
     AndroidView(
@@ -1177,6 +1188,7 @@ private fun PlayerSurface(
             ),
         factory = { ctx ->
             PlayerView(ctx).apply {
+                onPlayerView?.invoke(this)
                 useController = false // all chrome is Compose
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 setShutterBackgroundColor(android.graphics.Color.BLACK)

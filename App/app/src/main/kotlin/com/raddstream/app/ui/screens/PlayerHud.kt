@@ -1,10 +1,11 @@
 package com.raddstream.app.ui.screens
 
-import android.view.TextureView
+import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +32,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -40,14 +43,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import com.raddstream.app.R
 import com.raddstream.app.player.MediaSegment
 import com.raddstream.app.player.MediaSegmentType
 import com.raddstream.app.player.PlayerUiState
 import com.raddstream.app.player.showInPlaybackNext
 import com.raddstream.app.player.ScreenZone
-import com.raddstream.app.player.ScrubPreviewPlayer
 import com.raddstream.app.player.ScrubThumbnails
 import com.raddstream.app.player.subtitles.SubtitleOffset
 import com.raddstream.app.ui.components.rememberReduceMotion
@@ -254,8 +255,8 @@ internal fun EdgeFeedbackLine(hud: Hud) {
 internal fun ScrubToast(
     target: Long,
     durationMs: Long,
-    previewPlayer: ScrubPreviewPlayer?,
-    showThumbnail: Boolean,
+    /** The sprite-sheet frame for the target's bucket, or null when that stretch was never watched. */
+    thumbnail: Bitmap?,
 ) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
         Column(
@@ -264,17 +265,15 @@ internal fun ScrubToast(
             // with the same 12dp of air the old 130dp seat left over the 136dp bar.
             modifier = Modifier.padding(bottom = 108.dp),
         ) {
-            // The thumbnail: the preview player's live TextureView, shown only
-            // once the target has settled (showThumbnail). Until then the frame
-            // on screen is from the last settled position — the wrong scene
-            // for this time — so only the time shows. On Android 5 there is
-            // no preview player and this stays time-only, exactly as before.
-            if (showThumbnail && previewPlayer != null) {
-                AndroidView(
-                    factory = { ctx ->
-                        TextureView(ctx).also { previewPlayer.setVideoTextureView(it) }
-                    },
-                    onRelease = { view -> previewPlayer.clearVideoTextureView(view) },
+            // The thumbnail: a captured cell of the sprite sheet, shown only
+            // when the target's bucket has a frame (P2-5, B-23 — no second
+            // player any more). Until then, or when the stretch was never
+            // watched, only the time shows — never a frame from another scene.
+            if (thumbnail != null) {
+                Image(
+                    bitmap = thumbnail.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .size(
                             ScrubThumbnails.THUMBNAIL_WIDTH_DP.dp,

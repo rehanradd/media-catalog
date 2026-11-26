@@ -952,12 +952,15 @@ class ServerSettingsRepository @Inject constructor(
     }
 
     /**
-     * PL-10: enter picture-in-picture automatically when the viewer leaves the player
-     * while it is playing. OFF by default — PiP unasked for is a window the viewer did
-     * not open, and the manual PiP button is always there for the one time they want it.
+     * P2-5 (B-23): enter picture-in-picture automatically when the viewer
+     * leaves the player while a VOD title is playing. ON by default — the
+     * 2027 default for a video app — and the viewer can turn it off in
+     * Settings → Player. The system setting still wins at entry time (see
+     * isPipAllowedBySystem): if PiP is off for this app in the system
+     * settings, the auto-enter silently skips. Live never auto-enters.
      */
     val autoPip: Flow<Boolean> = dataStore.data.map { preferences ->
-        preferences[AUTO_PIP_KEY] ?: false
+        preferences[AUTO_PIP_KEY] ?: true
     }
 
     suspend fun saveAutoPip(enabled: Boolean) {
