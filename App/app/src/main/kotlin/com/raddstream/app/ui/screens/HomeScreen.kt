@@ -1076,8 +1076,8 @@ internal const val HomeFeedTag = "homeFeed"
  * The Home header (P0-4, 2027 Home fix): a single-line logo left — the
  * mark at 24dp cap height plus the wordmark on one line — with the escape
  * hatches on the right: search glyph (the Search tab), cast, profile
- * avatar. The centred two-line "RADD STREAM" wordmark is gone: users know
- * what app they opened, and the top bar's job is escape hatches, not brand
+ * avatar. The centred two-line wordmark is gone: users know what app
+ * they opened, and the top bar's job is escape hatches, not brand
  * vanity. The solid background plate once scrolled stays — a transparent
  * header lets bright poster text collide behind the logo.
  */
