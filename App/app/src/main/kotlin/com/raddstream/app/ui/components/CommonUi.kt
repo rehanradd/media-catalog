@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -120,8 +121,8 @@ fun raddFilterChipColors() = FilterChipDefaults.filterChipColors(
  * fill, the check or the border shows up here before it ships; the
  * screenshot test in ScreenSnapshotTest pins the same two states in CI.
  * P2-chip2027: rendered through RaddChip, so the preview shows the
- * 8dp shape and the selected check — the raw FilterChip below it would
- * hide both.
+ * 8dp shape and the selected check — the raw FilterChip it replaced
+ * would hide both.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Preview(name = "Filter chip states", showBackground = true)
