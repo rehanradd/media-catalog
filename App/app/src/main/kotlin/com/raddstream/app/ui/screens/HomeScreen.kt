@@ -469,6 +469,18 @@ internal fun HomeContent(
     // The filter chips are UI-local state: they filter the rails already on
     // screen, so no ViewModel round-trip and no reload on a tap.
     var filter by remember { mutableStateOf(HomeFilter.All) }
+    // P2-12 (audit B-43): the rails' entered set — the My List pattern
+    // (MyListScreen, round 6 §4), copied exactly: the set lives here,
+    // above the LazyColumn, so a rail that scrolls out and back finds its
+    // key already in the set and renders settled instead of replaying its
+    // stagger. The set is session-scoped, NOT keyed on the filter: Home's
+    // filter hides rails in place, so a filter-keyed reset would
+    // re-stagger every visible rail on each chip tap. A rail that has
+    // never entered (new feed data, a rail the filter just revealed)
+    // still staggers in on its index × 60 ms. The My List strip shares
+    // the set under its lazy item key ("myListStrip") — it is a rail, so
+    // it enters like one.
+    var enteredRailKeys by remember { mutableStateOf(setOf<String>()) }
     // P0-5: the mood row is gone as a filter (one taxonomy: the sticky
     // category chips). The [HomeMoodRow] composable stays for its standalone
     // Paparazzi golden and a future single Mood rail — it is no longer
@@ -818,6 +830,11 @@ internal fun HomeContent(
                         continueWatching = state.visibleContinueWatching,
                         onPostClick = onPostClick,
                         onPlayClick = onPlayClick,
+                        // P2-12 (audit B-43): the strip shares Home's
+                        // entered set — it is a rail, so it enters like
+                        // one, once per visit.
+                        enteredIds = enteredRailKeys,
+                        onEntered = { enteredRailKeys = enteredRailKeys + it },
                         sharedTransitionScope = sharedTransitionScope,
                         animatedVisibilityScope = animatedVisibilityScope,
                     )
@@ -841,6 +858,12 @@ internal fun HomeContent(
                         onPostClick = onPostClick,
                         onPlayClick = onPlayClick,
                         itemWidthDp = spotlightRailWidthDp,
+                        // P2-12 (audit B-43): the rail's entered set —
+                        // the My List pattern. The key is already in the
+                        // set when the rail scrolls back, so the stagger
+                        // does not replay.
+                        enteredIds = enteredRailKeys,
+                        onEntered = { enteredRailKeys = enteredRailKeys + it },
                         onSeeAll = {
                             if (section.industry != null) {
                                 onFacetSelected(null, section.industry, null)
@@ -925,6 +948,9 @@ internal fun HomeContent(
                         onPostClick = onPostClick,
                         onPlayClick = onPlayClick,
                         itemWidthDp = if (section.sort == "trending") spotlightRailWidthDp else railCardWidthDp,
+                        // P2-12 (audit B-43): see rail 1 above.
+                        enteredIds = enteredRailKeys,
+                        onEntered = { enteredRailKeys = enteredRailKeys + it },
                         onSeeAll = {
                             if (section.industry != null) {
                                 onFacetSelected(null, section.industry, null)
@@ -1427,6 +1453,16 @@ internal fun MyListStrip(
     onPlayClick: (Post) -> Unit = {},
     modifier: Modifier = Modifier,
     /**
+     * P2-12 (audit B-43): the entered-ids set, copied from My List
+     * (MyListScreen, round 6 §4) — the set lives in [HomeContent], above
+     * the LazyColumn, under the strip's lazy item key ([MyListStripEnterId]).
+     * The strip is a rail, so it enters like one: once per visit, never
+     * replayed on scroll-back. Defaults keep standalone callers
+     * (Paparazzi goldens, which render under inspection mode) compiling.
+     */
+    enteredIds: Set<String> = emptySet(),
+    onEntered: (String) -> Unit = {},
+    /**
      * Round 6 (motion): the shared-element scopes — see [HomeScreen].
      * Both null by default; dormant until infra wires them.
      */
@@ -1435,13 +1471,19 @@ internal fun MyListStrip(
 ) {
     val inInspectionMode = LocalInspectionMode.current
     val reduceMotion = rememberReduceMotion()
-    var visible by remember { mutableStateOf(inInspectionMode) }
+    // P2-12 (audit B-43): the strip carries no stagger delay — it fades
+    // in at once — but the fade still replayed on scroll-back, because
+    // the old local `visible` state died with the recycled slot. The
+    // parent set outlives the slot: once entered, the strip renders
+    // settled.
+    val isEntered = MyListStripEnterId in enteredIds
     LaunchedEffect(Unit) {
         if (inInspectionMode) return@LaunchedEffect
-        visible = true
+        if (MyListStripEnterId in enteredIds) return@LaunchedEffect
+        onEntered(MyListStripEnterId)
     }
     AnimatedVisibility(
-        visible = visible,
+        visible = isEntered || inInspectionMode,
         enter = fadeIn(
             animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
         ) + if (reduceMotion) {
@@ -1492,6 +1534,9 @@ internal fun MyListStrip(
 
 /** H11: the My List strip, so tests can find it without the title. */
 internal const val MyListStripTag = "homeMyListStrip"
+
+/** P2-12 (audit B-43): the My List strip's identity in Home's entered set — the same string as its lazy item key in [HomeContent]. */
+internal const val MyListStripEnterId = "myListStrip"
 
 /**
  * Mockup (Nov 2026): one Continue Watching row — full width, thumb, title,
@@ -2105,6 +2150,18 @@ private fun HomeRailSection(
     onSeeAll: () -> Unit,
     showSeeAll: Boolean = true,
     onRetry: () -> Unit,
+    /**
+     * P2-12 (audit B-43): the entered-ids set, copied from My List
+     * (MyListScreen, round 6 §4) — the set lives in [HomeContent], above
+     * the LazyColumn, and [onEntered] records a rail's key once its
+     * stagger delay has elapsed. A rail that scrolls out and back finds
+     * its key already in the set and renders settled, so the entrance
+     * runs once per visit instead of replaying. Defaults keep standalone
+     * callers (Paparazzi goldens, which render under inspection mode)
+     * compiling.
+     */
+    enteredIds: Set<String> = emptySet(),
+    onEntered: (String) -> Unit = {},
     /** REA #4: the "Play Something" shuffle for the "For you" row only. */
     onPlaySomething: (() -> Unit)? = null,
     /**
@@ -2122,9 +2179,13 @@ private fun HomeRailSection(
     // [RaddMotion.defaultEffects] for the fade), not a tween: the old
     // tween + EmphasizedDecelerate easing was the only non-spring motion
     // on Home. The stagger stays — a short delay before the rail becomes
-    // visible, since a spring carries no delay of its own. (A lazy item
-    // that scrolls out and back re-plays its entrance — the list recycles
-    // the slot — a subtle fade, the standard lazy-list trade.)
+    // visible, since a spring carries no delay of its own.
+    // P2-12 (audit B-43): the delay runs only for a rail that has never
+    // entered — the key is checked against the parent's entered set
+    // first, so a lazy item that scrolls out and back does NOT replay its
+    // entrance (the list recycles the slot, but the set outlives the
+    // slot). Visibility is the set, not local state: a recomposed rail
+    // reads its key and renders settled at once.
     // Audit #3: the stagger is a real-time delay, and a snapshot renders
     // with a frozen clock — Paparazzi never advances it — so in a golden
     // every rail stays invisible, skeletons included, and the loading
@@ -2137,14 +2198,15 @@ private fun HomeRailSection(
     // Runtime behaviour is unchanged.
     val inInspectionMode = LocalInspectionMode.current
     val reduceMotion = rememberReduceMotion()
-    var visible by remember { mutableStateOf(inInspectionMode) }
-    LaunchedEffect(Unit) {
+    val isEntered = section.key in enteredIds
+    LaunchedEffect(section.key) {
         if (inInspectionMode) return@LaunchedEffect
+        if (section.key in enteredIds) return@LaunchedEffect
         delay(index * 60L)
-        visible = true
+        onEntered(section.key)
     }
     AnimatedVisibility(
-        visible = visible,
+        visible = isEntered || inInspectionMode,
         enter = fadeIn(
             animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
         ) + if (reduceMotion) {

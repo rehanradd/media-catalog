@@ -133,6 +133,14 @@ fun DownloadsScreen(
         .filter { it.download.state == DeviceDownloadState.QUEUED }
         .mapIndexed { index, row -> row.download.id to index + 1 }
         .toMap()
+    // P2-12 (audit B-43): the rows' entered set — the My List pattern
+    // (MyListScreen, round 6 §4), copied exactly: the set lives here,
+    // above the LazyColumn, so a row that scrolls out and back finds its
+    // key already in the set and renders settled instead of replaying its
+    // stagger. Session-scoped: a new download is a new key, so it still
+    // staggers in on arrival, and rows already on screen never re-animate
+    // when the list shifts.
+    var enteredRowKeys by remember { mutableStateOf(setOf<String>()) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -287,12 +295,10 @@ fun DownloadsScreen(
             if (state.hasAnything) {
                 itemsIndexed(
                     state.allDownloads,
-                    key = { _, row ->
-                        when (row) {
-                            is DownloadRow.Device -> "device-${row.download.id}"
-                            is DownloadRow.Keep -> "keep-${row.item.id}"
-                        }
-                    },
+                    // P2-12: the row key is [downloadRowKey] — the same
+                    // identity the entrance set tracks, so the key and the
+                    // set can never drift apart.
+                    key = { _, row -> downloadRowKey(row) },
                 ) { index, row ->
                     // D16 + D19: a row glides to its new place when the list
                     // changes, and a swipe runs the row's own actions —
@@ -304,6 +310,13 @@ fun DownloadsScreen(
                     // wrapper so placement still glides.
                     DownloadRowEntrance(
                         index = index,
+                        // P2-12 (audit B-43): the entered-ids set — the
+                        // My List pattern. A row that scrolls out and back
+                        // finds its key already in the set and renders
+                        // settled instead of replaying its stagger.
+                        enterId = downloadRowKey(row),
+                        enteredIds = enteredRowKeys,
+                        onEntered = { enteredRowKeys = enteredRowKeys + it },
                         modifier = Modifier.animateItem(),
                     ) {
                     SwipeableDownloadRow(
@@ -395,6 +408,17 @@ fun DownloadsScreen(
 }
 
 /**
+ * P2-12 (audit B-43): the stable identity of a download row — the same
+ * string the LazyColumn keys the row by, so the entrance set and the list
+ * can never drift apart. A device row is its download id, a keep its item
+ * id; the prefix keeps the two kinds distinct.
+ */
+private fun downloadRowKey(row: DownloadRow): String = when (row) {
+    is DownloadRow.Device -> "device-${row.download.id}"
+    is DownloadRow.Keep -> "keep-${row.item.id}"
+}
+
+/**
  * Round 6 (Downloads): row entrance stagger — the Home rail pattern.
  * Rows enter with a spring stagger (index × 60ms) on load and when a new
  * download is added (a new key gets a fresh entrance; rows already on
@@ -403,23 +427,33 @@ fun DownloadsScreen(
  * reduced motion gets a plain fade. Paparazzi renders with a frozen
  * clock, so in inspection mode the entrance is already over and the
  * golden shows what the phone shows after it settles.
+ * P2-12 (audit B-43): "remembered visible state" used to mean the
+ * wrapper's own local state — which died with the recycled slot, so a
+ * row that scrolled out and back replayed its entrance anyway. The
+ * visibility now reads the parent's entered set ([enteredIds], the My
+ * List pattern), which outlives the slot: once a row's key is in the
+ * set, the row renders settled.
  */
 @Composable
 private fun DownloadRowEntrance(
     index: Int,
+    enterId: String,
+    enteredIds: Set<String>,
+    onEntered: (String) -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     val inInspectionMode = LocalInspectionMode.current
     val reduceMotion = rememberReduceMotion()
-    var visible by remember { mutableStateOf(inInspectionMode) }
-    LaunchedEffect(Unit) {
+    val isEntered = enterId in enteredIds
+    LaunchedEffect(enterId) {
         if (inInspectionMode) return@LaunchedEffect
+        if (enterId in enteredIds) return@LaunchedEffect
         delay(index * 60L)
-        visible = true
+        onEntered(enterId)
     }
     AnimatedVisibility(
-        visible = visible,
+        visible = isEntered || inInspectionMode,
         enter = fadeIn(
             animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
         ) + if (reduceMotion) {

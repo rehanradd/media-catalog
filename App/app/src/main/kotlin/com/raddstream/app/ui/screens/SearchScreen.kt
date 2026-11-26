@@ -325,6 +325,14 @@ fun SearchScreen(
     val pagingItems = viewModel.pagingData.collectAsLazyPagingItems()
     val groups = rememberSearchGroups(pagingItems, state)
     var showSheet by remember { mutableStateOf(false) }
+    // P2-12 (audit B-43): the suggestion chips' entered set — the My List
+    // pattern (MyListScreen, round 6 §4). The chips are one focus's
+    // transient list and their stagger key is null (entry-only), so the
+    // set is session-scoped, not reset per query: a reset would strand a
+    // chip retained across keystrokes invisible (its effect never re-runs
+    // on a null key). A chip seen once never re-staggers, in this list or
+    // the next — entrances run once per item per session.
+    var enteredSuggestionIds by remember { mutableStateOf(setOf<String>()) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     // Session 121 (P-12): submitting a search, or scrolling the results, dismisses
     // the keyboard — an open keyboard over the results was the whole complaint.
@@ -535,7 +543,17 @@ fun SearchScreen(
                             // the suggestions populate. Under inspection mode
                             // (Paparazzi) they render settled, so goldens
                             // are unchanged; reduce-motion renders directly.
-                            SearchStaggeredFade(delayMillis = searchEntranceDelayMs(index)) {
+                            SearchStaggeredFade(
+                                delayMillis = searchEntranceDelayMs(index),
+                                // P2-12 (audit B-43): the entered-ids set —
+                                // the My List pattern. A chip that scrolls
+                                // out of the row and back finds its work id
+                                // already in the set and renders settled
+                                // instead of replaying its stagger.
+                                enterId = "suggestion-${suggestion.id}",
+                                enteredIds = enteredSuggestionIds,
+                                onEntered = { enteredSuggestionIds = enteredSuggestionIds + it },
+                            ) {
                                 RaddChip(
                                     colors = raddFilterChipColors(),
                                     selected = false,
@@ -801,10 +819,21 @@ internal fun searchEntranceDelayMs(index: Int): Int = (index * 40).coerceIn(0, 3
  * delay is a coroutine delay before the flip, so the springs themselves
  * stay the RaddMotion tokens. Reduce-motion renders the content directly:
  * no movement, no wait.
+ * P2-12 (audit B-43): the visibility now reads the caller's entered set
+ * ([enteredIds], the My List pattern) instead of this wrapper's own local
+ * state — which died with the recycled lazy slot, so a result row that
+ * scrolled out and back replayed its entrance. [enterId] is the row's
+ * stable identity (the result trio's content key, or a suggestion's work
+ * id); [onEntered] records it once the delay has elapsed. The set lives
+ * above the lazy list and is reset on [staggerKey] — a new query
+ * re-staggers, a scroll-back does not.
  */
 @Composable
 internal fun SearchStaggeredFade(
     delayMillis: Int,
+    enterId: String,
+    enteredIds: Set<String>,
+    onEntered: (String) -> Unit,
     modifier: Modifier = Modifier,
     // Round 6 (motion): the stagger re-runs on every new query, not just on
     // entry. The key identifies the search whose results are on screen — the
@@ -825,14 +854,15 @@ internal fun SearchStaggeredFade(
     // Paparazzi does not set inspection mode itself — the snapshot test
     // provides it (shotSearch wraps in LocalInspectionMode provides true).
     val inInspectionMode = LocalInspectionMode.current
-    var visible by remember(staggerKey) { mutableStateOf(inInspectionMode) }
+    val isEntered = enterId in enteredIds
     LaunchedEffect(staggerKey) {
         if (inInspectionMode) return@LaunchedEffect
+        if (enterId in enteredIds) return@LaunchedEffect
         if (delayMillis > 0) delay(delayMillis.toLong())
-        visible = true
+        onEntered(enterId)
     }
     AnimatedVisibility(
-        visible = visible,
+        visible = isEntered || inInspectionMode,
         enter = fadeIn(animationSpec = RaddMotion.defaultEffects()) +
             slideInVertically(animationSpec = RaddMotion.defaultSpatial()) { it / 4 },
         exit = fadeOut(),
@@ -2084,6 +2114,12 @@ internal fun SearchContent(
     // row) and stays put on appends and while typing (settled rows stay
     // settled). See SearchStaggeredFade.
     val staggerKey = groups.firstOrNull()?.items?.firstOrNull()?.id
+    // P2-12 (audit B-43): the result rows' entered set — the My List
+    // pattern (MyListScreen, round 6 §4), copied exactly: the set lives
+    // here, above the LazyColumn, keyed on the stagger key like My List's
+    // filter key, so a new query resets it (every row re-staggers) while
+    // appends, typing and scroll-back leave settled rows settled.
+    var enteredResultRowIds by remember(staggerKey) { mutableStateOf(setOf<String>()) }
     when {
         !state.hasSearchIntent -> {
             SearchDiscoveryContent(
@@ -2231,9 +2267,21 @@ internal fun SearchContent(
                     // animation. The delay is pure over the row's position, so
                     // it is stable across recompositions.
                     group.items.chunked(3).forEachIndexed { rowIndex, trio ->
-                        item(key = "${group.typeKey}-${trio.joinToString(separator = ",") { it.id.toString() }}") {
+                        // P2-12 (audit B-43): the row key is hoisted so the
+                        // lazy item key and the entrance set track the same
+                        // identity — the key and the set can never drift.
+                        val rowKey = "${group.typeKey}-${trio.joinToString(separator = ",") { it.id.toString() }}"
+                        item(key = rowKey) {
                             SearchStaggeredFade(
                                 delayMillis = searchEntranceDelayMs(groupIndex * 10 + rowIndex),
+                                // P2-12 (audit B-43): the entered-ids set —
+                                // the My List pattern. A row that scrolls
+                                // out and back finds its key already in the
+                                // set and renders settled instead of
+                                // replaying its stagger.
+                                enterId = rowKey,
+                                enteredIds = enteredResultRowIds,
+                                onEntered = { enteredResultRowIds = enteredResultRowIds + it },
                                 // Round 6 (motion): re-staggers on every
                                 // new query — see the staggerKey above.
                                 staggerKey = staggerKey,

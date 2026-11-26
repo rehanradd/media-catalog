@@ -1115,6 +1115,14 @@ internal fun DetailContent(
     // actions above. Owned here, so the button and the rail agree.
     val similarBringIntoView = remember { BringIntoViewRequester() }
     val contentScope = rememberCoroutineScope()
+    // P2-12 (audit B-43): the sections' entered set — the My List pattern
+    // (MyListScreen, round 6 §4), copied exactly: the set lives here,
+    // above the LazyColumn, keyed on the section's fixed slot index, so a
+    // section that scrolls out and back finds its index already in the
+    // set and renders settled instead of replaying its stagger. The page
+    // is one title's, so the set is session-scoped — a new title rebuilds
+    // this content with a fresh set.
+    var enteredSectionIndices by remember { mutableStateOf(setOf<Int>()) }
 
     // Detail review (Nov 2026, P1): the hero bleeds full-width, so the
     // list itself carries no side padding — every item below pads itself
@@ -1155,7 +1163,11 @@ internal fun DetailContent(
         }
 
         item {
-            DetailEntrance(index = 0) {
+            DetailEntrance(
+                index = 0,
+                enteredIds = enteredSectionIndices,
+                onEntered = { enteredSectionIndices = enteredSectionIndices + it },
+            ) {
                 DetailHeroSection(
                     post = post,
                     capabilities = capabilities,
@@ -1172,7 +1184,11 @@ internal fun DetailContent(
         }
 
         item {
-            DetailEntrance(index = 1) {
+            DetailEntrance(
+                index = 1,
+                enteredIds = enteredSectionIndices,
+                onEntered = { enteredSectionIndices = enteredSectionIndices + it },
+            ) {
                 PrimaryActions(
                     modifier = pageSides,
                     // 2-button detail (Nov 2026): the label, the enabled
@@ -1208,7 +1224,11 @@ internal fun DetailContent(
         // never render as chips on this page, only as the one upgrade
         // affordance. The hero's included pill already states the tier.
         item {
-            DetailEntrance(index = 2) {
+            DetailEntrance(
+                index = 2,
+                enteredIds = enteredSectionIndices,
+                onEntered = { enteredSectionIndices = enteredSectionIndices + it },
+            ) {
                 DetailQualitySelector(
                     modifier = pageSides,
                     qualityOptions = qualityOptions,
@@ -1363,7 +1383,11 @@ internal fun DetailContent(
             val rowSeason = seasons.firstOrNull { it.number == episodeRowSeason }
             if (rowSeason != null && rowSeason.episodes.isNotEmpty()) {
                 item(contentType = "episode-row") {
-                    DetailEntrance(index = 5) {
+                    DetailEntrance(
+                        index = 5,
+                        enteredIds = enteredSectionIndices,
+                        onEntered = { enteredSectionIndices = enteredSectionIndices + it },
+                    ) {
                         EpisodeRowSection(
                             seasons = seasons,
                             selectedSeason = episodeRowSeason,
@@ -1394,7 +1418,11 @@ internal fun DetailContent(
         val cast = parseCastNames(post.castNames)
         if (cast.isNotEmpty()) {
             item {
-                DetailEntrance(index = 6) {
+                DetailEntrance(
+                    index = 6,
+                    enteredIds = enteredSectionIndices,
+                    onEntered = { enteredSectionIndices = enteredSectionIndices + it },
+                ) {
                     Box(pageSides) { CastSection(cast = cast, onActorClick = onActorClick) }
                 }
             }
@@ -2967,20 +2995,29 @@ private fun SeasonRow(
  * shows after it settles. The reload-failure banner is NOT wrapped — a
  * failure notice must be visible the moment it arrives, never after a
  * delay.
+ * P2-12 (audit B-43): the visibility now reads the parent's entered set
+ * ([enteredIds], the My List pattern, owned by [DetailContent] above the
+ * LazyColumn) instead of the wrapper's own local state — which died with
+ * the recycled slot, so a section that scrolled out and back replayed
+ * its entrance. Once a section's index is in the set, the section
+ * renders settled.
  */
 @Composable
 private fun DetailEntrance(
     index: Int,
+    enteredIds: Set<Int>,
+    onEntered: (Int) -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     val inInspectionMode = LocalInspectionMode.current
     val reduceMotion = rememberReduceMotion()
-    var visible by remember { mutableStateOf(inInspectionMode) }
-    LaunchedEffect(Unit) {
+    val isEntered = index in enteredIds
+    LaunchedEffect(index) {
         if (inInspectionMode) return@LaunchedEffect
+        if (index in enteredIds) return@LaunchedEffect
         delay(index * 60L)
-        visible = true
+        onEntered(index)
     }
     // Round-6 motion: the stagger rides the M3 Expressive tokens.
     // MaterialTheme.motionScheme does NOT expose defaultEffects() /
@@ -2990,7 +3027,7 @@ private fun DetailEntrance(
     // call sites outside a MaterialTheme scope — same springs, same
     // pixels, no double source (Theme.kt, S7).
     AnimatedVisibility(
-        visible = visible,
+        visible = isEntered || inInspectionMode,
         enter = fadeIn(
             animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
         ) + if (reduceMotion) {
