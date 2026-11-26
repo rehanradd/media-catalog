@@ -202,10 +202,13 @@ class SearchPagingTest {
         //
         // The footer sits below the fold in the test window (the round-2
         // category tabs added ~112dp above the results), so scroll the
-        // list to it first — item 4, after the tabs, the summary, the
-        // header and the one poster row — or waitUntil polls a footer
-        // the LazyColumn never composed.
-        compose.onNodeWithTag(SearchResultsListTag).performScrollToIndex(4)
+        // list to it first — item 3, after the tabs, the header and the
+        // one poster row. (P1-11 deleted the "Showing 34 of 52 results"
+        // count line, so the single-row retry footer moved from index 4
+        // to index 3; the Loading sibling's two skeleton rows still reach
+        // index 4.) Scrolling composes the footer, or waitUntil polls a
+        // footer the LazyColumn never composed.
+        compose.onNodeWithTag(SearchResultsListTag).performScrollToIndex(3)
         compose.waitUntil(timeoutMillis = 5_000) {
             compose.onAllNodesWithText("Could not load more.")
                 .fetchSemanticsNodes().isNotEmpty()

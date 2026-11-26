@@ -98,8 +98,11 @@ class SearchDiscoveryTest {
 
         compose.onNodeWithText("Continue watching").assertIsDisplayed()
         compose.onNodeWithText("Trending now").assertIsDisplayed()
-        compose.onNodeWithText("For you").assertIsDisplayed()
-        compose.onNodeWithText("Recent searches").assertIsDisplayed()
+        // "For you" and "Recent searches" sit below the fold in the short
+        // Robolectric window — the P1-12 Continue Watching section added
+        // ~3 rows above them — so their displayed-assertions come after
+        // the position checks, scrolled into view (the way the test
+        // already did for "For you" at the end).
         // The old discovery had neither of these — a regression to the
         // chip/genre layout would show them again.
         compose.onNodeWithText("Trending searches").assertDoesNotExist()
@@ -124,6 +127,7 @@ class SearchDiscoveryTest {
         // Robolectric window — scroll it into view before asserting it is
         // displayed, the way HomeHeaderTest scrolls to its "Show all".
         compose.onNodeWithText("For you").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Recent searches").performScrollTo().assertIsDisplayed()
     }
 
     @Test
