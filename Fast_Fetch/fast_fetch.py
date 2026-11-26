@@ -8474,8 +8474,11 @@ def _save_scraped_data(data: dict, *, ensure_db: bool = True,
     # page (1,073 such rows live, all release-less because the wrong site's
     # parser never ran on them); the host is ground truth. The UPDATE path
     # below never touches source_site, so this only corrects NEW rows.
+    # (Wave 6 merge: the override only fires for the stale default —
+    # an explicit non-'vegamovies' label is authoritative and is never
+    # clobbered by the host, per the backfill guard's contract.)
     _host_site = source_site_from_url(url)
-    if _host_site:
+    if _host_site and source_site in ("", "vegamovies"):
         source_site = _host_site
 
     # The sitemap row that queued this page is the row to mark scraped, not
@@ -10148,13 +10151,13 @@ def _bank_hubcloud_siblings(*, release_id, pressed_id, candidates):
                 # derive still applies to fsl_r2's R2 expiry; for a
                 # PixelServer sibling the derive returns None and the
                 # clear below runs, as drop-10g intended.)
-                _derived = _derive_resolve_expiry(cand[final_url])
+                _derived = _derive_resolve_expiry(cand["final_url"])
                 if _derived is not None:
-                    record_link_expiry(sid, expires_at=_derived[expires_at],
-                                       observed_via=_derived[observed_via])
+                    record_link_expiry(sid, expires_at=_derived["expires_at"],
+                                       observed_via=_derived["observed_via"])
                 else:
                     record_link_expiry(sid, clear=True,
-                                       observed_via=signed_params)
+                                       observed_via="signed_params")
         except Exception:
             pass
     return len(banked)

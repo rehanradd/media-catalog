@@ -10,7 +10,13 @@ from the shared egress IP. What this pins, all stdlib-only, zero network:
 * ``host_resolvers.http_request`` fails fast after the FIRST timeout
   (``TIMEOUT_RETRIES = 0``) while a reset/refusal/DNS failure keeps the
   ``TRANSPORT_RETRIES = 3`` budget — the MovieBox edge resets ~2 of 3
-  handshakes, so resets must still retry;
+  handshakes, so resets must still retry. (The urllib-transport tests
+  below target ``_http_request_urllib`` directly: after the keep-alive
+  merge ``http_request`` is a dispatcher that routes HTTPS to the pool,
+  and the pool does not use the ``_open`` seam those tests mock. The
+  dispatcher routes a ``timeout_retries`` opt-in to the urllib
+  transport, and the pool applies the same fail-fast — see
+  ``KeepAliveFetch``.)
 * after 2 consecutive timeouts one host is skipped without a socket
   call for 120 s (the breaker); any HTTP answer resets it at once;
 * ``KeepAliveFetch.fetch`` applies the same timeout fail-fast (a dead
@@ -170,7 +176,7 @@ class HttpRequestTimeoutTests(unittest.TestCase):
             raise TimeoutError("timed out")
 
         with mock.patch.object(hr, "_open", fake_open):
-            status, body, _headers, _final = hr.http_request(
+            status, body, _headers, _final = hr._http_request_urllib(
                 "https://vidly.pro/e/abc", timeout=12.5)
         self.assertEqual(status, 0)
         self.assertEqual(len(calls), 1)
@@ -203,7 +209,7 @@ class HttpRequestTimeoutTests(unittest.TestCase):
 
         with mock.patch.object(hr, "_open", fake_open), \
                 mock.patch("time.sleep"):
-            status, _body, _h, _f = hr.http_request(
+            status, _body, _h, _f = hr._http_request_urllib(
                 "https://themoviebox.xyz/e/abc", timeout=5)
         self.assertEqual(status, 200)
         self.assertEqual(len(calls), 3)
@@ -217,7 +223,7 @@ class HttpRequestTimeoutTests(unittest.TestCase):
 
         with mock.patch.object(hr, "_open", fake_open), \
                 mock.patch("time.sleep"):
-            status, _body, _h, _f = hr.http_request(
+            status, _body, _h, _f = hr._http_request_urllib(
                 "https://themoviebox.xyz/e/abc", timeout=5)
         self.assertEqual(status, 0)
         self.assertEqual(len(calls), 4)  # 1 + TRANSPORT_RETRIES
@@ -230,7 +236,7 @@ class HttpRequestTimeoutTests(unittest.TestCase):
             raise _http_error(403)
 
         with mock.patch.object(hr, "_open", fake_open):
-            status, _body, _h, _f = hr.http_request(
+            status, _body, _h, _f = hr._http_request_urllib(
                 "https://hubcdn.io/l.php?file=x", timeout=5)
         self.assertEqual(status, 403)
         self.assertEqual(len(calls), 1)
@@ -250,12 +256,12 @@ class HostTimeoutBreakerTests(unittest.TestCase):
             raise TimeoutError("timed out")
 
         with mock.patch.object(hr, "_open", fake_open):
-            hr.http_request("https://vidly.pro/e/one", timeout=5)
-            hr.http_request("https://vidly.pro/e/two", timeout=5)
+            hr._http_request_urllib("https://vidly.pro/e/one", timeout=5)
+            hr._http_request_urllib("https://vidly.pro/e/two", timeout=5)
             calls = []
             with mock.patch.object(hr, "_open",
                                    lambda *a, **k: calls.append(1)):
-                status, body, _h, _f = hr.http_request(
+                status, body, _h, _f = hr._http_request_urllib(
                     "https://vidly.pro/e/three", timeout=5)
         self.assertEqual(status, 0)
         self.assertIn("budget exhausted", body)
@@ -266,8 +272,8 @@ class HostTimeoutBreakerTests(unittest.TestCase):
             raise TimeoutError("timed out")
 
         with mock.patch.object(hr, "_open", fake_open):
-            hr.http_request("https://vidly.pro/e/one", timeout=5)
-            hr.http_request("https://vidly.pro/e/two", timeout=5)
+            hr._http_request_urllib("https://vidly.pro/e/one", timeout=5)
+            hr._http_request_urllib("https://vidly.pro/e/two", timeout=5)
         seen = []
 
         def ok_open(request, timeout, follow=True):
@@ -275,7 +281,7 @@ class HostTimeoutBreakerTests(unittest.TestCase):
             return FakeResponse(200, "ok")
 
         with mock.patch.object(hr, "_open", ok_open):
-            status, _b, _h, _f = hr.http_request(
+            status, _b, _h, _f = hr._http_request_urllib(
                 "https://mixdrop.to/e/abc", timeout=5)
         self.assertEqual(status, 200)
         self.assertEqual(len(seen), 1)
@@ -290,8 +296,8 @@ class HostTimeoutBreakerTests(unittest.TestCase):
             raise _http_error(404)
 
         with mock.patch.object(hr, "_open", flaky_open):
-            hr.http_request("https://vidly.pro/e/one", timeout=5)
-            hr.http_request("https://vidly.pro/e/two", timeout=5)
+            hr._http_request_urllib("https://vidly.pro/e/one", timeout=5)
+            hr._http_request_urllib("https://vidly.pro/e/two", timeout=5)
         # One timeout + one 404 answer: the count is back to zero, so a
         # further timeout is attempted (not skipped) and then fails fast.
         attempts = []
@@ -301,7 +307,7 @@ class HostTimeoutBreakerTests(unittest.TestCase):
             raise TimeoutError("timed out")
 
         with mock.patch.object(hr, "_open", timeout_open):
-            status, _b, _h, _f = hr.http_request(
+            status, _b, _h, _f = hr._http_request_urllib(
                 "https://vidly.pro/e/three", timeout=5)
         self.assertEqual(status, 0)
         self.assertEqual(len(attempts), 1)
@@ -316,7 +322,7 @@ class HostTimeoutBreakerTests(unittest.TestCase):
             return FakeResponse(200, "ok")
 
         with mock.patch.object(hr, "_open", ok_open):
-            status, _b, _h, _f = hr.http_request(
+            status, _b, _h, _f = hr._http_request_urllib(
                 "https://vidly.pro/e/abc", timeout=5)
         self.assertEqual(status, 200)
         self.assertEqual(len(seen), 1)
@@ -339,6 +345,7 @@ class FilmuInheritsTheCapTests(unittest.TestCase):
 
         with mock.patch.object(hr, "_open", fake_open):
             res = hr.unwrap_filmu("https://vidly.pro/movie/550",
+                                  fetch=hr._http_request_urllib,
                                   verify=False)
         self.assertEqual(len(calls), 1)
         self.assertEqual(res["status"], "unknown")

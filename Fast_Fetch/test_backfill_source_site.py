@@ -202,10 +202,14 @@ class SaveScrapedDataSourceSiteGuardTests(unittest.TestCase):
         self._save(url)
         self.assertEqual(self._stored_site(url), "vegamovies")
 
-    def test_unknown_host_keeps_the_default(self):
+    def test_unknown_host_falls_back_to_domain_stem(self):
+        # (Wave 6 merge: the 'vegamovies' expectation was stale —
+        # pre-insert-helper, when the validator defaulted to it.
+        # Insert-helper derives the domain stem for an unknown host,
+        # pinned by its own test, so the stem is stored.)
         url = "https://unknown-host.example/guard-test/"
         self._save(url)
-        self.assertEqual(self._stored_site(url), "vegamovies")
+        self.assertEqual(self._stored_site(url), "unknown-host")
 
 
 if __name__ == "__main__":

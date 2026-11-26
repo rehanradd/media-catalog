@@ -1024,7 +1024,8 @@ def _http_request_urllib(url: str, headers: dict | None = None, timeout: float =
 def http_request(url: str, headers: dict | None = None, timeout: float = DEFAULT_TIMEOUT,
                  method: str = "GET", follow: bool = True,
                  data: bytes | None = None,
-                 transport_retries: int = TRANSPORT_RETRIES):
+                 transport_retries: int = TRANSPORT_RETRIES,
+                 timeout_retries: int = TIMEOUT_RETRIES):
     """
     (status, body, headers, final_url) for one request.
 
@@ -1047,13 +1048,22 @@ def http_request(url: str, headers: dict | None = None, timeout: float = DEFAULT
     back to ``_http_request_urllib``.
     """
     parts = urllib.parse.urlsplit(url or "")
+    if timeout_retries != TIMEOUT_RETRIES:
+        # Opt-in timeout-retry budget (API-14): the pool does not take
+        # a timeout_retries budget, so route to the urllib transport
+        # that implements it.
+        return _http_request_urllib(url, headers=headers, timeout=timeout,
+                                    method=method, follow=follow, data=data,
+                                    transport_retries=transport_retries,
+                                    timeout_retries=timeout_retries)
     if parts.scheme in ("http", "https") and parts.hostname:
         return _KEEPALIVE.fetch(url, headers=headers, timeout=timeout,
                                 method=method, follow=follow, data=data,
                                 transport_retries=transport_retries)
     return _http_request_urllib(url, headers=headers, timeout=timeout,
                                 method=method, follow=follow, data=data,
-                                transport_retries=transport_retries)
+                                transport_retries=transport_retries,
+                                timeout_retries=timeout_retries)
 
 
 #: Bound on the HubCloud keep-alive pool (2026-11-23, one-round refresh):
