@@ -238,7 +238,7 @@ internal fun SelectedCheckIcon(modifier: Modifier = Modifier) {
         painter = painterResource(R.drawable.ic_action_check),
         contentDescription = null,
         tint = MaterialTheme.colorScheme.onPrimaryContainer,
-        modifier = modifier.size(18.dp).testTag(SelectedCheckTag),
+        modifier = modifier.size(18.dp).testTag(SelectedCheckTag), // token-exempt: icon size, not spacing
     )
 }
 
