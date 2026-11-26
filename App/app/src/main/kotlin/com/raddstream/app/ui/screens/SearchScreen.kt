@@ -86,6 +86,8 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -292,6 +294,13 @@ fun SearchScreen(
     initialIndustry: String? = null,
     /** A language filter to apply at once — a language chip on Home lands here with the language filled in. */
     initialLanguage: String? = null,
+    /**
+     * P1-2 (audit C-2): the Home header glyph's deep link — focus the
+     * search field and raise the keyboard on entry, so the viewer types
+     * at once instead of tapping the field first. False everywhere else:
+     * the tab tap, an actor tap and a facet chip all land unfocused.
+     */
+    focusOnEntry: Boolean = false,
     viewModel: SearchViewModel = hiltViewModel(),
     /**
      * Round 6 motion infra: the shared-transition scopes the NavHost
@@ -316,6 +325,18 @@ fun SearchScreen(
     // the keyboard — an open keyboard over the results was the whole complaint.
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+
+    // P1-2: the focused entry — the field takes focus once the screen has
+    // composed, and the keyboard is raised with it. Keyed on the argument,
+    // so a rotation never re-fires it (the field already holds focus) and
+    // a tab-tap entry (focusOnEntry false) never steals focus.
+    val searchFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(focusOnEntry) {
+        if (focusOnEntry) {
+            searchFocusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
 
     // SE-3 (round 2): voice entry. The mic opens the platform speech
     // recognizer and the first heard phrase runs as a search at once
@@ -420,6 +441,7 @@ fun SearchScreen(
                     viewModel.onQueryChanged("")
                     viewModel.resetFilters()
                 },
+                focusRequester = searchFocusRequester,
             )
         },
     ) { contentPadding ->
@@ -617,6 +639,11 @@ private fun SearchTopBar(
     voiceSearchAvailable: Boolean,
     showBack: Boolean,
     onBack: () -> Unit,
+    /**
+     * P1-2: the focused entry's handle — [SearchScreen] requests focus on
+     * it once, on entry. Null (the default) leaves the field unfocused.
+     */
+    focusRequester: FocusRequester? = null,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -636,6 +663,7 @@ private fun SearchTopBar(
             query = query,
             onQueryChanged = onQueryChanged,
             onSubmit = onSubmit,
+            focusRequester = focusRequester,
             onVoiceSearch = onVoiceSearch,
             voiceSearchAvailable = voiceSearchAvailable,
             modifier = Modifier.weight(1f),
@@ -670,6 +698,12 @@ internal fun SearchField(
     onQueryChanged: (String) -> Unit,
     onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * P1-2: the focused entry's handle — [SearchScreen] requests focus on
+     * it once, on entry. Null (the default) leaves the field unfocused:
+     * every other caller renders the field without taking focus.
+     */
+    focusRequester: FocusRequester? = null,
     // Audit #17: the Home search bar names what it takes — titles and
     // shows — while Search keeps the shorter hint. The review's prompt
     // names all three: titles, genres, or cast.
@@ -682,6 +716,7 @@ internal fun SearchField(
         value = query,
         onValueChange = onQueryChanged,
         modifier = modifier.fillMaxWidth().height(52.dp)
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .semantics { contentDescription = label },
         singleLine = true,
         placeholder = { Text(label) },

@@ -115,12 +115,11 @@ class RemoteConfigWatcher @Inject constructor(
         // The theme rides the same successful body: a failed poll leaves the
         // last good theme in place, exactly like the switches above.
         settings.saveTheme(config.theme)
-        // The tabs ride the same body, under the same rule: a failed poll
-        // leaves the last good order in place, and a body that carries no
-        // tabs (an older deployment) leaves the bar on its own four.
-        settings.saveTabs(config.tabs)
+        // P1-1: the operator tab list is gone — the tab set is locked in
+        // code (PanelTabs) and no `tabs` value rides this body any more.
+        // A body that still carries one is ignored at decode time.
         // The disclaimer rides the same body, under the same rule as the
-        // tabs: a failed poll leaves the last good text in place, and a
+        // theme: a failed poll leaves the last good text in place, and a
         // body that carries no disclaimer (an older deployment, or the
         // operator retracting it) stores empty. Empty is stored as the
         // panel value, and the dialog resolves the shipped default from it

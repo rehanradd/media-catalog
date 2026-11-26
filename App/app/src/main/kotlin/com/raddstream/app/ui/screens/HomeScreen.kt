@@ -424,8 +424,9 @@ internal fun HomeContent(
     onOpenSettingsClick: () -> Unit = {},
     /**
      * P0-4: the header's search glyph — the Search tab (HomeScreen's
-     * onSearchClick, wired by NavGraph). The focused-field deep link is a
-     * later P1; the glyph opens the tab.
+     * onSearchClick, wired by NavGraph). P1-2: the glyph deep-links into
+     * a focused search field (keyboard up on entry); the tab tap keeps
+     * the plain, unfocused route.
      */
     onSearchClick: () -> Unit = {},
     /** P0-4: the header avatar — see [HomeScreen.onProfileClick]. */

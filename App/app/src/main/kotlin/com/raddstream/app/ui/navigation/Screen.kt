@@ -29,13 +29,17 @@ sealed class Screen(val route: String) {
     object Setup : Screen("setup")
     object Region : Screen("region")
     object Home : Screen("home")
-    object Search : Screen("search?query={query}&genre={genre}&industry={industry}&language={language}") {
+    object Search : Screen("search?query={query}&genre={genre}&industry={industry}&language={language}&focus={focus}") {
         const val ARG_QUERY = "query"
         const val ARG_GENRE = "genre"
         const val ARG_INDUSTRY = "industry"
         const val ARG_LANGUAGE = "language"
+        const val ARG_FOCUS = "focus"
 
-        /** The tab's plain address — the bottom bar and Home navigate here, with no query. */
+        /** Value of [ARG_FOCUS] that focuses the search field on entry (P1-2). */
+        const val FOCUS_ON_ENTRY = "1"
+
+        /** The tab's plain address — the bottom bar navigates here, with no query and no focus. */
         const val PLAIN_ROUTE = "search"
 
         /**
@@ -43,13 +47,18 @@ sealed class Screen(val route: String) {
          * detail card), or with a facet already applied (a genre/industry/
          * language chip on Home). A blank value is omitted, so the plain tab
          * and the old actor links keep working.
+         *
+         * P1-2: [focusOnEntry] is the Home header glyph's deep link — the
+         * field is focused and the keyboard raised on entry. The tab tap
+         * keeps the plain route, so it stays unfocused.
          */
-        fun createRoute(query: String? = null, genre: String? = null, industry: String? = null, language: String? = null): String {
+        fun createRoute(query: String? = null, genre: String? = null, industry: String? = null, language: String? = null, focusOnEntry: Boolean = false): String {
             val args = listOfNotNull(
                 query.takeIf { !it.isNullOrBlank() }?.let { "query=${encodeRouteArg(it)}" },
                 genre.takeIf { !it.isNullOrBlank() }?.let { "genre=${encodeRouteArg(it)}" },
                 industry.takeIf { !it.isNullOrBlank() }?.let { "industry=${encodeRouteArg(it)}" },
                 language.takeIf { !it.isNullOrBlank() }?.let { "language=${encodeRouteArg(it)}" },
+                if (focusOnEntry) "$ARG_FOCUS=$FOCUS_ON_ENTRY" else null,
             )
             return if (args.isEmpty()) PLAIN_ROUTE else "search?" + args.joinToString("&")
         }

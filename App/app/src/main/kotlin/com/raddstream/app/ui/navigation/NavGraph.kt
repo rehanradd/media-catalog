@@ -433,8 +433,6 @@ fun RaddStreamNavGraph(
     navController: NavHostController = rememberNavController(),
     startDestination: String,
     features: RemoteFeatures = RemoteFeatures(),
-    /** The operator's tab order from the panel (`tabs` tuning key), as the activity last received it; empty means "never received", and the bar falls back to its own locked four. P0-1: the list itself no longer reorders the bar (see PanelTabs). */
-    tabs: List<String> = emptyList(),
     /** The operator's theme, for the hero knobs Home reads from it. */
     theme: PanelTheme = PanelTheme(),
     /** The viewer's own autoplay-previews switch (plan §5 step 10): either it or the operator's hero flag being off stops the carousel. */
@@ -526,9 +524,10 @@ fun RaddStreamNavGraph(
         onUnknownDeepLinkConsumed()
     }
 
-    // P0-1/P0-2: the tab set is locked in code — Home · Search ·
-    // Downloads · Profile (PanelTabs.resolve). The operator list can no
-    // longer reorder it or resurrect a removed tab, and Live TV is a
+    // P0-1/P0-2/P1-1: the tab set is locked in code — Home · Search ·
+    // Downloads · Profile (PanelTabs.resolve). There is no operator list
+    // any more: the panel's `tabs` key is gone from the app, so nothing
+    // can reorder the set or resurrect a removed tab, and Live TV is a
     // route, not a tab (its rail lands on Home separately). The routes
     // stay registered even for a tab the operator hid — a back stack
     // that already holds that screen must not name a destination the
@@ -542,7 +541,7 @@ fun RaddStreamNavGraph(
     // Downloads and Profile have no filled tab variants, so they wear
     // their house action glyphs (ic_action_download, ic_action_user) in
     // both states — the same stroke language, no new drawables.
-    val bottomNavItems = PanelTabs.resolve(tabs, features.search)
+    val bottomNavItems = PanelTabs.resolve(features.search)
         // MX #7 — Kids Lock: Downloads leaves the bar in kids mode — a
         // kid's downloads are unfiltered, so they are not reachable in
         // kids mode at all. Home, Search and Profile stay.
@@ -766,7 +765,10 @@ fun RaddStreamNavGraph(
 
             composable(Screen.Home.route) {
                 HomeScreen(
-                    onSearchClick = { navController.navigate(Screen.Search.PLAIN_ROUTE) },
+                    // P1-2: the header glyph deep-links into a focused
+                    // search field — keyboard up, field focused on entry.
+                    // The tab tap keeps the plain route (unfocused).
+                    onSearchClick = { navController.navigate(Screen.Search.createRoute(focusOnEntry = true)) },
                     // Audit #17: the search bar's submit carries the typed query
                     // into Search, so the viewer never retypes it there.
                     onSearchQuery = { query ->
@@ -869,6 +871,13 @@ fun RaddStreamNavGraph(
                         type = NavType.StringType
                         defaultValue = ""
                     },
+                    // P1-2: the Home header glyph lands here with the field
+                    // focused; the plain tab navigates with no argument, so
+                    // the default keeps it unfocused.
+                    navArgument(Screen.Search.ARG_FOCUS) {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    },
                 ),
             ) { backStackEntry ->
                 SearchScreen(
@@ -876,6 +885,7 @@ fun RaddStreamNavGraph(
                     initialGenre = backStackEntry.arguments?.getString(Screen.Search.ARG_GENRE)?.takeIf { it.isNotBlank() },
                     initialIndustry = backStackEntry.arguments?.getString(Screen.Search.ARG_INDUSTRY)?.takeIf { it.isNotBlank() },
                     initialLanguage = backStackEntry.arguments?.getString(Screen.Search.ARG_LANGUAGE)?.takeIf { it.isNotBlank() },
+                    focusOnEntry = backStackEntry.arguments?.getString(Screen.Search.ARG_FOCUS) == Screen.Search.FOCUS_ON_ENTRY,
                     onPostClick = { post -> navController.navigateToPost(post) },
                     onBrowse = { type -> navController.navigate(Screen.Browse.createRoute(type)) },
                     // Audit Search #3: the error state offers "Open Settings".

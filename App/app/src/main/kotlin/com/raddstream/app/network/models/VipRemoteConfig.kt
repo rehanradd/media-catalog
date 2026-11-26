@@ -18,6 +18,14 @@ import com.google.gson.annotations.SerializedName
  * (`ApiProvider.streamRedirectUrl` → `/api/v1/stream?id=<handle>`). A deployment whose remote
  * config still carries `link_shorteners` is not an error and needs no client code: Gson
  * ignores the key, and `VipRemoteConfigTest` pins that the rest of the body still decodes.
+ *
+ * **The operator tab list is retired the same way (P1-1, audit B-4).** The
+ * panel's `tabs` tuning key used to order the bottom bar; the tab set is
+ * now locked in code ([com.raddstream.app.ui.navigation.PanelTabs]) and
+ * the panel keeps Search as a kill-switch only, through its feature flag.
+ * A deployment whose remote config still carries `tabs` is not an error
+ * and needs no client code: Gson ignores the key, and
+ * `VipRemoteConfigTest` pins that the rest of the body still decodes.
  */
 data class VipRemoteConfig(
     val success: Boolean = false,
@@ -141,15 +149,6 @@ data class VipRemoteConfig(
      * which is the app this build has always shipped.
      */
     val theme: PanelTheme = PanelTheme(),
-    /**
-     * The operator's bottom-bar tabs, in order, as set in the panel's `tabs`
-     * tuning key. Empty from an older deployment — the app then keeps its own
-     * four, exactly like the sections above. The list is authoritative when
-     * present (a tab the operator did not list does not show), except Home,
-     * which [com.raddstream.app.ui.navigation.PanelTabs.resolve] pins first:
-     * the app cannot function without a way back to it.
-     */
-    val tabs: List<String> = emptyList(),
     /**
      * The operator's disclaimer, published by the admin panel and served on
      * this same body. Empty text from an older deployment — or from a panel

@@ -681,29 +681,7 @@ class ServerSettingsRepository @Inject constructor(
     }
 
     /**
-     * The operator's tab list, mirrored the same way as the theme above: the
-     * last body we actually received is what the bar shows, so a dead server
-     * on launch leaves the previous order in force. Empty means "never
-     * received" — the bar falls back to its own four (see
-     * [com.raddstream.app.ui.navigation.PanelTabs]).
-     */
-    val panelTabs: Flow<List<String>> = dataStore.data.map { preferences ->
-        preferences[PANEL_TABS_KEY]
-            ?.split(",")
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-            ?: emptyList()
-    }
-
-    /** Record one received tab list, from the same successful poll as [saveTheme]. */
-    suspend fun saveTabs(tabs: List<String>) {
-        dataStore.edit { preferences ->
-            preferences[PANEL_TABS_KEY] = tabs.joinToString(",")
-        }
-    }
-
-    /**
-     * The operator's disclaimer, mirrored the same way as the theme and tabs:
+     * The operator's disclaimer, mirrored the same way as the theme:
      * the last body actually received is what the app shows, so a dead
      * server on launch leaves the previous disclaimer in force. Empty text
      * means "nothing published" — the dialog never opens on an empty text,
@@ -719,7 +697,7 @@ class ServerSettingsRepository @Inject constructor(
         )
     }
 
-    /** Record one received disclaimer, from the same successful poll as [saveTabs]. */
+    /** Record one received disclaimer, from the same successful poll as [saveTheme]. */
     suspend fun saveDisclaimer(disclaimer: PanelDisclaimer) {
         dataStore.edit { preferences ->
             preferences[DISCLAIMER_TEXT_KEY] = disclaimer.text
@@ -799,7 +777,7 @@ class ServerSettingsRepository @Inject constructor(
             .takeIf { it == "480p" || it == "720p" } ?: "480p"
     }
 
-    /** Record one received free quality cap, from the same successful poll as [saveTabs]. */
+    /** Record one received free quality cap, from the same successful poll as [saveTheme]. */
     suspend fun saveFreeQualityCap(cap: String) {
         dataStore.edit { preferences ->
             preferences[FREE_QUALITY_CAP_KEY] =
@@ -1262,7 +1240,6 @@ class ServerSettingsRepository @Inject constructor(
         private val FEATURE_ADS_KEY = booleanPreferencesKey("feature_ads")
         private val THEME_MODE_KEY = stringPreferencesKey("theme_mode")
         private val PLAYER_THEME_KEY = stringPreferencesKey("player_theme")
-        private val PANEL_TABS_KEY = stringPreferencesKey("panel_tabs")
         private val DISCLAIMER_TEXT_KEY = stringPreferencesKey("disclaimer_text")
         private val DISCLAIMER_VERSION_KEY = intPreferencesKey("disclaimer_version")
         private val DISCLAIMER_EMAIL_KEY = stringPreferencesKey("disclaimer_email")

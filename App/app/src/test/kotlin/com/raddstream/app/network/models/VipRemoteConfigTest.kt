@@ -444,8 +444,10 @@ class VipRemoteConfigTest {
 
         assertEquals(listOf(2), config.hiddenWorkIds)
 
-        assertEquals(listOf("settings", "home"), config.tabs)
-
+        // P1-1: the panel's `tabs` key is retired — the body above still
+        // carries one, and the decode succeeds because Gson ignores it.
+        // Nothing reads it any more: the tab set is locked in code
+        // (PanelTabs), and the panel keeps Search as a kill-switch only.
         assertEquals("Links come from public sites. We host nothing.", config.disclaimer.text)
         assertEquals(3, config.disclaimer.version)
         assertEquals("radddao1@gmail.com", config.disclaimer.email)
