@@ -608,6 +608,10 @@ internal fun MyListLoadedContent(
                             // L2 (round 2): the download badge — a verified
                             // copy on the device, from the keep store.
                             isDownloaded = state.downloadedPostIds.contains(post.id),
+                            // P1-3 (B-10): a downloaded badge may land on any
+                            // tile in this grid, so the slot stays reserved
+                            // and the grid keeps uniform heights.
+                            reserveBadgeSlot = true,
                             // The bar paints only where a real watch row
                             // says the viewer stopped halfway — never a
                             // bar for a title with no position (see
@@ -1088,6 +1092,9 @@ internal fun PopularRow(
                     // badge too — the rail is where the viewer saves
                     // from, so a copy already on the device says so here.
                     isDownloaded = downloadedPostIds.contains(post.id),
+                    // P1-3 (B-10): same reservation as the grid above —
+                    // a badge may land on any tile in this rail.
+                    reserveBadgeSlot = true,
                     // The 3-up cells are too narrow for the full
                     // "★ 8.6 · 2024 · Series" line — it truncated to
                     // "S..." on every card. Rating + year only.

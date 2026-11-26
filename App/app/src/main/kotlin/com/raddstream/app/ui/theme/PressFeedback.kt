@@ -26,15 +26,20 @@ import com.raddstream.app.ui.components.rememberReduceMotion
  * Usage: create the source once in the composable, pass it to the clickable /
  * Button's `interactionSource`, apply [pressScale] to the same node, and call
  * [PressHaptics] once in the body.
+ *
+ * P1-4 (B-11): [pressedScale] lets one surface press deeper than the
+ * shared token — PosterCard passes 0.96 while the ripple carries the
+ * primary feedback. Everything else keeps the 0.97 default.
  */
 @Composable
 fun Modifier.pressScale(
     interactionSource: MutableInteractionSource,
     enabled: Boolean = true,
+    pressedScale: Float = RaddTokens.Motion.PressScale,
 ): Modifier {
     val pressed by interactionSource.collectIsPressedAsState()
     val reduceMotion = rememberReduceMotion()
-    val target = if (pressed && enabled && !reduceMotion) RaddTokens.Motion.PressScale else 1f
+    val target = if (pressed && enabled && !reduceMotion) pressedScale else 1f
     val scale by animateFloatAsState(
         targetValue = target,
         animationSpec = RaddMotion.defaultEffects(),

@@ -1,10 +1,16 @@
 package com.raddstream.app.ui.components
 
 import android.graphics.Bitmap
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -179,6 +185,18 @@ fun PosterCard(
      */
     isDownloaded: Boolean = false,
     /**
+     * P1-3 (B-10): reserve the 24 dp badge slot even when this tile has
+     * no badges, so a surface where a badge is EXPECTED stays uniform.
+     * Only My List passes true — it is the one surface whose tiles join
+     * the download store, so a downloaded badge may appear on any tile
+     * there and the grid must not raggedly grow a row when one lands.
+     * Everywhere else the slot collapses when empty (see the badge row
+     * below), so an unbadged tile is 24 dp tighter. False by default:
+     * uniformity bought with permanent empty space is the bug B-10
+     * names, and no other caller expects a badge on every tile.
+     */
+    reserveBadgeSlot: Boolean = false,
+    /**
      * My List review (Nov 2026): the compact meta line for the 3-up
      * starter rail — year and rating only, "2024 · ★ 8.6", no type word.
      * Three segments truncate to "S..." in a 3-up cell; Home and Search
@@ -301,10 +319,17 @@ fun PosterCard(
 
     val clickable = Modifier.semantics { contentDescription = a11y }
 
-    // UI-fix P1-X1: the tile's own press source — the scale + haptic track
-    // the same presses the tile's combinedClickable already owns.
+    // P1-4 (B-11): the tile's own press source — the scale + ripple
+    // track the same presses the tile's combinedClickable already owns.
+    // The haptic does NOT ride this source any more: a tick on every
+    // tile tap is noisy, so haptics are gated to the primary actions —
+    // the play button and the Pick 3 heart — each on its own source
+    // below. The tile tap itself gets ripple + scale only.
     val pressSource = remember { MutableInteractionSource() }
-    PressHaptics(pressSource)
+    val playPressSource = remember { MutableInteractionSource() }
+    PressHaptics(playPressSource)
+    val favoritePressSource = remember { MutableInteractionSource() }
+    PressHaptics(favoritePressSource)
 
     // Home fix (Nov 2026): D-pad / remote focus. The tile is focusable by
     // default (combinedClickable), but a focused tile painted nothing — a
@@ -325,25 +350,25 @@ fun PosterCard(
         modifier = modifier
             .fillMaxWidth()
             .then(clickable)
-            .pressScale(pressSource)
+            .pressScale(pressSource, pressedScale = TILE_PRESS_SCALE)
             .onFocusChanged { isFocused = it.isFocused }
             .then(
                 when {
                     onClick != null && onLongClick != null ->
                         Modifier.combinedClickable(
                             interactionSource = pressSource,
-                            // 1.7.0 has no interactionSource-only overload:
-                            // the indication is required, and null is right
-                            // here — pressScale is the tile's feedback now,
-                            // not the Material ripple.
-                            indication = null,
+                            // P1-4 (B-11): no indication override — the
+                            // default LocalIndication is the M3 ripple, so
+                            // the tile gets its state layer back. The old
+                            // `indication = null` (pressScale as the only
+                            // feedback) is gone; scale is the secondary cue
+                            // now, at 0.96, and the ripple is the primary one.
                             onClick = onClick,
                             onLongClick = onLongClick,
                         )
                     onClick != null ->
                         Modifier.combinedClickable(
                             interactionSource = pressSource,
-                            indication = null,
                             onClick = onClick,
                         )
                     else -> Modifier
@@ -549,6 +574,7 @@ fun PosterCard(
             if (onToggleFavorite != null) {
                 IconButton(
                     onClick = onToggleFavorite,
+                    interactionSource = favoritePressSource,
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(RaddTokens.Space.Xs)
@@ -590,6 +616,7 @@ fun PosterCard(
             if (onPlayClick != null) {
                 IconButton(
                     onClick = onPlayClick,
+                    interactionSource = playPressSource,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(RaddTokens.Space.Xs)
@@ -695,27 +722,51 @@ fun PosterCard(
                         )
                     }
                 }
-                // Session 121 (P-28): the badge row only exists when a title has
-                // badges, so cards in one rail had different heights and a badge
-                // could straddle the rail's clip edge ("Dual Audio" cut mid-glyph).
-                // The slot is always 24 dp — the pill's own height — so card height
-                // is invariant to badge presence and rails stay uniform.
+                // P1-3 (B-10): the badge slot collapses when the tile has
+                // no badges — the old always-24 dp slot bought uniform
+                // card heights with permanent empty space on every
+                // unbadged tile. An AnimatedVisibility holds the slot
+                // open only while a badge is on it (or while the caller
+                // reserved it — see reserveBadgeSlot), so a badge that
+                // lands late (a download finishing) grows the tile
+                // instead of popping in over the rail's clip edge, and
+                // an unbadged tile is 24 dp tighter. Under reduced
+                // motion the change is instant, never animated.
                 // L2 (round 2): the badge slot — the download badge rides
                 // here, ahead of the audio badges, so it never competes
                 // with the NEW pill, the heart or the play button on the
-                // poster (max one badge per card on the art). The slot
-                // stays 24dp either way, so card height is invariant.
-                Row(
-                    Modifier.fillMaxWidth().height(24.dp), // token-exempt: badge-slot height, fixed component geometry
-                    horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Micro),
-                    verticalAlignment = Alignment.CenterVertically,
+                // poster (max one badge per card on the art). Overlaying
+                // these badges on the art would break that rule, so the
+                // slot collapses instead of moving.
+                AnimatedVisibility(
+                    visible = isDownloaded || tileBadges.isNotEmpty() || reserveBadgeSlot,
+                    enter = fadeIn(
+                        animationSpec = if (rememberReduceMotion()) snap() else RaddMotion.defaultEffects(),
+                    ) + if (rememberReduceMotion()) {
+                        EnterTransition.None
+                    } else {
+                        expandVertically(animationSpec = RaddMotion.defaultSpatial())
+                    },
+                    exit = fadeOut(
+                        animationSpec = if (rememberReduceMotion()) snap() else RaddMotion.defaultEffects(),
+                    ) + if (rememberReduceMotion()) {
+                        EnterTransition.None
+                    } else {
+                        shrinkVertically(animationSpec = RaddMotion.defaultSpatial())
+                    },
                 ) {
-                    if (isDownloaded) {
-                        DownloadedBadge()
+                    Row(
+                        Modifier.fillMaxWidth().height(24.dp), // token-exempt: badge-slot height, fixed component geometry
+                        horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Micro),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (isDownloaded) {
+                            DownloadedBadge()
+                        }
+                        // Dub status decides whether this title is watchable at all for a
+                        // Hindi/Urdu-first viewer, so it is said on the tile, not after a tap.
+                        AudioBadgeChipRow(badges = tileBadges)
                     }
-                    // Dub status decides whether this title is watchable at all for a
-                    // Hindi/Urdu-first viewer, so it is said on the tile, not after a tap.
-                    AudioBadgeChipRow(badges = tileBadges)
                 }
 
                 progressLabel?.let { label ->
@@ -764,6 +815,13 @@ fun PosterCard(
         }
     }
 }
+/**
+ * P1-4 (B-11): the tile's press scale — 0.96, one step deeper than the
+ * shared 0.97, so the scale still reads as a secondary cue once the M3
+ * ripple is the primary feedback. Other controls keep the shared token.
+ */
+private const val TILE_PRESS_SCALE = 0.96f
+
 /**
  * S2 thresholds: the tile widths (dp) below which the meta line drops a
  * segment — type below 140dp, year below 100dp. Named constants, not
