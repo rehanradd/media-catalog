@@ -263,7 +263,7 @@
     <string name="player_preferred_audio">Preferring %1$s — set on the Settings screen.</string>
     <string name="player_stereo_on">Stereo-only selection: ON</string>
     <string name="player_stereo_off">Stereo-only selection: off</string>
-    <string name="player_stereo_note">Stereo only — some tracks won't play in 5.1.</string>
+    <string name="player_stereo_note">Stereo only — some tracks won\'t play in 5.1.</string>
     <string name="player_audio_only_on">Audio-only mode: ON (screen decoder off)</string>
     <string name="player_audio_only_off">Audio-only mode: off</string>
     <!-- MX idea #8 — equalizer (More sheet → EQ sheet). Every value is
