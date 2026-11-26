@@ -232,10 +232,9 @@ private fun PlayerScreenContent(
     var kidsPinRequested by remember { mutableStateOf(false) }
     var kidsPinError by remember { mutableStateOf<String?>(null) }
     val kidsScope = rememberCoroutineScope()
-    // The chrome theme this device wears: resolved once here and handed to the
-    // transient overlays that take no state of their own; the stateful chrome
-    // pieces resolve it from `state.playerTheme` themselves.
-    val chrome = PlayerChromeTheme.forId(state.playerTheme)
+    // The one player chrome (P2-4, audit B-22): resolved once here and handed
+    // to the transient overlays that take no state of their own.
+    val chrome = PlayerChromeTheme.Default
 
     // BM rule 9: low-end devices get solid chrome, not frosted glass — the
     // blur is a cost they pay for nothing, and a solid plate reads the same.

@@ -148,8 +148,6 @@ object RaddTokens {
     object Color {
         /** The single action colour: primary actions, active states, progress. */
         val Action = RaddCurrent500
-        /** The player's meaning accent: selected rung, live speed, buffering. */
-        val PlayerAccent = AccentOrange
         /** Favourites. */
         val Favourite = RaddCoral400
         /** Download and offline. */

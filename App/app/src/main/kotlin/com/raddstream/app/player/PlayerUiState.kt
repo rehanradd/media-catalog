@@ -10,7 +10,6 @@ import androidx.media3.common.TrackGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.raddstream.app.player.audio.EqState
-import com.raddstream.app.ui.theme.PlayerChromeTheme
 
 /**
  * Immutable value types the player screen renders. Kept in the `player` package (Android
@@ -299,14 +298,6 @@ data class PlayerUiState(
      * gains. Persisted in DataStore; the processor applies it live.
      */
     val eqState: EqState = EqState.DEFAULT,
-    /**
-     * The player chrome theme this device wears (`jade`, `midnight`, `ember`):
-     * a skin for the chrome only — the background, the HUD plates, the rail
-     * and the played fill — never the meaning-carrying accent. Collected from
-     * the stored pick, so a change on the VIP screen reaches a player that is
-     * already running.
-     */
-    val playerTheme: String = PlayerChromeTheme.JADE,
     /**
      * The audio language in force, as the viewer spelled it — the stored pick, or the
      * region's default when never set (Desi: Hindi). Null only when the region has no

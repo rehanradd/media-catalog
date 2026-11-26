@@ -496,7 +496,7 @@ internal fun CenterSpinner(state: PlayerUiState) {
     if (state.startPhase != StartPhase.NONE &&
         state.startDeadlineStage != StartDeadlineStage.SILENT
     ) return
-    val chrome = PlayerChromeTheme.forId(state.playerTheme)
+    val chrome = PlayerChromeTheme.Default
     // F-04: resolved here, at composition time — stringResource() is a
     // @Composable call and cannot run inside the semantics {} lambda below
     // (compile error: "@Composable invocations can only happen from the
@@ -562,7 +562,7 @@ internal fun EdgeHud(
     } else {
         0f
     }
-    val chrome = PlayerChromeTheme.forId(state.playerTheme)
+    val chrome = PlayerChromeTheme.Default
     Box(Modifier.fillMaxSize()) {
         // Progress, painted on the edge of the frame rather than across the image.
         // F29 (Batch B): no line on a live stream — position over a DVR-window
@@ -732,7 +732,7 @@ internal fun BottomControls(
     var showVolumeSlider by remember { mutableStateOf(false) }
     var volumeAnchor by remember { mutableStateOf<Rect?>(null) }
     val volumePercent = (state.userVolume * 100).toInt()
-    val chrome = PlayerChromeTheme.forId(state.playerTheme)
+    val chrome = PlayerChromeTheme.Default
     val rail = playerChromeRail()
     // Review fix (16 Nov): the bottom scrim is a full-height gradient — the
     // old one went transparent exactly where the live mark sits, so the mark

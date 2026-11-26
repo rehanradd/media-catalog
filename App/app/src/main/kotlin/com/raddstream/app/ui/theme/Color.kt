@@ -288,16 +288,15 @@ val RaddOnDangerContainerLight = brandColor(BuildConfig.BRAND_COLORS_LIGHT_ON_DA
 // brand roles — one token system, no orphan accents. The old-to-brand-role
 // table, hues preserved where they carry meaning:
 //   Stage/Sheet/Dialog plates  -> ink ramp (Ink900 / Ink850 / Ink800)
-//   AccentOrange               -> colors.dark.player_accent (#FF8552, same hue)
-//   AccentOrangeToast          -> player accent at 80%
 //   NarrationPlate             -> Ink800 at 80%
 //   NarrationCheck             -> RaddSuccess (one "that worked" green)
 //   PlayerSnackbarPlate        -> Ink800 at 90% (deliberately colourless)
 //   KeepStored/Blocked/Keeping -> Success / Danger / TideIndigo at 40%
 //     (Keeping drops the orphan blue #1565C0, D-39)
-// The MIDNIGHT/EMBER paid skins keep their own fills below: a theme fill is
-// a skin, explicitly allowed by DESIGN_SYSTEM.md §9, and never a meaning
-// colour — the accent that paints a state stays the brand accent in every skin.
+// P2-4 (audit B-22): the player accent is gone with the skins — AccentOrange
+// (#FF8552, colors.dark.player_accent) and AccentOrangeToast are deleted, and
+// the jade/midnight/ember chrome skins are deleted with them. Jade is the
+// single action colour; there is no second player brand.
 
 /** Full-bleed backdrop for audio-only playback, where there is no frame. */
 val RaddPlayerStage        = RaddInk900
@@ -325,19 +324,14 @@ val RaddHudTrack           = Color(0x33FFFFFF)
 val RaddHudPillIdle        = Color(0x22FFFFFF)
 
 /**
- * One player chrome theme: the surfaces a theme may repaint. A theme is a
- * skin for the player's chrome — the background behind the frame, the HUD
- * plates and chips, the rail track and the played fill — and it never touches
- * the meaning-carrying accent ([AccentOrange]: the selected rung, live speed,
- * buffering, cinema) or the jade that marks a selected control, because
- * DESIGN_SYSTEM.md §9 forbids replacing an accent that paints a state. The
- * played fill's meaning is positional — its length says how much played, not
- * its hue — so the fill and the seek thumb may wear the theme's colour while
- * the selected-rung jade stays jade.
- *
- * `jade` is the shipped look, free and always owned. `midnight` is a deep
- * navy; `ember` is a warm charcoal with a muted amber fill (clearly darker
- * than AccentOrange, so the rail never reads as a live-state orange).
+ * One player chrome theme: the surfaces the chrome paints — the background
+ * behind the frame, the HUD plates and chips, the rail track and the played
+ * fill. P2-4 (audit B-22): there is exactly one chrome. The jade/midnight/
+ * ember skins are gone — the player inherits the app-wide dark-first theme
+ * instead of fragmenting brand recognition with per-player skins, and the
+ * played fill stays jade ([RaddCurrent500]), the single action colour.
+ * The fill's meaning is positional — its length says how much played, not
+ * its hue — and the selected-rung jade stays jade.
  */
 data class PlayerChromeTheme(
     val background: Color,
@@ -348,43 +342,15 @@ data class PlayerChromeTheme(
     val played: Color,
 ) {
     companion object {
-        const val JADE = "jade"
-        const val MIDNIGHT = "midnight"
-        const val EMBER = "ember"
-
-        /** Every theme id the server sells, plus the free shipped one. */
-        val IDS = listOf(JADE, MIDNIGHT, EMBER)
-
-        /** The theme for an id, or the shipped look for anything unknown — a theme that does not exist is the default, never a crash. */
-        fun forId(id: String): PlayerChromeTheme = when (id) {
-            MIDNIGHT -> PlayerChromeTheme(
-                background = Color(0xFF0A1128),
-                // Robo run 2: the 53% bar left full-white text at ~4.4:1 over a
-                // bright frame — 70% like RaddHudBar, same ~8.5:1 worst case.
-                bar = Color(0xB30A1128),
-                chip = Color(0x660A1128),
-                card = Color(0x990A1128),
-                track = Color(0x338FB3FF),
-                played = Color(0xFF6EA8FF),
-            )
-            EMBER -> PlayerChromeTheme(
-                background = Color(0xFF1A120B),
-                // Robo run 2: 53% -> 70% bar, same as midnight above.
-                bar = Color(0xB31A120B),
-                chip = Color(0x661A120B),
-                card = Color(0x991A120B),
-                track = Color(0x33FFD9A0),
-                played = Color(0xFFE8B04B),
-            )
-            else -> PlayerChromeTheme(
-                background = Color.Black,
-                bar = RaddHudBar,
-                chip = RaddHudChip,
-                card = RaddHudCard,
-                track = RaddHudTrack,
-                played = RaddCurrent500,
-            )
-        }
+        /** The only player chrome: black stage, HUD plates, jade played fill. */
+        val Default: PlayerChromeTheme = PlayerChromeTheme(
+            background = Color.Black,
+            bar = RaddHudBar,
+            chip = RaddHudChip,
+            card = RaddHudCard,
+            track = RaddHudTrack,
+            played = RaddCurrent500,
+        )
     }
 }
 
@@ -418,13 +384,6 @@ object PlayerOnVideo {
 val RaddCaptionPlate       = Color(0xB3000000)
 val RaddCaptionPlateArgb   = 0xB3000000.toInt()
 
-/** The player's own accent: the selected rung, live speed, buffering, cinema.
- *  It paints states that CARRY meaning, so DESIGN_SYSTEM.md §9 forbids replacing
- *  it with an artwork-driven accent. Its brand role is colors.dark.player_accent
- *  (Session 123 fold): the orange is a brand decision now, not an app-local one. */
-val AccentOrange           = brandColor(BuildConfig.BRAND_COLORS_DARK_PLAYER_ACCENT)
-/** The player accent at 80% — the boost badge, which must read over any frame. */
-val AccentOrangeToast      = AccentOrange.copy(alpha = 0.8f)
 /** 80% ink — the narration banner that reports a source change. */
 val RaddNarrationPlate     = RaddInk800.copy(alpha = 0.8f)
 /** The banner's "that worked" check. One success green for the whole app. */

@@ -598,13 +598,6 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.defaultQualitySet.collect { set -> defaultQualitySet = set }
         }
-        // The player chrome theme this device wears: collected, not sampled, so
-        // a change on the VIP screen reaches a player that is already running.
-        viewModelScope.launch {
-            settingsRepository.playerTheme.collect { theme ->
-                _ui.update { it.copy(playerTheme = theme) }
-            }
-        }
         // MX #7 — Kids Lock: the mode, collected not sampled, so a parent
         // turning it on reaches a player that is already running — the next
         // episode locks, and the state flag tells the screen the unlock

@@ -91,7 +91,6 @@ class RaddTokensTest {
     @Test
     fun semanticColoursAreTheBrandRoles() {
         assertEquals(RaddCurrent500, RaddTokens.Color.Action)
-        assertEquals(AccentOrange, RaddTokens.Color.PlayerAccent)
         assertEquals(RaddCoral400, RaddTokens.Color.Favourite)
         assertEquals(RaddTideIndigo, RaddTokens.Color.Download)
         assertEquals(RaddSignalGold, RaddTokens.Color.Signal)
@@ -108,7 +107,6 @@ class RaddTokensTest {
         assertEquals(RaddSuccess, RaddNarrationCheck)
         assertEquals(RaddInk800.copy(alpha = 0.8f), RaddNarrationPlate)
         assertEquals(RaddInk800.copy(alpha = 0.9f), RaddPlayerSnackbarPlate)
-        assertEquals(AccentOrange.copy(alpha = 0.8f), AccentOrangeToast)
     }
 
     @Test

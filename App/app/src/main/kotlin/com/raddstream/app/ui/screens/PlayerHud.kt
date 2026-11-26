@@ -74,7 +74,7 @@ internal fun DoubleTapRipple(state: PlayerUiState) {
     val ripple = state.ripple ?: held ?: return
     state.ripple?.let { held = it }
     val forward = ripple.deltaMs >= 0
-    val chrome = PlayerChromeTheme.forId(state.playerTheme)
+    val chrome = PlayerChromeTheme.Default
     val label = (if (forward) "+" else "−") + (kotlin.math.abs(ripple.deltaMs) / 1000L) + "s"
     val alignment = when (ripple.zone) {
         ScreenZone.LEFT -> Alignment.CenterStart
