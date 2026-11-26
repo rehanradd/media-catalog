@@ -2,8 +2,8 @@ package com.raddstream.app.ui.screens
 
 import androidx.compose.ui.graphics.Color
 import com.raddstream.app.ui.theme.RaddChipBorderSoft
-import com.raddstream.app.ui.theme.RaddInk750
-import com.raddstream.app.ui.theme.RaddSettingsCard
+import com.raddstream.app.ui.theme.RaddInk850
+import com.raddstream.app.ui.theme.RaddInk950
 import com.raddstream.app.ui.theme.contrastRatio
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -20,11 +20,17 @@ import org.junit.Test
  */
 class SettingsAuditFixesTest {
 
+    /**
+     * P1-14 (B-39): the mega-card is flattened — rows sit on the group's
+     * single surfaceContainer surface now, so the border is measured on
+     * that fill (#7C7C7C clears 3:1 on it, 4.10:1). The old flat #1A1A1A
+     * card fill (RaddSettingsCard) is retired with the inner cards.
+     */
     @Test
-    fun unselectedChipBorderClearsComponentBarOnCard() {
-        val ratio = contrastRatio(RaddChipBorderSoft, RaddSettingsCard)
+    fun unselectedChipBorderClearsComponentBarOnGroupSurface() {
+        val ratio = contrastRatio(RaddChipBorderSoft, RaddInk850)
         assertTrue(
-            "unselected chip border is only $ratio:1 vs the card, under the M3 3:1 component bar",
+            "unselected chip border is only $ratio:1 vs the group surface, under the M3 3:1 component bar",
             ratio >= 3f,
         )
     }
@@ -40,15 +46,15 @@ class SettingsAuditFixesTest {
     }
 
     /**
-     * Round 5 (ST1): the cards share ONE fill now — surfaceContainerHighest,
-     * one tonal step above the group shell — so the border is measured on
-     * that fill, not on the round-2 per-group tones. #7C7C7C clears 3:1 on
-     * it (3.11:1); the old #787878 measured 2.94:1 there and failed.
+     * P1-14 (B-39): the groups are flat now — the fills are the group
+     * surface (surfaceContainer, 4.10:1) and the bare background the
+     * out-of-group rows sit on (4.49:1). No more surfaceContainerHighest.
      */
     @Test
     fun unselectedChipBorderClearsComponentBarOnEveryGroupFill() {
         val fills = mapOf(
-            "surfaceContainerHighest" to RaddInk750,
+            "surfaceContainer" to RaddInk850,
+            "background" to RaddInk950,
         )
         for ((name, fill) in fills) {
             val ratio = contrastRatio(RaddChipBorderSoft, fill)

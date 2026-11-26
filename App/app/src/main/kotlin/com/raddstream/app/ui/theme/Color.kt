@@ -219,8 +219,8 @@ val RaddWarning          = brandColor(BuildConfig.BRAND_COLORS_DARK_WARNING)
 // nowhere else (BrandDriftTest). Dark-screen values: the Settings screen
 // is reviewed in dark, and these greys are fixed, like the pill paints
 // above; a light scheme shows the same fixed greys.
-/** Grouped section card fill: flat neutral #1A1A1A, no nested inner boxes. */
-val RaddSettingsCard     = Color(0xFF1A1A1A)
+// P1-14 (B-39): the flat #1A1A1A card fill (RaddSettingsCard) is retired
+// with the inner cards — rows sit on the group's surfaceContainer now.
 /** Helper text: 13sp Regular, 1.4 line-height. 7.4:1 vs #1A1A1A. */
 val RaddSettingsHelper   = Color(0xFFA3ABA8)
 /**

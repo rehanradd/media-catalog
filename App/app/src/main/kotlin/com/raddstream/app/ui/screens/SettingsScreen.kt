@@ -16,7 +16,6 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -66,6 +65,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -139,8 +139,6 @@ import com.raddstream.app.ui.components.RaddDialogTitle
 import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.theme.RaddChipBorderSoft
 import com.raddstream.app.ui.theme.RaddChipLabelSoft
-import com.raddstream.app.ui.theme.RaddCoral400
-import com.raddstream.app.ui.theme.RaddSettingsCard
 import com.raddstream.app.ui.theme.RaddSettingsHelper
 import com.raddstream.app.ui.theme.RaddTextFamily
 import com.raddstream.app.ui.theme.RaddTokens
@@ -631,7 +629,6 @@ internal fun SettingsContent(
                 SettingsGroupHeader(
                     text = "Account",
                     iconRes = R.drawable.ic_action_user,
-                    iconTint = MaterialTheme.colorScheme.primary,
                 )
                 if (showAccount) {
                     // ST1: the group says it first — no account is needed here.
@@ -650,7 +647,7 @@ internal fun SettingsContent(
                     // upgrade button) hides while the quality gate is OFF — every
                     // viewer is premium then, and there is nothing to sell.
                     if (state.paywallVisible) {
-                        SettingsCard(title = "VIP membership", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                        SettingsCard(title = "VIP membership") {
                         // The plan summary: what this install actually has (VIP with its
                         // date, a payment waiting, the free VIP days, or free) plus the
                         // operator's published prices when the server sent any. The
@@ -697,7 +694,7 @@ internal fun SettingsContent(
                 }
                 if (showAccount) {
                     // ── The optional sync account ──────────────────────────────
-                    SettingsCard(title = "Account", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                    SettingsCard(title = "Account") {
                         val account = state.account
                         Text(
                             if (account.signedIn) {
@@ -973,7 +970,6 @@ internal fun SettingsContent(
                 SettingsGroupHeader(
                     text = "Playback",
                     iconRes = R.drawable.ic_action_sliders,
-                    iconTint = MaterialTheme.colorScheme.primary,
                 )
                 if (showContentPreference) {
                     // The region row lives in its own card under Watching, not
@@ -986,7 +982,7 @@ internal fun SettingsContent(
                     // to watch. The title now says what the card is.
                     // Mockup: the card carries its globe icon at the top-right, and
                     // the change link reads as a jade link with an arrow.
-                    SettingsCard(title = "Content preference", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                    SettingsCard(title = "Content preference") {
                         val region = RegionChoices.byId(state.userRegion)
                         Text(
                             region.title,
@@ -1021,7 +1017,7 @@ internal fun SettingsContent(
                     // same keys, and this card shows the effective values, so a
                     // viewer never has to guess which one won.
                     // Mockup: the card carries its translate icon at the top-right.
-                    SettingsCard(title = "Languages", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                    SettingsCard(title = "Languages") {
                         // F5a (Batch A): same effective values as the Languages
                         // screen's top line, so the two can never disagree. The
                         // provenance ("your choice" / "<Region> default") is still
@@ -1054,7 +1050,7 @@ internal fun SettingsContent(
                     // Mockup: the card carries its sliders icon at the top-right.
                 }
                 if (showPlaybackDisplay) {
-                    SettingsCard(title = "Playback & display", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                    SettingsCard(title = "Playback & display") {
                         Spacer(Modifier.height(12.dp))
                         PreferenceRowTitle("Image quality")
                         ChipRow(ImageQuality.entries.toList().map { it.label }, ImageQuality.entries.indexOf(state.prefs.imageQuality)) { idx ->
@@ -1198,7 +1194,7 @@ internal fun SettingsContent(
                     // gates the auto-advance, autoplay-previews gates the Home hero, default
                     // quality is the rung a new title starts on when Play was Auto, and subtitle
                     // size is the same number the player sheet's slider writes.
-                    SettingsCard(title = "Player", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                    SettingsCard(title = "Player") {
                         SwitchRow(
                             checked = state.prefs.autoplayNext,
                             onCheckedChange = actions.onSetAutoplayNext,
@@ -1300,7 +1296,7 @@ internal fun SettingsContent(
                     // ── Watch history ────────────────────────────────────────────────
                     // The history is this device's own record; Settings is where a viewer
                     // looks for a list that is not a catalog rail.
-                    SettingsCard(title = "Watch history", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                    SettingsCard(title = "Watch history") {
                         Text(
                             "Everything you watched on this phone, newest first — including titles you finished.",
                             style = settingsHelperStyle,
@@ -1320,12 +1316,11 @@ internal fun SettingsContent(
                 SettingsGroupHeader(
                     text = "Downloads",
                     iconRes = R.drawable.ic_action_download,
-                    iconTint = MaterialTheme.colorScheme.tertiary,
                 )
                 if (showOffline) {
                     // ── Downloads entry ────────────────────────────────────────
                     if (features.downloads) {
-                        SettingsCard(title = "Offline", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                        SettingsCard(title = "Offline") {
                             Text(
                                 "Manage downloaded titles, view storage use and expiry.",
                                 style = settingsHelperStyle,
@@ -1398,7 +1393,7 @@ internal fun SettingsContent(
                     if (features.sharing) {
                         // D10: the card carries its icon at the top-right, like
                         // every other card — it had none.
-                        SettingsCard(title = "Share on your network", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                        SettingsCard(title = "Share on your network") {
                             SwitchRow(
                                 checked = state.lanShareEnabled,
                                 onCheckedChange = actions.onSetLanShareEnabled,
@@ -1421,10 +1416,9 @@ internal fun SettingsContent(
                 SettingsGroupHeader(
                     text = "Appearance",
                     iconRes = R.drawable.ic_action_sun,
-                    iconTint = RaddCoral400,
                 )
                 // Appearance — the one place the app's look is decided.
-                SettingsCard(title = "Appearance", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                SettingsCard(title = "Appearance") {
                     // Wallpaper colour is a brand decision, not a user one: this brand file
                     // locks the palette (features.dynamic_color=false), and a switch that is
                     // overruled by the build it ships in is worse than no switch. It appears
@@ -1450,13 +1444,12 @@ internal fun SettingsContent(
                 SettingsGroupHeader(
                     text = "About",
                     iconRes = R.drawable.ic_action_info,
-                    iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (showHelp) {
                     // ── Help ───────────────────────────────────────────────────────
                     // Read help first, write to us second: most questions are answered on
                     // the Help screen, and the Contact form is for a person's own problem.
-                    SettingsCard(title = "Help", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                    SettingsCard(title = "Help") {
                         Text(
                             // Settings review (Nov 2026, D1): the helper names VIP
                             // only while the gate is ON — during the free launch the
@@ -1484,7 +1477,6 @@ internal fun SettingsContent(
                         modifier = Modifier.onGloballyPositioned {
                             contactCardTopInWindow = it.boundsInWindow().top
                         },
-                        fill = MaterialTheme.colorScheme.surfaceContainerHighest,
                     ) {
                         Text(
                             "Report a problem, ask about a payment, or ask for a title to be taken down. No account needed.",
@@ -1525,7 +1517,7 @@ internal fun SettingsContent(
                     // Settings review (Nov 2026, D10): each of the three Info
                     // cards gets an icon that says what it is — the disclaimer is
                     // a document, the totals are analytics, About keeps the "i".
-                    SettingsCard(title = "Disclaimer", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                    SettingsCard(title = "Disclaimer") {
                         val disclaimer = state.disclaimer.effective()
                         // B8: no version in the painted line — acceptance is
                         // already tracked per version, so the number says nothing
@@ -1557,7 +1549,7 @@ internal fun SettingsContent(
                     // often the app crashes. No name, number, location, title, or
                     // search — and the switch is the same answer the first-run
                     // dialog asked, changeable here at any time.
-                    SettingsCard(title = "Anonymous usage totals", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                    SettingsCard(title = "Anonymous usage totals") {
                         Text(
                             "Share anonymous totals with ${Brand.name}: plays, " +
                                 "playback failures, and crashes. Nothing that can " +
@@ -1575,7 +1567,6 @@ internal fun SettingsContent(
                     // ── About / Disclaimer (accurate, no misleading claims) ─────
                     SettingsCard(
                         title = Brand.copy("settings_about_heading", "About ${Brand.name}"),
-                        fill = MaterialTheme.colorScheme.surfaceContainerHighest,
                     ) {
                         Text(
                             Brand.copy(
@@ -1656,7 +1647,7 @@ internal fun SettingsContent(
                         ),
                     ) {
                                     // ── Your catalog ──────────────────────────────────────
-                                    SettingsCard(title = "Your catalog", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                                    SettingsCard(title = "Your catalog") {
                                         // The address is never printed here: a saved catalog reads as
                                         // "Connected", and the field opens only when the viewer asks
                                         // to change it. The save still tests the address before it
@@ -1874,40 +1865,32 @@ internal fun SettingsContent(
 }
 
 /**
- * ST1 (round 2): one header per group — a circular pastel icon + the 16sp
- * SemiBold group title. The icon replaces the per-card top-right Material
- * icons (Audit #50's four sections become five groups, §0.8 order): the
- * section's identity lives here, once, not on every card. The header sits
- * on the screen background; the cards below it carry the group's tonal fill.
+ * P1-14 (B-39): one header per group — the M3 list-item leading icon + the
+ * 16sp SemiBold group title. The 40dp pastel circle is gone: it read as
+ * 2023, and the section's identity lives in the icon + title, once, not
+ * on every card. The icon is a plain 24dp glyph in onSurfaceVariant —
+ * no tint per group, no background disc.
  */
 @Composable
 private fun SettingsGroupHeader(
     text: String,
     @DrawableRes iconRes: Int,
-    iconTint: Color,
     modifier: Modifier = Modifier,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .padding(bottom = 8.dp)
             .semantics { heading() },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(iconTint.copy(alpha = 0.12f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                painter = painterResource(iconRes),
-                contentDescription = null,
-                tint = iconTint,
-                modifier = Modifier.size(22.dp),
-            )
-        }
+        Icon(
+            painter = painterResource(iconRes),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(24.dp),
+        )
         Text(text, style = settingsGroupTitleStyle, color = MaterialTheme.colorScheme.onSurface)
     }
 }
@@ -1921,18 +1904,17 @@ private fun SettingsGroupHeader(
  * each group fades + slides in [SettingsGroupStaggerMs] after the previous
  * one; under reduced motion there is no stagger and no slide, only an
  * instant fade.
- * The [visible] flag is the search filter — typing a query animates the
- * groups out and back with the same spring.
  *
- * ST1 (round 3): the mega-card — the whole group (pastel header + its
- * cards) sits on ONE elevated surface (surfaceContainerHigh, 1dp
- * outlineVariant border, 16dp radius, 16dp inset), so the five groups
- * read as five distinct cards with clear separation, not a flat list of
- * tonal panels. ST1 (round 5): the inner cards sit one tonal step
- * above the shell (surfaceContainerHighest), so the ramp reads
- * background -> shell -> card. The 8dp grid holds
- * (16dp gaps, 16dp insets, 16dp radius); the header's own top padding
- * is gone because the mega-card's inset provides it now.
+ * P1-14 (B-39): the mega-card is gone. The group is ONE flat surface
+ * (surfaceContainer, no border, no radius step) and the cards inside it
+ * are transparent rows separated by dividers — the ramp used to read
+ * background -> shell (surfaceContainerHigh + 1dp outlineVariant border)
+ * -> card (surfaceContainerHighest), three tonal steps with double 16dp
+ * insets. The [visible] flag is the search filter, and it is INSTANT
+ * now: a plain `if` toggles the group's content, so typing a query
+ * shows/hides groups with no spring. The AnimatedVisibility below is
+ * the entrance only (keyed on `entered`, which never flips back), so
+ * the filter can never replay the entrance slide on keystroke.
  */
 @Composable
 private fun SettingsGroup(
@@ -1955,7 +1937,7 @@ private fun SettingsGroup(
         entered = true
     }
     AnimatedVisibility(
-        visible = visible && entered,
+        visible = entered,
         enter = fadeIn(
             animationSpec = if (reduceMotion) snap() else motionScheme.defaultEffectsSpec(),
         ) + if (reduceMotion) {
@@ -1978,20 +1960,19 @@ private fun SettingsGroup(
         },
         modifier = modifier,
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(RaddTokens.Radius.Card))
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                .border(
-                    width = 1.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                    shape = RoundedCornerShape(RaddTokens.Radius.Card),
-                )
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            content()
+        // P1-14: the search filter is a plain conditional — instant, no
+        // enter/exit animation on keystroke.
+        if (visible) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(RaddTokens.Radius.Card))
+                    .background(MaterialTheme.colorScheme.surfaceContainer)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                content()
+            }
         }
     }
 }
@@ -2000,36 +1981,36 @@ private fun SettingsGroup(
 private fun SettingsCard(
     title: String,
     modifier: Modifier = Modifier,
-    // ST1 (round 5): the inner-card fill — every card in every group
-    // sits one tonal step above the group shell (surfaceContainerHighest),
-    // so the ramp reads background -> shell -> card. Defaults to the old flat
-    // #1A1A1A for cards that belong to no group (the debug harness).
-    fill: Color = RaddSettingsCard,
     content: @Composable () -> Unit,
 ) {
+    // P1-14 (B-39): the inner card is flat now — no fill, no radius, no
+    // second inset. It is a grouped-list row on the group's single
+    // surfaceContainer surface, separated from the row above by a divider
+    // (the header, the previous card, or the intro text). The title is
+    // the sub-section title (14sp Medium, ST4).
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(RaddTokens.Radius.Card))
-            // ST1 (round 5): the fill is surfaceContainerHighest — one step
-            // above the shell — measured for chip borders (3.11:1) and
-            // helper text (5.53:1) on the new fill (see SettingsRound2Test).
-            .background(fill)
             // ST2: the card grows smoothly when a door inside it opens
             // (sign-in form, account details, build details, contact
             // form, server field) — the size change is a spring, not a jump.
             // Round 6: the spring is the theme's motionScheme spatial spec.
-            .animateContentSize(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .animateContentSize(animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec()),
+        verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
-        // ST2 (round 2): the title stands alone — the card's icon is gone;
-        // the section's identity lives in the group header's pastel icon.
-        // The title is the sub-section title (14sp Medium, ST4).
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = settingsRowTitleStyle, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.weight(1f))
+        HorizontalDivider(
+            color = MaterialTheme.colorScheme.outlineVariant,
+            thickness = 1.dp,
+        )
+        Column(
+            modifier = Modifier.padding(top = 12.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(title, style = settingsRowTitleStyle, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.weight(1f))
+            }
+            content()
         }
-        content()
     }
 }
 
@@ -2065,7 +2046,7 @@ private fun KidsLockCard(viewModel: KidsLockViewModel) {
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    SettingsCard(title = "Kids Lock", fill = MaterialTheme.colorScheme.surfaceContainerHighest) {
+    SettingsCard(title = "Kids Lock") {
         Text(
             when {
                 modeActive -> "Kids Mode is ON — only family-friendly titles show, and Settings, Downloads and purchases stay locked behind your PIN."
