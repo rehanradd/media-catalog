@@ -662,12 +662,15 @@ private fun HeroSlide(
                     ),
                 ),
             ) {
-                // P1-5: the mark sits below the on-art indicator row (12dp top
-                // + 48dp row = 60dp) with a 12dp gap — 48dp + 24dp in tokens.
+                // P1-5: the mark keeps its 48dp top. The on-art indicator row
+                // is TopEnd — it occupies only the right edge, and the centred
+                // 48dp mark clears it horizontally. Pushing the mark to 72dp
+                // (first attempt) dropped it onto the one-line title; 48dp
+                // keeps it above the reason line, as the old golden proved.
                 RaddStreamMark(
                     diameter = 48.dp, // token-exempt: fallback-mark size, not spacing
                     color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.align(Alignment.TopCenter).padding(top = RaddTokens.Space.Step48 + RaddTokens.Space.Xl),
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 48.dp),
                 )
             }
         } else {
