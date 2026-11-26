@@ -2138,9 +2138,9 @@ private fun PlaySomethingButton(onClick: () -> Unit) {
         Icon(
             painter = painterResource(R.drawable.ic_action_shuffle),
             contentDescription = null,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(18.dp), // token-exempt: icon size, not spacing
         )
-        Spacer(Modifier.size(8.dp))
+        Spacer(Modifier.width(RaddTokens.Space.Sm))
         Text(
             stringResource(R.string.player_play_something),
             style = MaterialTheme.typography.labelLarge,
