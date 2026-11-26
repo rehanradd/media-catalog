@@ -2,7 +2,6 @@ package com.raddstream.app.ui
 
 import android.content.Context
 import androidx.compose.ui.test.assertCountEquals
-import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -258,23 +257,30 @@ class PlayerReviewFixesTest {
 
     @Test
     fun `the control row is two groups, transport left and tools right`() {
+        // P1-15 (audit B-17): the left cluster is Play/Pause, Back 10,
+        // Forward 10, Volume (4); the right cluster is Captions/Audio,
+        // Fullscreen, More (3). Fixed positions, same order every time.
         setBottom(vodBase())
         compose.onNodeWithTag("player-controls-left").assertIsDisplayed()
         compose.onNodeWithTag("player-controls-right").assertIsDisplayed()
-        compose.onNodeWithTag("player-controls-left").onChildren().assertCountEquals(2)
-        compose.onNodeWithTag("player-controls-right").onChildren().assertCountEquals(4)
+        compose.onNodeWithTag("player-controls-left").onChildren().assertCountEquals(4)
+        compose.onNodeWithTag("player-controls-right").onChildren().assertCountEquals(3)
     }
 
     @Test
-    fun `a single-rung quality pill stays visible and tappable`() {
+    fun `a single-rung title carries no quality pill in the row`() {
+        // P1-15 (audit B-17): the Quality pill left the bottom row with the
+        // flexible slots — a single rung no longer buys a pill. Quality
+        // lives in More now (pinned as a row in PlayerControlSemanticsTest
+        // and PlayerReviewFixesTest), so the row prints no rung at all.
         setBottom(
             vodBase().copy(
                 qualityAuto = false,
                 qualityRungs = listOf(LadderRung(band = "1080p", streamId = "h-1080p")),
             ),
         )
-        compose.onNodeWithText("1080P").assertIsDisplayed()
-        compose.onNodeWithText("1080P").assertHasClickAction()
+        compose.onNodeWithText("1080P").assertDoesNotExist()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_more)).assertExists()
     }
 
     @Test

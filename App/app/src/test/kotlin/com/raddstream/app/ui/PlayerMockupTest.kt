@@ -30,7 +30,6 @@ import com.raddstream.app.ui.screens.SkipSegmentButton
 import com.raddstream.app.ui.screens.SwitchSourceRow
 import com.raddstream.app.ui.screens.TopBar
 import com.raddstream.app.ui.screens.canShareMoment
-import com.raddstream.app.ui.screens.subtitleStatusLabel
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -382,19 +381,18 @@ class PlayerMockupTest {
     }
 
     @Test
-    fun `the bottom row carries all six primaries and the quality pill prints the rung`() {
+    fun `the bottom row carries all seven fixed controls`() {
+        // P1-15 (audit B-17): fixed positions — Play/Pause, Back 10,
+        // Forward 10, Volume, Captions/Audio, Fullscreen, More. The
+        // flexible slots are gone, so there is no quality pill printing
+        // the rung in the row anymore; the rung lives in More.
         val state = vodBase()
         setBottom(state)
         compose.onNodeWithContentDescription(context.getString(R.string.player_pause)).assertIsDisplayed()
         compose.onNodeWithContentDescription(context.getString(R.string.player_volume, 80)).assertIsDisplayed()
-        val subtitles = context.getString(
-            R.string.player_subtitles_label,
-            subtitleStatusLabel(state, context.getString(R.string.player_off)),
-        )
-        compose.onNodeWithContentDescription(subtitles).assertIsDisplayed()
-        compose.onNodeWithContentDescription(
-            context.getString(R.string.player_quality_label, "1080P"),
-        ).assertIsDisplayed()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_rewind_10)).assertIsDisplayed()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_forward_10)).assertIsDisplayed()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_audio_subtitles_title)).assertIsDisplayed()
         // The fixture is fullscreen (PlayerUiState's default — the player
         // starts immersive), so the toggle reads "Exit fullscreen", not
         // "Fullscreen". The primary is there either way.
@@ -404,8 +402,8 @@ class PlayerMockupTest {
         // (not visibility) is pinned here; the landscape Paparazzi
         // bottom shots pin it visible.
         compose.onNodeWithContentDescription(context.getString(R.string.player_more)).assertExists()
-        // The pill itself prints the rung as text, not an icon.
-        compose.onNodeWithText("1080P").assertIsDisplayed()
+        // No pill prints the rung in the row anymore.
+        compose.onNodeWithText("1080P").assertDoesNotExist()
     }
 
     @Test

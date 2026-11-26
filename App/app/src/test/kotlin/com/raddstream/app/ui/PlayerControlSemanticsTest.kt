@@ -648,18 +648,30 @@ class PlayerControlSemanticsTest {
         // offer the dead zone, volume/brightness drags must reset the
         // auto-hide timer, the chrome must fade instead of cutting, and the
         // speed pill must open the speed sheet.
-        // D2: both boost sliders stop at the offered ceiling — the volume
-        // dialog's and the TracksSheet's. AudioBoost.MAX (200%) must not
+        // D2, moved by P1-15 (audit B-18): the boost slider left the player
+        // entirely — the volume dialog's and the TracksSheet's sliders are
+        // both gone. The one boost slider lives in Settings → Audio, and it
+        // still stops at the offered ceiling. AudioBoost.MAX (200%) must not
         // appear as any slider's range: a thumb the viewer can drag into a
         // range nothing can act on is a promise broken on every drag.
         assertEquals(
-            "both boost sliders must stop at the offered ceiling",
-            2,
+            "the player must carry no boost slider anymore",
+            0,
             source.split("valueRange = 0f..AudioBoostUi.MAX_OFFERED_LEVEL").size - 1,
+        )
+        val settings = File(screensDir, "SettingsScreen.kt").readText()
+        assertEquals(
+            "the one boost slider, in Settings Audio, must stop at the offered ceiling",
+            1,
+            settings.split("valueRange = 0f..AudioBoostUi.MAX_OFFERED_LEVEL").size - 1,
         )
         assertFalse(
             "a boost slider still offers the dead zone past the ceiling",
             source.contains("valueRange = 0f..AudioBoost.MAX"),
+        )
+        assertFalse(
+            "the Settings boost slider still offers the dead zone past the ceiling",
+            settings.contains("valueRange = 0f..AudioBoost.MAX"),
         )
         // D6: the volume and brightness drags bump interactTick, exactly like
         // the tap and the scrub callbacks do — otherwise the chrome hides
