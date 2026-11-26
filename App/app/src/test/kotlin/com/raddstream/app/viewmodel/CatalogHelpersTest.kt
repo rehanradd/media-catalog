@@ -68,32 +68,12 @@ class CatalogHelpersTest {
         assertEquals(0L, past.remainingMillis(now))
     }
 
-    @Test
-    fun `a partial page never claims to be the whole answer`() {
-        // The old header said "37 results" for a query the server reported as 4,112 strong,
-        // because it counted only the page this device had paged in.
-        // F5d (Batch A): the partial line now says "results" like the complete
-        // line — the two numbers still count different populations (loaded posts
-        // vs the server's total), and are not forced to agree.
-        assertEquals("Showing 37 of 4112 results", resultsSummary(loaded = 37, serverTotal = 4112, hasMore = true))
-        assertEquals("Showing 37 of 4112 results", resultsSummary(loaded = 37, serverTotal = 4112, hasMore = false))
-    }
-
-    @Test
-    fun `a complete answer is counted plainly`() {
-        assertEquals("1 result", resultsSummary(loaded = 1, serverTotal = 1, hasMore = false))
-        assertEquals("12 results", resultsSummary(loaded = 12, serverTotal = 12, hasMore = false))
-        assertEquals("0 results", resultsSummary(loaded = 0, serverTotal = 0, hasMore = false))
-    }
-
-    @Test
-    fun `a capped total prints with a plus`() {
-        // 2026-11-15, search speed: the server counts at most 1000 matches
-        // for a search, so a capped total must not read as an exact count.
-        assertEquals("Showing 20 of 1000+ results", resultsSummary(loaded = 20, serverTotal = 1000, hasMore = true, totalCapped = true))
-        // Uncapped keeps the old wording, and the flag defaults to false.
-        assertEquals("Showing 20 of 1000 results", resultsSummary(loaded = 20, serverTotal = 1000, hasMore = true))
-    }
+    // P1-11 (Nov 2026): the result count line ("Showing 37 of 4112
+    // results") is deleted outright — the filter rail carries count
+    // context, and the count broke the moment pagination appended — so
+    // `resultsSummary` and its three tests go with it. The per-page
+    // populations the tests pinned (loaded posts vs the server total) no
+    // longer have a rendering to disagree in.
 
     // F5c (Batch A): the "Filtered" pill names the filters that are on — the old
     // pill read the bare word "Filtered" while its comment claimed it named
@@ -202,6 +182,6 @@ class CatalogHelpersTest {
     // Feel-instant S6: the "Show all" affordance is retired with the
     // manual page loop — the list pages itself as the viewer scrolls, so
     // there is no button left for `showAllLabel` to name. The label and
-    // its test go with it; the count line (`resultsSummary`, above) is the
-    // one count left on the screen.
+    // its test go with it; the count line (`resultsSummary`) is deleted
+    // too (P1-11), so no count is left on the screen at all.
 }

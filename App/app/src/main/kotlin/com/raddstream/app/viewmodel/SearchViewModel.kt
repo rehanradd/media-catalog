@@ -8,6 +8,9 @@ import androidx.paging.cachedIn
 import androidx.paging.filter
 import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.data.local.CatalogFtsDao
+import com.raddstream.app.data.local.SyncedProgressDao
+import com.raddstream.app.data.local.WatchHistoryDao
+import com.raddstream.app.data.local.WatchHistoryMerge
 import com.raddstream.app.data.local.buildFtsPrefixQuery
 import com.raddstream.app.data.normalizeSearchRecents
 import com.raddstream.app.network.models.Post
@@ -19,6 +22,7 @@ import com.raddstream.app.repository.CATALOG_PAGING_CONFIG
 import com.raddstream.app.repository.CatalogPageMeta
 import com.raddstream.app.repository.CatalogPagingSource
 import com.raddstream.app.repository.CatalogRepository
+import com.raddstream.app.repository.FavoritesRepository
 import com.raddstream.app.sync.SyncAccountRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -309,20 +313,6 @@ internal fun filteredPillLabel(filters: SearchFilters): String {
     }
 }
 
-internal fun resultsSummary(loaded: Int, serverTotal: Int, hasMore: Boolean, totalCapped: Boolean = false): String = when {
-    // F5d (Batch A): relabel only — the two numbers count different populations
-    // (loaded posts vs the server's total for the query), so the partial line now
-    // says "results" like the complete line does. A4-F4: this is the ONE count
-    // line on the results screen — the per-group subtitles ("18 titles") are
-    // gone, because they counted a third population (loaded works in one
-    // section) and read as a competing total next to this line. The numbers
-    // here are NOT forced to agree; they never will.
-    // 2026-11-15, search speed: a capped total prints with a "+" — the server
-    // counts at most 1000 matches for a search, so the real total is larger.
-    hasMore || loaded < serverTotal -> if (totalCapped) "Showing $loaded of $serverTotal+ results" else "Showing $loaded of $serverTotal results"
-    else -> "$loaded result" + if (loaded == 1) "" else "s"
-}
-
 /**
  * A4-F4: the type chip the rail shows as active. The filter itself is the
  * authority whenever the viewer set one — but with no type filter, a search
@@ -332,7 +322,8 @@ internal fun resultsSummary(loaded: Int, serverTotal: Int, hasMore: Boolean, tot
  * to "Showing 34 of 52 results"). Display only — the filter stays unset
  * until the viewer taps the chip, so clearing the query never leaves a
  * stale type behind. A group with no rail chip (Seasons, Other) aligns to
- * nothing, so "All" stays the honest answer there.
+ * nothing, so "All" stays the honest answer there. (P1-11 deletes the
+ * result count line the old Robo OR-05 note cited next to this.)
  */
 internal fun effectiveTypeChip(selectedType: String?, groups: List<TypeGroup>): String? {
     // Audit Search #9 (Nov 2026): "Complete series" is a switch refining
@@ -398,13 +389,20 @@ data class SearchUiState(
      */
     val trending: List<Post> = emptyList(),
     /**
-     * Mockup (Nov 2026): the "Recommended for you" grid on the discovery
+     * Mockup (Nov 2026): the "For you" grid on the discovery
      * page — the catalog's freshest titles, newest first (the same feed as
      * Home's "Recently added" rail). There is no personalised recommendation
      * endpoint, so the label names the freshest rows, not a per-viewer pick;
      * empty when the route fails, and the section simply hides then.
      */
     val recommended: List<Post> = emptyList(),
+    /**
+     * P1-12 (Nov 2026): the Continue Watching rows for the discovery page
+     * — the same resumable titles Home's rail shows, first in the order.
+     * Empty for a viewer who never pressed play (or finished everything);
+     * the section hides then, exactly like the other discovery sections.
+     */
+    val continueWatching: List<ResumeTile> = emptyList(),
     /**
      * Search review (Nov 2026), fix 4: true until the first trending +
      * recommended loads settle (success or failure). The discovery page
@@ -450,6 +448,12 @@ data class SearchUiState(
     val visibleLocalResults: List<LocalSearchResult> get() = if (!kidsMode) localResults else emptyList()
     val visibleTrending: List<Post> get() = if (!kidsMode) trending else emptyList()
     val visibleRecommended: List<Post> get() = if (!kidsMode) recommended else emptyList()
+    /**
+     * P1-12: Continue Watching is the viewer's own history on this device,
+     * not unvetted catalog content — Home shows it in kids mode too, so
+     * Search reads it straight through, with no kids-mode gate.
+     */
+    val visibleContinueWatching: List<ResumeTile> get() = continueWatching
     /** A blank query is still a search when a server facet is selected. */
     val hasSearchIntent: Boolean
         get() = query.isNotBlank() || filters.anyServerFilterActive
@@ -488,6 +492,14 @@ class SearchViewModel @Inject constructor(
      * as before this slice.
      */
     private val catalogFtsDao: CatalogFtsDao? = null,
+    /**
+     * P1-12: the Continue Watching sources, same three Home's rail reads.
+     * Null in the tests that build this ViewModel by hand — then discovery
+     * shows no Continue Watching section, exactly as before this slice.
+     */
+    private val watchHistoryDao: WatchHistoryDao? = null,
+    private val syncedProgressDao: SyncedProgressDao? = null,
+    private val favoritesRepository: FavoritesRepository? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SearchUiState())
@@ -666,7 +678,7 @@ class SearchViewModel @Inject constructor(
                 .onSuccess { page -> _uiState.update { it.copy(trending = page.results) } }
             markDiscoverySettled(trending = true)
         }
-        // Mockup (Nov 2026): the "Recommended for you" grid, loaded once.
+        // Mockup (Nov 2026): the "For you" grid, loaded once.
         // The freshest titles, newest first — the same feed as Home's
         // "Recently added" rail. A failure leaves the grid empty and the
         // section hides; a recommendation that failed to load is not a
@@ -678,6 +690,46 @@ class SearchViewModel @Inject constructor(
                 catalogRepository.getPosts(sort = SearchSort.NEWEST.wireValue, page = 1, limit = 18)
             }.onSuccess { page -> _uiState.update { it.copy(recommended = page.results) } }
             markDiscoverySettled(trending = false)
+        }
+        // P1-12: Continue Watching for the discovery page — the same merge
+        // Home's rail reads (local history + synced progress, minus refused
+        // rows), so the section shows the same titles Home resumes. The
+        // screen never removes from here: removal (with Undo) lives on
+        // Home's rail, and this section is a way back into a title, not a
+        // second ledger. Null DAOs mean a hand-built ViewModel (tests) —
+        // then the section simply stays empty.
+        observeContinueWatching()
+    }
+
+    /**
+     * P1-12: the Continue Watching merge, copied from HomeViewModel's
+     * observeContinueWatching — the two rails must agree on what is
+     * resumable, so they read the same three flows through the same merge
+     * and the same adult-policy filter. The only difference is the tail:
+     * Home also kicks "Because you watched" and "For you" refreshes off
+     * the first tile; Search has no such dependents, so it only stores
+     * the rows.
+     */
+    private fun observeContinueWatching() {
+        val historyDao = watchHistoryDao ?: return
+        val progressDao = syncedProgressDao ?: return
+        val favorites = favoritesRepository ?: return
+        viewModelScope.launch {
+            combine(
+                historyDao.observeRecent(WatchHistoryMerge.DEFAULT_LIMIT * 2),
+                progressDao.observeRecent(WatchHistoryMerge.DEFAULT_LIMIT * 2),
+                favorites.observeRefusedIds(),
+            ) { local, synced, refused ->
+                AdultPolicy.listableRows(
+                    rows = WatchHistoryMerge.merge(local, synced),
+                    flagOf = { null },
+                    refusedOf = { it.postId in refused },
+                )
+            }
+                .collect { rows ->
+                    val items = rows.mapNotNull { ResumeTile.of(it) }
+                    _uiState.update { it.copy(continueWatching = items) }
+                }
         }
     }
 

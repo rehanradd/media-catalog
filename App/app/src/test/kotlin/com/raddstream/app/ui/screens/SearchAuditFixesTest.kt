@@ -31,7 +31,6 @@ import com.raddstream.app.viewmodel.SearchSort
 import com.raddstream.app.viewmodel.SearchUiState
 import com.raddstream.app.viewmodel.TypeGroup
 import java.io.IOException
-import kotlin.math.abs
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -79,6 +78,7 @@ class SearchAuditFixesTest {
         groups: List<TypeGroup> = emptyList(),
         pagingData: PagingData<Post> = PagingData.empty(),
         onRunSuggestion: (String) -> Unit = {},
+        onShowExactOnly: () -> Unit = {},
         onOpenSettings: () -> Unit = {},
     ) {
         val pagingDataFlow = MutableStateFlow(pagingData)
@@ -94,7 +94,7 @@ class SearchAuditFixesTest {
                     onResetFilters = {},
                     onQueryChanged = {},
                     onShowCloseMatches = {},
-                    onShowExactOnly = {},
+                    onShowExactOnly = onShowExactOnly,
                     onRunSuggestion = onRunSuggestion,
                     onPostClick = {},
                     onOpenSettings = onOpenSettings,
@@ -173,11 +173,11 @@ class SearchAuditFixesTest {
         assertTrue("Open Settings must call onOpenSettings", settingsOpened)
     }
 
-    // ── Audit #4: did-you-mean is a left-aligned chip, not centred text ──
+    // ── Audit #4 (P1-11): one inline fuzzy banner, not three recovery paths ──
 
     @Test
-    fun didYouMeanIsALeftAlignedChipThatRunsTheSuggestion() {
-        var ran: String? = null
+    fun fuzzyAnswerShowsOneBannerWithAnInlineExactLink() {
+        var exactOnly = false
         val groups = listOf(
             TypeGroup("Movies", "movie", listOf(post(1, "Jawan"), post(2, "Salaar"))),
             TypeGroup("Series", "series", listOf(post(5, "Money Heist", "series"))),
@@ -195,30 +195,24 @@ class SearchAuditFixesTest {
                 data = listOf(post(1, "Jawan"), post(2, "Salaar"), post(5, "Money Heist", "series")),
                 sourceLoadStates = LoadStates(refresh = idle, prepend = idle, append = idle),
             ),
-            onRunSuggestion = { ran = it },
+            onRunSuggestion = { },
+            onShowExactOnly = { exactOnly = true },
         )
-        val chip = compose.onNodeWithTag(DidYouMeanTag)
-        chip.performScrollTo()
-        chip.assertIsDisplayed()
-        // Left-aligned with the count line above it — the old centred
-        // TextButton sat mid-column while everything else sat left. A
-        // 2dp tolerance, not pixel-exact equality: the chip's 1dp outline
-        // border sits on its layout edge, so its bounds sit ~1dp off a
-        // text line's glyph edge — a centred chip would be ~100px off,
-        // so the tolerance still pins the fix.
-        val summaryLeft = compose.onNodeWithText("Showing 3 of 3 results")
-            .fetchSemanticsNode().boundsInRoot.left
-        val chipLeft = chip.fetchSemanticsNode().boundsInRoot.left
-        val tolerance = with(compose.density) { 2.dp.toPx() }
-        assertTrue(
-            "Suggestion chip must share the count line's left edge (off by ${chipLeft - summaryLeft}px)",
-            abs(chipLeft - summaryLeft) <= tolerance,
-        )
-        // The mismatch is stated once: the fuzzy line, not a second statement.
-        compose.onNodeWithText("No exact match for \"jwan\" — showing the closest titles.")
+        // The one banner names the query and the recovery, in one place.
+        val banner = compose.onNodeWithTag(FuzzyBannerTag)
+        banner.performScrollTo()
+        banner.assertIsDisplayed()
+        compose.onNodeWithText("No exact match for \"jwan\". Showing close titles — ", substring = true)
             .assertIsDisplayed()
-        chip.performClick()
-        assertEquals("jawan", ran)
+        // The two retired paths are gone: no did-you-mean chip, no
+        // "Show exact matches only" button, and no result count line.
+        compose.onNodeWithText("Did you mean jawan?").assertDoesNotExist()
+        compose.onNodeWithText("Show exact matches only").assertDoesNotExist()
+        compose.onNodeWithText("Showing 3 of 3 results").assertDoesNotExist()
+        // The inline link is the exact-only action — and it is a text
+        // link, not an OutlinedButton.
+        compose.onNodeWithTag(FuzzyBannerExactLinkTag).performClick()
+        assertTrue("The banner's inline link must show exact matches only", exactOnly)
     }
 
     // ── Audit #7: the Filters action never wears the selected fill ──

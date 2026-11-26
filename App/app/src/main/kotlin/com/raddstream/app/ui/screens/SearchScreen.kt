@@ -60,6 +60,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Button
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -97,6 +98,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
@@ -136,15 +138,15 @@ import com.raddstream.app.ui.components.rememberReduceMotion
 import com.raddstream.app.ui.components.searchNextPrefetchUrls
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.RaddChip
-import com.raddstream.app.ui.components.RaddChipStyle
 import com.raddstream.app.ui.components.ScrollingChipRow
+import com.raddstream.app.ui.components.UserWords
 import com.raddstream.app.ui.layout.CardGeometry
-import com.raddstream.app.ui.theme.RaddEmphasized
 import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.posterSharedElement
 import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.LanguageFilter
+import com.raddstream.app.viewmodel.ResumeTile
 import com.raddstream.app.viewmodel.IndustryFilter
 import com.raddstream.app.viewmodel.LocalSearchResult
 import com.raddstream.app.viewmodel.MaxSavedFilters
@@ -159,7 +161,6 @@ import com.raddstream.app.viewmodel.effectiveTypeChip
 import com.raddstream.app.viewmodel.filterByYearRange
 import com.raddstream.app.viewmodel.groupSearchResults
 import com.raddstream.app.viewmodel.normalizeTypeLabel
-import com.raddstream.app.viewmodel.resultsSummary
 import com.raddstream.app.viewmodel.TypeGroup
 
 private val typeChips = listOf(
@@ -200,8 +201,58 @@ internal const val FilterRailFadeTag = "filter-rail-fade"
 /** Test tag on the quick-chips row's right-edge fade mask (S3, round 5). */
 internal const val QuickChipsFadeTag = "quick-chips-fade"
 
-/** Test tag on the did-you-mean suggestion chip in the results list. */
-internal const val DidYouMeanTag = "searchDidYouMean"
+/** Test tags for the single fuzzy banner (P1-11) and its inline exact-only link. */
+internal const val FuzzyBannerTag = "searchFuzzyBanner"
+internal const val FuzzyBannerExactLinkTag = "searchFuzzyBannerExactLink"
+
+/**
+ * P1-11 (Nov 2026): the one fuzzy-recovery banner. The server found
+ * nothing exact and answered one edit away instead — the banner names the
+ * query, so the viewer knows why "Avengers" is what came back for
+ * "Avngers", and the exact-only view is an inline text link inside the
+ * banner ("search exact?"), not a button. A FlowRow carries the two
+ * Texts, so the link flows with the sentence and wraps like text instead
+ * of sitting on its own row. The banner is a polite live region: it is
+ * the announcement of what happened, now that the result count line that
+ * used to carry the live region is gone.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun FuzzyBanner(
+    query: String,
+    onShowExactOnly: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .testTag(FuzzyBannerTag)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        FlowRow {
+            Text(
+                text = "No exact match for \"$query\". Showing close titles — ",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = "search exact?",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clickable(onClick = onShowExactOnly)
+                    .testTag(FuzzyBannerExactLinkTag)
+                    .semantics {
+                        contentDescription = "Search exact matches only"
+                        onClick(label = "Search exact matches only") { onShowExactOnly(); true }
+                    },
+            )
+        }
+    }
+}
 
 /** Test tag on the results LazyColumn, so a test can scroll it to the append footer. */
 internal const val SearchResultsListTag = "searchResultsList"
@@ -211,7 +262,7 @@ internal const val SearchResultsListTag = "searchResultsList"
  * the Browse route's, except "kpop" — the server has no kpop content_type
  * (SearchViewModel: content_type='kpop' answers zero rows), so K-pop
  * expands to the whole trending catalog rather than an empty one.
- * Browse serves sort=trending, so the expanded "Recommended for you" grid
+ * Browse serves sort=trending, so the expanded "For you" grid
  * is the same scope in trending order, not newest order — a sort argument
  * on the Browse route is a later slice, not this one.
  */
@@ -291,7 +342,7 @@ fun SearchScreen(
     val onVoiceSearch: () -> Unit = {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Search titles or cast")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Search titles or people")
         }
         runCatching { voiceLauncher.launch(intent) }
     }
@@ -339,6 +390,37 @@ fun SearchScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        // P1-10 (Nov 2026): the field is the top bar — sticky while the
+        // results scroll (the Scaffold bar never scrolls away), and the
+        // in-content "Search" headline is gone: the bar + pill already say
+        // what this surface is. The bar carries the one leading back
+        // affordance; the field, mic and crossfade clear are unchanged.
+        topBar = {
+            SearchTopBar(
+                query = state.query,
+                onQueryChanged = viewModel::onQueryChanged,
+                onSubmit = {
+                    focusManager.clearFocus()
+                    keyboardController?.hide()
+                    viewModel.submitCurrentQuery()
+                },
+                // SE-3 (round 2): voice entry — the mic shows only where a
+                // recognizer exists, and speaks the query at once.
+                onVoiceSearch = if (voiceSearchAvailable) onVoiceSearch else null,
+                voiceSearchAvailable = voiceSearchAvailable,
+                // Back is the one way out of a search: it only exists while
+                // there is a search to leave (a query, or a filter that
+                // makes a blank query a search). On bare discovery the
+                // field takes the whole row.
+                showBack = state.query.isNotBlank() || state.hasSearchIntent,
+                onBack = {
+                    focusManager.clearFocus()
+                    keyboardController?.hide()
+                    viewModel.onQueryChanged("")
+                    viewModel.resetFilters()
+                },
+            )
+        },
     ) { contentPadding ->
         // Session 120: the open keyboard covered the top row of results and the
         // empty-state hint hid behind its clipboard bar — the content never
@@ -352,33 +434,6 @@ fun SearchScreen(
                 .imePadding()
                 .padding(horizontal = 16.dp),
         ) {
-            // Mockup (Nov 2026): the title is a heading in the content, not
-            // a top bar. The bar's Tune icon and "Filtered" pill are gone
-            // with it — the rail's Filters chip is the one entry to the
-            // sheet, and it already shows the active count. SE-7 (round 2):
-            // the screen title wears the display face at headline weight —
-            // the one display-scale moment on this utility screen.
-            Text(
-                text = "Search",
-                style = RaddEmphasized.headlineMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            )
-            Spacer(Modifier.height(12.dp))
-            SearchField(
-                query = state.query,
-                onQueryChanged = viewModel::onQueryChanged,
-                onSubmit = {
-                    focusManager.clearFocus()
-                    keyboardController?.hide()
-                    viewModel.submitCurrentQuery()
-                },
-                // SE-3 (round 2): voice entry — the mic shows only where a
-                // recognizer exists, and speaks the query at once.
-                onVoiceSearch = if (voiceSearchAvailable) onVoiceSearch else null,
-                voiceSearchAvailable = voiceSearchAvailable,
-            )
-
             Spacer(Modifier.height(8.dp))
             // SE-2 (round 2): the saved-filter row — one tap re-applies a
             // filter combination this viewer kept. It sits above the rail,
@@ -403,7 +458,7 @@ fun SearchScreen(
                 }
                 PastedText.YouTube -> {
                     Text(
-                        text = "YouTube links can't play in Radd.",
+                        text = "YouTube links can't play here. Search for it in the catalog.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -416,7 +471,7 @@ fun SearchScreen(
                     // no web page and hands nothing to a browser. Say so
                     // plainly instead of offering an Open button.
                     Text(
-                        text = "Web links don't play in Radd. Search the catalog for the title instead.",
+                        text = "Web links don't play. Search the catalog for the title instead.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -546,19 +601,62 @@ fun SearchScreen(
 }
 
 /**
+ * P1-10 (Nov 2026): the search field as the top bar — a 52 dp pill that
+ * never scrolls away, with a single leading back affordance. The back only
+ * exists while there is a search to leave; on bare discovery the field
+ * takes the whole row. The field itself is the unchanged [SearchField]:
+ * pill, voice mic, crossfade clear.
+ */
+@Composable
+private fun SearchTopBar(
+    query: String,
+    onQueryChanged: (String) -> Unit,
+    onSubmit: () -> Unit,
+    onVoiceSearch: (() -> Unit)?,
+    voiceSearchAvailable: Boolean,
+    showBack: Boolean,
+    onBack: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (showBack) {
+            IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                Icon(
+                    // S8 (round 2): the house back glyph, not the Material default ArrowBack icon.
+                    painterResource(R.drawable.ic_action_arrow_left),
+                    contentDescription = "Back",
+                )
+            }
+        }
+        SearchField(
+            query = query,
+            onQueryChanged = onQueryChanged,
+            onSubmit = onSubmit,
+            onVoiceSearch = onVoiceSearch,
+            voiceSearchAvailable = voiceSearchAvailable,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/**
  * The search field, extracted so its hint behaviour is unit-testable
  * (see SearchFieldHintTest): a filled rounded pill whose prompt is a
  * PLACEHOLDER only. A label with the same text used to float above the
  * typed text (audit #33) — the placeholder vanishes the moment the first
  * character is typed, and the accessible name rides on semantics instead.
- * The field searches titles and cast names; only the prompt is unified
+ * The field searches titles and people; only the prompt is unified
  * with Home's bar, not the capability.
  * Mockup (Nov 2026): one rounded field, 52dp tall, prompt
- * "Search titles or cast" (screenshot-fix D2, 2026-11-16: the old
+ * "Search titles or people" (screenshot-fix D2, 2026-11-16: the old
  * "Search titles, genres, or cast" truncated mid-word — "Search titles,
  * genres, or" — on a narrow phone, because the field is too narrow for
  * 30 characters next to the search icon. The shorter prompt names what
- * the field takes and fits).
+ * the field takes and fits). P1-12 (Nov 2026): "cast" is dated and
+ * ambiguous — "people" names what the field takes.
  * SE-3 (round 2): the field is a full pill now (Shape.Pill), with a mic
  * beside the clear action — voice entry, TalkBack "Voice search". The mic
  * only exists when [voiceSearchAvailable] is true; a device with no
@@ -574,7 +672,7 @@ internal fun SearchField(
     // Audit #17: the Home search bar names what it takes — titles and
     // shows — while Search keeps the shorter hint. The review's prompt
     // names all three: titles, genres, or cast.
-    label: String = "Search titles or cast",
+    label: String = "Search titles or people",
     /** SE-3: voice entry — null means no mic (no recognizer on this device). */
     onVoiceSearch: (() -> Unit)? = null,
     voiceSearchAvailable: Boolean = false,
@@ -1249,7 +1347,7 @@ internal fun LocalSearchResults(
             .verticalScroll(rememberScrollState()),
     ) {
         SectionHeader(
-            title = "Matches on this device",
+            title = "On this device",
             modifier = Modifier.padding(top = 8.dp),
         )
         Spacer(Modifier.height(8.dp))
@@ -1307,14 +1405,15 @@ internal const val SearchDiscoverySkeletonTag = "search-discovery-skeleton"
 
 /**
  * Search review (Nov 2026), fix 4: the discovery page's loading stand-in —
- * a "Trending now" rail skeleton and a "Recommended for you" grid skeleton
- * in the same slots the real sections take, so nothing reflows when the
- * data lands. Hand-built rows, not PosterRailSkeleton/PosterGridSkeleton:
- * those are lazy layouts and this column scrolls — a lazy child inside it
- * measures with infinite height (Robo #6, the same crash the sheet's
- * heightIn(max = 1200.dp) cap fixed). The cells themselves are the shared
- * [PosterCellSkeleton], so a discovery cell and a rail cell are the same
- * height by construction, not by a second set of numbers.
+ * a Continue Watching row skeleton, a "Trending now" rail skeleton and a
+ * "For you" grid skeleton in the same slots the real sections take, so
+ * nothing reflows when the data lands. Hand-built rows, not
+ * PosterRailSkeleton/PosterGridSkeleton: those are lazy layouts and this
+ * column scrolls — a lazy child inside it measures with infinite height
+ * (Robo #6, the same crash the sheet's heightIn(max = 1200.dp) cap fixed).
+ * The cells themselves are the shared [PosterCellSkeleton], so a discovery
+ * cell and a rail cell are the same height by construction, not by a second
+ * set of numbers.
  */
 @Composable
 internal fun SearchDiscoverySkeleton(modifier: Modifier = Modifier) {
@@ -1324,8 +1423,39 @@ internal fun SearchDiscoverySkeleton(modifier: Modifier = Modifier) {
             .verticalScroll(rememberScrollState())
             .testTag(SearchDiscoverySkeletonTag),
     ) {
+        // P1-12: the Continue Watching slot sits first — a header bar and
+        // one thumb row — so the skeleton keeps the section order the
+        // settled page shows.
+        Box(Modifier.fillMaxWidth().padding(top = 16.dp).padding(vertical = 8.dp)) {
+            SkeletonBox(
+                Modifier.width(160.dp).height(24.dp),
+                shape = RoundedCornerShape(4.dp),
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            SkeletonBox(
+                Modifier.width(96.dp).height(144.dp),
+                shape = RoundedCornerShape(8.dp),
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Spacer(Modifier.height(8.dp))
+                SkeletonBox(
+                    Modifier.fillMaxWidth(0.6f).height(16.dp),
+                    shape = RoundedCornerShape(4.dp),
+                )
+                SkeletonBox(
+                    Modifier.fillMaxWidth(0.4f).height(12.dp),
+                    shape = RoundedCornerShape(4.dp),
+                )
+                SkeletonBox(
+                    Modifier.fillMaxWidth(0.8f).height(4.dp),
+                    shape = RoundedCornerShape(2.dp),
+                )
+            }
+        }
         // Header slots: shimmer bars where "Trending now" and
-        // "Recommended for you" will sit. A SectionHeader is its 24dp
+        // "For you" will sit. A SectionHeader is its 24dp
         // title with 8dp top and bottom padding, under the section's own
         // top padding — the old 20dp bars left each header 12dp short.
         // The bar carries the header's own padding, then the 8dp gap to
@@ -1373,6 +1503,9 @@ internal fun SearchDiscoveryContent(
     onPostClick: (Post) -> Unit,
     onSeeAllTrending: () -> Unit = {},
     onSeeAllRecommended: () -> Unit = {},
+    // P1-12: the empty state's action chips apply a genre at once — the
+    // same callback the results list's category tabs already take.
+    onSelectGenre: (GenreFilter) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // Search review (Nov 2026), fix 4: trending + recommended load once in
@@ -1382,19 +1515,28 @@ internal fun SearchDiscoveryContent(
     // instead; the hint waits for the settle, so it only ever means "the
     // catalog really has nothing to show". A section that already has data
     // (recents are local and land first) shows its data, never the skeleton.
-    if (state.discoveryLoading && state.visibleTrending.isEmpty() && state.visibleRecents.isEmpty() && state.visibleRecommended.isEmpty()) {
+    if (state.discoveryLoading && state.visibleContinueWatching.isEmpty() && state.visibleTrending.isEmpty() && state.visibleRecents.isEmpty() && state.visibleRecommended.isEmpty()) {
         SearchDiscoverySkeleton(modifier)
         return
     }
     Column(
         modifier.fillMaxSize().verticalScroll(rememberScrollState()),
     ) {
-        // Mockup (Nov 2026): the discovery page is three sections, top to
-        // bottom — "Trending now" rail, "Recent searches" list,
-        // "Recommended for you" 3-column grid. The old "Trending searches"
-        // chips and "Browse by genre" are gone: the mockup has neither, and
-        // the genre filter still lives in the sheet. Each section hides
-        // when its data is empty, so a fresh install shows the hint only.
+        // P1-12 (Nov 2026): the discovery page is four sections, top to
+        // bottom — "Continue watching", "Trending now" rail, "For you"
+        // 3-column grid, "Recent searches" list. Continue Watching is the
+        // highest-CTR module in streaming, so it leads; Recent searches is
+        // a utility, not merchandising, so it sits last. The old "Trending
+        // searches" chips and "Browse by genre" are gone: the mockup has
+        // neither, and the genre filter still lives in the sheet. Each
+        // section hides when its data is empty, so a fresh install shows
+        // the hint only.
+        if (state.visibleContinueWatching.isNotEmpty()) {
+            SearchContinueWatchingSection(
+                tiles = state.visibleContinueWatching,
+                onPostClick = onPostClick,
+            )
+        }
         if (state.visibleTrending.isNotEmpty()) {
             SectionHeader(
                 title = "Trending now",
@@ -1409,16 +1551,9 @@ internal fun SearchDiscoveryContent(
                 PosterCard(post = post, onClick = { onPostClick(post) })
             }
         }
-        if (state.visibleRecents.isNotEmpty()) {
-            RecentsList(
-                recents = state.visibleRecents,
-                onRunRecent = onRunQuery,
-                onRemoveRecent = onRemoveRecent,
-            )
-        }
         if (state.visibleRecommended.isNotEmpty()) {
             SectionHeader(
-                title = "Recommended for you",
+                title = "For you",
                 modifier = Modifier.padding(top = 20.dp),
                 action = { SeeAllButton(onClick = onSeeAllRecommended, tag = SeeAllRecommendedTag) },
             )
@@ -1438,42 +1573,22 @@ internal fun SearchDiscoveryContent(
                 Spacer(Modifier.height(12.dp))
             }
         }
-        if (state.visibleTrending.isEmpty() && state.visibleRecents.isEmpty() && state.visibleRecommended.isEmpty()) {
+        if (state.visibleRecents.isNotEmpty()) {
+            RecentsList(
+                recents = state.visibleRecents,
+                onRunRecent = onRunQuery,
+                onRemoveRecent = onRemoveRecent,
+            )
+        }
+        if (state.visibleContinueWatching.isEmpty() && state.visibleTrending.isEmpty() && state.visibleRecents.isEmpty() && state.visibleRecommended.isEmpty()) {
             Spacer(Modifier.height(28.dp))
-            // APP-07 (round 2): the empty discovery state is illustrated,
-            // not a bare icon — the H6 pattern: a 120dp jade-ringed circle
-            // holding a 64dp house search mark, with a hint that points at
-            // the category tabs above the results.
-            Box(
-                modifier = Modifier
-                    .size(120.dp)
-                    .align(Alignment.CenterHorizontally)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(118.dp)
-                        .clip(CircleShape)
-                        .border(
-                            width = 1.5.dp,
-                            color = MaterialTheme.colorScheme.tertiary,
-                            shape = CircleShape,
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        painterResource(R.drawable.ic_tab_search),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.tertiary,
-                        modifier = Modifier.size(64.dp),
-                    )
-                }
-            }
-            Spacer(Modifier.height(16.dp))
+            // P1-12: the empty discovery state carries an action, not a
+            // decorative mark — the jade ring + 64dp search glyph is gone.
+            // The four most-picked genres are chips: a tap applies the
+            // genre and runs the search, so the page never dead-ends on a
+            // bare hint.
             Text(
-                text = "Search your catalog",
+                text = "Search for a show, movie, or genre",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
@@ -1481,14 +1596,158 @@ internal fun SearchDiscoveryContent(
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "Search titles and cast names — or start from a genre, a language, or a year",
+                text = "Search titles and people — or start from a genre, a language, or a year",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
             )
+            Spacer(Modifier.height(16.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf(GenreFilter.ACTION, GenreFilter.COMEDY, GenreFilter.DRAMA, GenreFilter.THRILLER).forEach { genre ->
+                    RaddChip(
+                        colors = raddFilterChipColors(),
+                        selected = false,
+                        onClick = { onSelectGenre(genre) },
+                        label = { Text(genre.label) },
+                    )
+                }
+            }
         }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+/**
+ * P1-12 (Nov 2026): Continue Watching leads the discovery page — the same
+ * resumable titles Home's rail shows, in the same order, capped at the
+ * same three rows. A tap opens the title; there is no remove × here —
+ * removal (with Undo) lives on Home's rail, and this section is a way back
+ * into a title, not a second ledger.
+ */
+@Composable
+internal fun SearchContinueWatchingSection(
+    tiles: List<ResumeTile>,
+    onPostClick: (Post) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier) {
+        SectionHeader(
+            title = "Continue watching",
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Spacer(Modifier.height(8.dp))
+        tiles.take(3).forEach { tile ->
+            SearchContinueWatchingRow(
+                tile = tile,
+                onClick = { onPostClick(tile.post) },
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+/**
+ * P1-12: one Continue Watching row — Home's row without the remove ×:
+ * thumb, title, rating, resume label, jade progress bar. A row the app
+ * cannot route to a work never reaches here ([ResumeTile.of] drops it),
+ * so the tap always has somewhere to go.
+ */
+@Composable
+internal fun SearchContinueWatchingRow(
+    tile: ResumeTile,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RaddTokens.Shape.Card)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick)
+            .padding(RaddTokens.Space.Md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val thumbModifier = Modifier
+            .width(CardGeometry.CONTINUE_WATCHING_ROW_THUMB_WIDTH_DP.dp)
+            .aspectRatio(CardGeometry.POSTER_ASPECT)
+            .clip(RaddTokens.Shape.Input)
+        if (tile.post.posterUrl != null) {
+            CatalogImage(
+                url = tile.post.posterUrl,
+                contentDescription = null, // the title beside it says which title this is
+                fallbackLabel = tile.post.displayTitle,
+                modifier = thumbModifier,
+            )
+        } else {
+            // No art: a labelled plate in the thumb's place, never a void.
+            Box(
+                modifier = thumbModifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = tile.post.displayTitle.take(1),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Column(
+            modifier = Modifier.weight(1f).padding(start = RaddTokens.Space.Md),
+            verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Xs),
+        ) {
+            Text(
+                text = tile.post.displayTitle,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            // E2 Ratings (Nov 2026): the rating rides one small line under
+            // the title — and only when the row actually carries one.
+            UserWords.displayRating(tile.post.imdbRating)?.let { rating ->
+                Text(
+                    text = "★ $rating",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            tile.resumeLabel?.let { label ->
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            tile.progressFraction?.let { fraction ->
+                LinearProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(50))
+                        .semantics {
+                            progressBarRangeInfo = ProgressBarRangeInfo(
+                                fraction,
+                                0f..1f,
+                            )
+                            contentDescription = tile.resumeLabel
+                                ?: "Continue watching progress"
+                        },
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surface,
+                )
+            }
+        }
     }
 }
 
@@ -1766,10 +2025,6 @@ internal fun SearchContent(
     val refreshState = pagingItems.loadState.refresh
     val appendState = pagingItems.loadState.append
     val isRefreshing = refreshState is LoadState.Loading
-    val loadedCount = groups.sumOf { it.items.size }
-    val appendEndReached =
-        (appendState as? LoadState.NotLoading)?.endOfPaginationReached == true
-    val hasMore = !appendEndReached
     // Round 6 (motion): the stagger key — the first result's id. It changes
     // when a new query lands with different results (re-staggering every
     // row) and stays put on appends and while typing (settled rows stay
@@ -1784,6 +2039,7 @@ internal fun SearchContent(
                 onPostClick = onPostClick,
                 onSeeAllTrending = onSeeAllTrending,
                 onSeeAllRecommended = onSeeAllRecommended,
+                onSelectGenre = onSelectGenre,
             )
         }
         isRefreshing && groups.isEmpty() && !state.hasLocalResults -> SearchResultsSkeleton(
@@ -1854,7 +2110,7 @@ internal fun SearchContent(
                 }
                 // Feel-instant S3a: the previous results stay on screen while a
                 // fresh search runs — and this one skeleton row on top is the
-                // signal that they are refreshing, so the stale count below it
+                // signal that they are refreshing, so the stale list below it
                 // is never mistaken for the new answer.
                 if (isRefreshing) {
                     item {
@@ -1865,73 +2121,41 @@ internal fun SearchContent(
                         )
                     }
                 }
-                item {
-                    // P1-S3: one filter entry point — the top bar's Tune icon (and
-                    // the "Filtered" pill) opens the sheet. The header keeps only
-                    // the count; a second "Sort" door to the same sheet is gone.
-                    // SE-5 (round 2): the summary line is a polite live region —
-                    // a TalkBack viewer hears "Showing 34 of 52 results" when the
-                    // page lands, without the focus being stolen.
-                    Text(
-                        text = resultsSummary(loadedCount, state.serverTotal, hasMore, state.totalCapped),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-                            .semantics { liveRegion = LiveRegionMode.Polite },
-                    )
-                }
 
-                // Audit #37: the server's "did you mean" spelling, one tap to
-                // search for it — shown only when it differs from the query.
-                // Audit Search #4 (Nov 2026): it used to be a fillMaxWidth
-                // TextButton, so it centred itself in the column and read as
-                // a plain-text label, not an action. It is a chip now — the
-                // outlined pill says "tap me" — left-aligned with the rest of
-                // the stack, and the fuzzy line below is the one statement of
-                // what happened, so the mismatch is stated once, not twice.
-                state.didYouMean?.let { suggestion ->
-                    item {
-                        RaddChip(
-                            style = RaddChipStyle.Navigation,
-                            selected = false,
-                            onClick = { onRunSuggestion(suggestion) },
-                            label = { Text("Did you mean $suggestion?") },
-                            modifier = Modifier.padding(bottom = 8.dp).testTag(DidYouMeanTag),
-                        )
-                    }
-                }
-
-                // The server found nothing exact and answered one edit away
-                // instead. Name the query, so the viewer knows why "Avengers"
-                // is what came back for "Avngers" — and offer the exact-only
-                // view, which is the empty state above.
-                // SE-6 (round 2): the exact-only action is a real button now —
-                // an OutlinedButton, not a bare TextButton — so the choice reads
-                // as an action, not a caption.
+                // P1-11 (Nov 2026): one inline fuzzy banner — the single
+                // recovery path for a one-edit-away answer. It replaces all
+                // three old paths at once: the fuzzy notice, the
+                // did-you-mean chip and the "Show exact matches only"
+                // OutlinedButton (an outlined button is high visual weight
+                // for a rare toggle). The exact-only action is an inline
+                // text link inside the banner, not a button. The result
+                // count ("Showing 34 of 52 results") is gone entirely —
+                // the filter rail carries count context, and the count
+                // broke the moment pagination appended. The banner is the
+                // page's polite live region now: a TalkBack viewer hears
+                // what happened when the page lands, without the focus
+                // being stolen. A did-you-mean spelling with no fuzzy
+                // answer has no banner — the results themselves are the
+                // answer then — and the no-results state's own
+                // "Did you mean …?" action is untouched.
                 if (state.isFuzzy) {
                     item {
-                        Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-                            Text(
-                                text = "No exact match for \"${state.query}\" — showing the closest titles.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            OutlinedButton(
-                                onClick = onShowExactOnly,
-                                modifier = Modifier.heightIn(min = 48.dp),
-                            ) { Text("Show exact matches only") }
-                        }
+                        FuzzyBanner(
+                            query = state.query,
+                            onShowExactOnly = onShowExactOnly,
+                            modifier = Modifier.padding(bottom = 8.dp),
+                        )
                     }
                 }
 
                 groups.forEachIndexed { groupIndex, group ->
                     item {
-                        // A4-F4: the header names the section, nothing more — the
-                        // summary line above is the one count on this screen. The
-                        // old "N titles" subtitle counted a third population
-                        // (loaded works in this section) and read as a competing
-                        // total next to "Showing 34 of 52 results".
+                        // A4-F4: the header names the section, nothing more.
+                        // The old "N titles" subtitle counted a third
+                        // population (loaded works in this section) and read
+                        // as a competing total next to the result count —
+                        // both are gone now (P1-11 deletes the count line),
+                        // so the header is the only label a section carries.
                         SectionHeader(
                             title = group.label,
                             modifier = Modifier.padding(horizontal = 0.dp),
@@ -1939,7 +2163,7 @@ internal fun SearchContent(
                     }
                     // P0-6 (2027 Home fix): results are a scannable vertical grid, three posters
                     // wide — rails are for Home, and one density rules everywhere (the
-                    // discovery "Recommended for you" grid was already 3-wide). Scanning 20
+                    // discovery "For you" grid was already 3-wide). Scanning 20
                     // results no longer means swiping every rail sideways.
                     // Session 158 (S5): a row is keyed by what it holds, not
                     // where it sits — a re-emitted list (the same search

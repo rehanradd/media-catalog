@@ -79,6 +79,7 @@ import com.raddstream.app.viewmodel.HomeSection
 import com.raddstream.app.viewmodel.SettingsUiState
 import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.HomeUiState
+import com.raddstream.app.viewmodel.ResumeTile
 import com.raddstream.app.viewmodel.ListSort
 import com.raddstream.app.viewmodel.MyListUiState
 import com.raddstream.app.viewmodel.IndustryFilter
@@ -1204,10 +1205,22 @@ class PaparazziPreviewTest {
     private val searchDiscovery = SearchUiState(
         recents = listOf("Jawan", "Salaar", "Money Heist"),
         trending = homePosts,
-        // Mockup (Nov 2026): the discovery page adds "Recommended for you"
-        // under the recents — 4 posts exercises the grid's incomplete last
-        // row (3 + 1) in the golden.
+        // P1-12 (Nov 2026): the discovery page leads with Continue
+        // Watching now, and the "For you" grid sits above the recents —
+        // 4 posts exercises the grid's incomplete last row (3 + 1) in
+        // the golden. The one resume tile exercises the CW row (thumb
+        // plate, rating, resume label, progress bar) in the same shot.
         recommended = homePosts,
+        continueWatching = listOf(
+            ResumeTile(
+                post = jawan,
+                season = 1,
+                episode = 2,
+                positionMs = 1_800_000L,
+                durationMs = 3_600_000L,
+                workRef = "jawan",
+            ),
+        ),
     )
 
     private val searchResultGroups = listOf(
@@ -1219,8 +1232,10 @@ class PaparazziPreviewTest {
         query = "jwan",
         serverTotal = 3,
         hasSearched = true,
-        // The query is one edit away from a real title, so both the
-        // did-you-mean line and the fuzzy banner render in this shot.
+        // The query is one edit away from a real title, so the single
+        // fuzzy banner renders in this shot (P1-11: the did-you-mean chip
+        // and the count line are gone, and the banner is the one recovery
+        // path left).
         didYouMean = "jawan",
         isFuzzy = true,
     )
@@ -1232,10 +1247,10 @@ class PaparazziPreviewTest {
 
     @Test
     fun searchResults() {
-        // The append is not at its end, so the count line still reads the
-        // capped "Showing 3 of 3 results" the old golden carried — the
-        // footer below it is gone (S6 retires Load more / Show all), so
-        // this golden is refreshed by the record run.
+        // The append is not at its end, and there is no count line anymore
+        // (P1-11 deletes "Showing 3 of 3 results") — the footer below it
+        // is gone (S6 retires Load more / Show all), so this golden is
+        // refreshed by the record run.
         val idle = LoadState.NotLoading(endOfPaginationReached = false)
         shotSearch(
             searchResults,

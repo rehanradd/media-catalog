@@ -9,7 +9,6 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.PagingData
@@ -26,11 +25,13 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
 /**
- * SE-5 (round 2): the results summary and the no-results state are polite
- * live regions — a TalkBack viewer hears the count (or "No matches") when
- * the search lands, without the focus being stolen. A live region is a
- * semantics property, so these tests read it off the node instead of
- * trusting the modifier by eye.
+ * SE-5 (round 2): the fuzzy banner and the no-results state are polite
+ * live regions — a TalkBack viewer hears what happened when the search
+ * lands (or lands empty), without the focus being stolen. P1-11 deletes
+ * the result count line that used to carry the results live region, so
+ * the banner carries it now. A live region is a semantics property, so
+ * these tests read it off the node instead of trusting the modifier by
+ * eye.
  *
  * Runs on the JVM under Robolectric because this project has no emulator
  * image. Requires an x86_64 runner (robolectric/robolectric#9166).
@@ -63,7 +64,7 @@ class SearchLiveRegionTest {
     }
 
     @Test
-    fun resultsSummaryIsAPoliteLiveRegion() {
+    fun fuzzyBannerIsAPoliteLiveRegion() {
         val pagingData = PagingData.from(
             listOf(samplePost(1, "One Piece")),
             sourceLoadStates = androidx.paging.LoadStates(
@@ -79,9 +80,10 @@ class SearchLiveRegionTest {
                     val pagingItems = flow.collectAsLazyPagingItems()
                     SearchContent(
                         state = SearchUiState(
-                            query = "one piece",
+                            query = "one peice",
                             hasSearched = true,
                             serverTotal = 52,
+                            isFuzzy = true,
                         ),
                         pagingItems = pagingItems,
                         groups = listOf(
@@ -103,12 +105,12 @@ class SearchLiveRegionTest {
                 }
             }
         }
-        val summary = compose.onNodeWithText("Showing 1 of 52 results")
-        summary.assertIsDisplayed()
+        val banner = compose.onNodeWithTag(FuzzyBannerTag)
+        banner.assertIsDisplayed()
         assertEquals(
-            "The results summary must announce politely when the page lands",
+            "The fuzzy banner must announce politely when the page lands",
             LiveRegionMode.Polite,
-            liveRegionMode(summary),
+            liveRegionMode(banner),
         )
     }
 

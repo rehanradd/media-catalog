@@ -112,7 +112,7 @@ class SearchFieldMicTest {
                 )
             }
         }
-        compose.onNodeWithContentDescription("Search titles or cast").performTextInput("a")
+        compose.onNodeWithContentDescription("Search titles or people").performTextInput("a")
         assertEquals("a", query)
     }
 }

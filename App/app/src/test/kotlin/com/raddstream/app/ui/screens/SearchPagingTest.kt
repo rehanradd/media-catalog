@@ -105,17 +105,18 @@ class SearchPagingTest {
     }
 
     @Test
-    fun theSummaryIsTheOnlyCountLine() {
-        // The summary counts loaded works against the server total; the old
-        // per-group "1 title" subtitle counted a third population and read
-        // as a competing total next to it, so it is gone.
+    fun noCountLineAndNoPerGroupSubtitle() {
+        // P1-11 deletes the result count ("Showing 1 of 52 results")
+        // entirely; the old per-group "1 title" subtitle counted a third
+        // population and read as a competing total next to it, so it is
+        // gone too. The filter rail carries count context now.
         setResults(
             PagingData.from(
                 data = listOf(samplePost(1, "One Piece")),
                 sourceLoadStates = LoadStates(refresh = idle, prepend = idle, append = idle),
             ),
         )
-        compose.onNodeWithText("Showing 1 of 52 results").assertIsDisplayed()
+        compose.onNodeWithText("Showing 1 of 52 results").assertDoesNotExist()
         compose.onNodeWithText("1 title").assertDoesNotExist()
         compose.onNodeWithText("1 titles").assertDoesNotExist()
     }
@@ -124,8 +125,8 @@ class SearchPagingTest {
     fun cappedListHasNoShowAllOrLoadMore() {
         // S6 retires the footer: a capped list pages itself as the viewer
         // scrolls, so there is no "Show all 52 results" and no "Load more"
-        // to tap — the count line is the only thing at the end of the list
-        // until the next page arrives.
+        // to tap — the list simply continues until the next page arrives
+        // (P1-11 deletes the count line that used to sit above it).
         setResults(
             PagingData.from(
                 data = listOf(samplePost(1, "One Piece")),
@@ -142,8 +143,8 @@ class SearchPagingTest {
         // the S5 geometry-matched skeleton cells — four cells, no spinner.
         // The footer sits below the fold in the test window (the round-2
         // category tabs added ~112dp above the results), so the test
-        // scrolls the list to it — item 4, after the tabs, the summary,
-        // the header and the one poster row. Scrolling to it composes
+        // scrolls the list to it — item 3, after the tabs, the header and
+        // the one poster row. Scrolling to it composes
         // both skeleton rows, so the pin is all four cells.
         // refresh endOfPaginationReached = true, local to this test: it
         // stops the pager auto-appending (the Error sibling's fixup-3

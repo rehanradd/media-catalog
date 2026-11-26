@@ -10,6 +10,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.ui.theme.RaddStreamTheme
+import com.raddstream.app.viewmodel.GenreFilter
+import com.raddstream.app.viewmodel.ResumeTile
 import com.raddstream.app.viewmodel.SearchUiState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -19,10 +21,12 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
 /**
- * Mockup (Nov 2026): the discovery page is three sections, top to bottom —
- * "Trending now" rail, "Recent searches" list, "Recommended for you"
- * 3-column grid. The old "Trending searches" chips and "Browse by genre"
- * are gone, and recents are rows with a clock icon and a ×, not chips.
+ * P1-12 (Nov 2026): the discovery page is four sections, top to bottom —
+ * "Continue watching", "Trending now" rail, "For you" 3-column grid,
+ * "Recent searches" list. Continue Watching leads (highest-CTR module in
+ * streaming); Recent searches is a utility, not merchandising, so it sits
+ * last. The old "Trending searches" chips and "Browse by genre" are gone,
+ * and recents are rows with a clock icon and a ×, not chips.
  *
  * Runs on the JVM under Robolectric because this project has no emulator
  * image. Requires an x86_64 runner (robolectric/robolectric#9166).
@@ -42,10 +46,20 @@ class SearchDiscoveryTest {
         posterUrl = null,
     )
 
+    private fun sampleTile(id: Int, title: String) = ResumeTile(
+        post = samplePost(id, title),
+        season = 1,
+        episode = 2,
+        positionMs = 60_000L,
+        durationMs = 3_600_000L,
+        workRef = "work-$id",
+    )
+
     private fun setDiscovery(
         recents: List<String> = listOf("Classic Cinema"),
         trending: List<Post> = listOf(samplePost(1, "Dune"), samplePost(2, "Inception")),
         recommended: List<Post> = listOf(samplePost(3, "Oppenheimer")),
+        continueWatching: List<ResumeTile> = emptyList(),
         // Search review (Nov 2026), fix 4: the settled state is the
         // default here, so the existing tests keep pinning the settled
         // page; the loading tests pass true.
@@ -55,6 +69,7 @@ class SearchDiscoveryTest {
         onPostClick: (Post) -> Unit = {},
         onSeeAllTrending: () -> Unit = {},
         onSeeAllRecommended: () -> Unit = {},
+        onSelectGenre: (GenreFilter) -> Unit = {},
     ) {
         compose.setContent {
             RaddStreamTheme {
@@ -63,6 +78,7 @@ class SearchDiscoveryTest {
                         recents = recents,
                         trending = trending,
                         recommended = recommended,
+                        continueWatching = continueWatching,
                         discoveryLoading = discoveryLoading,
                     ),
                     onRunQuery = onRunQuery,
@@ -70,6 +86,7 @@ class SearchDiscoveryTest {
                     onPostClick = onPostClick,
                     onSeeAllTrending = onSeeAllTrending,
                     onSeeAllRecommended = onSeeAllRecommended,
+                    onSelectGenre = onSelectGenre,
                 )
             }
         }
@@ -77,9 +94,11 @@ class SearchDiscoveryTest {
 
     @Test
     fun discoverySectionsInMockupOrder() {
-        setDiscovery()
+        setDiscovery(continueWatching = listOf(sampleTile(9, "Dune Two")))
 
+        compose.onNodeWithText("Continue watching").assertIsDisplayed()
         compose.onNodeWithText("Trending now").assertIsDisplayed()
+        compose.onNodeWithText("For you").assertIsDisplayed()
         compose.onNodeWithText("Recent searches").assertIsDisplayed()
         // The old discovery had neither of these — a regression to the
         // chip/genre layout would show them again.
@@ -93,16 +112,65 @@ class SearchDiscoveryTest {
         // its layout position (CI 43740958870: recentsTop < recommendedTop
         // failed on the clip, not on the layout). positionInRoot is the
         // unclipped layout position, so the order holds at any scroll.
+        val continueWatchingTop = compose.onNodeWithText("Continue watching").fetchSemanticsNode().positionInRoot.y
         val trendingTop = compose.onNodeWithText("Trending now").fetchSemanticsNode().positionInRoot.y
+        val forYouTop = compose.onNodeWithText("For you").fetchSemanticsNode().positionInRoot.y
         val recentsTop = compose.onNodeWithText("Recent searches").fetchSemanticsNode().positionInRoot.y
-        val recommendedTop = compose.onNodeWithText("Recommended for you").fetchSemanticsNode().positionInRoot.y
-        assertTrue("Trending now must sit above Recent searches", trendingTop < recentsTop)
-        assertTrue("Recent searches must sit above Recommended for you", recentsTop < recommendedTop)
+        assertTrue("Continue watching must sit above Trending now", continueWatchingTop < trendingTop)
+        assertTrue("Trending now must sit above For you", trendingTop < forYouTop)
+        assertTrue("For you must sit above Recent searches", forYouTop < recentsTop)
 
-        // "Recommended for you" sits below the fold in the short
+        // "For you" sits below the fold in the short
         // Robolectric window — scroll it into view before asserting it is
         // displayed, the way HomeHeaderTest scrolls to its "Show all".
-        compose.onNodeWithText("Recommended for you").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("For you").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun continueWatchingRowOpensItsTitle() {
+        var clicked: Post? = null
+        setDiscovery(
+            continueWatching = listOf(sampleTile(9, "Dune Two")),
+            onPostClick = { clicked = it },
+        )
+
+        compose.onNodeWithText("Dune Two").performClick()
+        assertEquals(9, clicked?.id)
+    }
+
+    @Test
+    fun continueWatchingShowsAtMostThreeRows() {
+        // Home caps the rail at three rows; discovery shows the same
+        // three, in the same order — the fourth tile never composes.
+        setDiscovery(
+            continueWatching = listOf(
+                sampleTile(9, "First Title"),
+                sampleTile(10, "Second Title"),
+                sampleTile(11, "Third Title"),
+                sampleTile(12, "Fourth Title"),
+            ),
+        )
+
+        compose.onNodeWithText("First Title").assertIsDisplayed()
+        compose.onNodeWithText("Third Title").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Fourth Title").assertDoesNotExist()
+    }
+
+    @Test
+    fun emptyDiscoveryGenreChipRunsItsGenre() {
+        // P1-12: the empty state carries an action — the genre chips run
+        // a search for that genre instead of dead-ending on a bare hint.
+        var selected: GenreFilter? = null
+        setDiscovery(
+            recents = emptyList(),
+            trending = emptyList(),
+            recommended = emptyList(),
+            onSelectGenre = { selected = it },
+        )
+
+        compose.onNodeWithText("Search for a show, movie, or genre").assertIsDisplayed()
+        compose.onNodeWithText("Action").performClick()
+        assertEquals(GenreFilter.ACTION, selected)
     }
 
     @Test
@@ -176,13 +244,16 @@ class SearchDiscoveryTest {
     fun emptyDiscoveryShowsHintOnly() {
         // The settled empty state: both discovery loads answered and the
         // catalog has nothing to show, so the hint — and only the hint —
-        // is the page.
+        // is the page, plus the genre chips that act on it. The decorative
+        // jade ring is gone (P1-12).
         setDiscovery(recents = emptyList(), trending = emptyList(), recommended = emptyList())
 
-        compose.onNodeWithText("Search your catalog").assertIsDisplayed()
+        compose.onNodeWithText("Search for a show, movie, or genre").assertIsDisplayed()
+        compose.onNodeWithText("Search your catalog").assertDoesNotExist()
+        compose.onNodeWithText("Action").assertIsDisplayed()
         compose.onNodeWithText("Trending now").assertDoesNotExist()
         compose.onNodeWithText("Recent searches").assertDoesNotExist()
-        compose.onNodeWithText("Recommended for you").assertDoesNotExist()
+        compose.onNodeWithText("For you").assertDoesNotExist()
         compose.onNodeWithTag(SearchDiscoverySkeletonTag).assertDoesNotExist()
     }
 
@@ -201,10 +272,10 @@ class SearchDiscoveryTest {
         )
 
         compose.onNodeWithTag(SearchDiscoverySkeletonTag).assertIsDisplayed()
-        compose.onNodeWithText("Search your catalog").assertDoesNotExist()
+        compose.onNodeWithText("Search for a show, movie, or genre").assertDoesNotExist()
         compose.onNodeWithText("Trending now").assertDoesNotExist()
         compose.onNodeWithText("Recent searches").assertDoesNotExist()
-        compose.onNodeWithText("Recommended for you").assertDoesNotExist()
+        compose.onNodeWithText("For you").assertDoesNotExist()
     }
 
     @Test
@@ -225,7 +296,7 @@ class SearchDiscoveryTest {
         // The two "See all" buttons share their text, so the test taps
         // the tags, not the text — the text alone is ambiguous.
         compose.onNodeWithTag(SeeAllTrendingTag).assertIsDisplayed()
-        // "Recommended for you" sits below the fold in the short
+        // "For you" sits below the fold in the short
         // Robolectric window — scroll first, the way the order test does.
         compose.onNodeWithTag(SeeAllRecommendedTag).performScrollTo().assertIsDisplayed()
     }
