@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
@@ -750,7 +751,7 @@ fun PosterCard(
                     exit = fadeOut(
                         animationSpec = if (rememberReduceMotion()) snap() else RaddMotion.defaultEffects(),
                     ) + if (rememberReduceMotion()) {
-                        EnterTransition.None
+                        ExitTransition.None
                     } else {
                         shrinkVertically(animationSpec = RaddMotion.defaultSpatial())
                     },
