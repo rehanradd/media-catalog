@@ -178,6 +178,15 @@ internal fun RowEndFade(modifier: Modifier = Modifier, height: Dp = 48.dp) {
     // (A 64dp strip was tried first and reverted — the 48dp width is
     // pinned by test, so the fix lives in the ramp, not the width.)
     // The inner gradient still reads as the scroll cue.
+    //
+    // Re-rate 9 (Nov 2026): the 60%-full ramp overshot — the outer
+    // ~19dp is fully opaque, so the next chip (KPOP after ANIME) is
+    // completely invisible at rest and the row reads as finished, not
+    // scrollable. The cue is capped, not removed: the outer stops sit
+    // at 92% background, so a faint ghost of the next chip shows
+    // through — enough to say "more", not enough to read as clipped.
+    // The 80%-at-30% inner ramp is unchanged, so the cut chip still
+    // dims out and never reads as a clipped label.
     Box(
         modifier = modifier
             .width(RaddTokens.Space.Step48)
@@ -186,8 +195,8 @@ internal fun RowEndFade(modifier: Modifier = Modifier, height: Dp = 48.dp) {
                 Brush.horizontalGradient(
                     0f to Color.Transparent,
                     0.3f to MaterialTheme.colorScheme.background.copy(alpha = 0.8f),
-                    0.6f to MaterialTheme.colorScheme.background,
-                    1f to MaterialTheme.colorScheme.background,
+                    0.6f to MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
+                    1f to MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
                 ),
             ),
     )
