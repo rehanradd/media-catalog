@@ -1,8 +1,12 @@
 package com.raddstream.app.ui.screens
 
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -11,7 +15,6 @@ import com.raddstream.app.network.models.LiveTvChannel
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -147,16 +150,25 @@ class LiveTvChannelCardTest {
         // bought equal heights with a blank second line under every short
         // meta ("News · Pakistan") — visible gaps, top-heavy cards. Cards
         // now take their natural height and the grid aligns by the fixed
-        // 16:9 logo plate, so a one-line meta is one line tall and a long
-        // triple still wraps to two lines under maxLines = 2.
+        // 16:9 logo plate, so a one-line meta is one line tall.
+        //
+        // The pin is metric-independent: the card meta must measure
+        // exactly as tall as the same text in the same style with the
+        // same bottom padding and maxLines = 1. With the old minLines = 2
+        // the card meta would be a full line (~16dp) taller than the
+        // reference, far outside the 1px tolerance. No wrapping is
+        // asserted here: whether a long triple wraps to two lines is
+        // pinned by the Paparazzi populated golden (byte-identical after
+        // this change), and Robolectric wrap behaviour is font-metric
+        // dependent — the first version of this test asserted a wrap and
+        // failed on CI with both metas at 35px, one line (run
+        // 45799626946), and the wrap pin that fixup 69356fcc removed
+        // died the same way.
         //
         // The tag lives inside Card(onClick = …), a clickable that merges
         // its descendants' semantics into the card node — so the merged
         // tree has no meta node at all (CI 44646400985 found 0 nodes) and
         // the lookup searches the unmerged tree (A4-F2 fixup 3, same tag).
-        // The long meta is deliberately long ("Entertainment · Saudi
-        // Arabia · Portuguese") so it wraps to two lines at 180dp under
-        // any font metric, while the short meta fits on one.
         val short = LiveTvChannel(
             id = 1,
             name = "Geo News",
@@ -166,45 +178,34 @@ class LiveTvChannelCardTest {
             logoUrl = "",
             streamId = "stream-1",
         )
-        val long = LiveTvChannel(
-            id = 2,
-            name = "Hum TV",
-            category = "entertainment",
-            country = "SA",
-            language = "portuguese",
-            logoUrl = "",
-            streamId = "stream-2",
-        )
         compose.setContent {
             RaddStreamTheme {
-                Row {
+                Column {
                     LiveTvChannelCard(
                         channel = short,
                         onClick = {},
                         modifier = Modifier.width(180.dp),
                     )
-                    LiveTvChannelCard(
-                        channel = long,
-                        onClick = {},
-                        modifier = Modifier.width(180.dp),
+                    Text(
+                        text = "News · Pakistan",
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        modifier = Modifier.width(160.dp).padding(bottom = 10.dp)
+                            .testTag("liveTv_metaReference"),
                     )
                 }
             }
         }
         val metas = compose.onAllNodesWithTag("liveTv_channelMeta", useUnmergedTree = true)
             .fetchSemanticsNodes()
-        assertEquals(2, metas.size)
-        val shortHeight = metas[0].boundsInRoot.height
-        val longHeight = metas[1].boundsInRoot.height
-        assertTrue(
-            "Short meta ($shortHeight px) is not shorter than the long meta ($longHeight px) — " +
-                "the blank second line is still reserved",
-            shortHeight < longHeight,
-        )
-        assertTrue(
-            "Long meta ($longHeight px) is taller than two lines of the short meta ($shortHeight px) — " +
-                "maxLines = 2 is not capping it",
-            longHeight < 2.5f * shortHeight,
+        assertEquals(1, metas.size)
+        val references = compose.onAllNodesWithTag("liveTv_metaReference", useUnmergedTree = true)
+            .fetchSemanticsNodes()
+        assertEquals(1, references.size)
+        assertEquals(
+            references[0].boundsInRoot.height,
+            metas[0].boundsInRoot.height,
+            1.0f,
         )
     }
 }
