@@ -146,6 +146,7 @@ import com.raddstream.app.ui.components.UserWords
 import com.raddstream.app.ui.components.RatingBadge
 import com.raddstream.app.ui.components.SectionHeader
 import com.raddstream.app.ui.components.prefetchPosterArt
+import com.raddstream.app.ui.components.RaddChip
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.ScrollingChipRow
 import com.raddstream.app.ui.components.rememberReduceMotion
@@ -3133,12 +3134,14 @@ internal fun EpisodeRowSection(
                 fadeHeight = 48.dp,
             ) {
                 items(seasons, key = { it.number }) { chipSeason ->
-                    FilterChip(
+                    // P2-chip2027: rides RaddChip now, so the selected
+                    // season wears the 8dp shape + check like every other
+                    // selected filter chip (the raw FilterChip hid both).
+                    RaddChip(
                         selected = chipSeason.number == selectedSeason,
                         onClick = { onSelectSeason(chipSeason.number) },
                         label = { Text("Season ${chipSeason.number}") },
                         colors = raddFilterChipColors(),
-                        modifier = Modifier.heightIn(min = 48.dp),
                     )
                 }
             }

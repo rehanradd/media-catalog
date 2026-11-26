@@ -86,6 +86,67 @@ class ScrollingChipRowTest {
     }
 
     @Test
+    fun selectedFilterChipShowsCheckUnselectedDoesNot() {
+        // P2-chip2027: the M3 Expressive signature — a selected filter
+        // chip shows the leading check; an unselected one shows only its
+        // label. The check is a merged descendant of the chip node, so
+        // the query reads the unmerged tree.
+        var selected by mutableStateOf(true)
+        compose.setContent {
+            RaddStreamTheme {
+                RaddChip(
+                    selected = selected,
+                    onClick = {},
+                    label = { Text("Hindi") },
+                    modifier = Modifier.testTag("chip_hindi"),
+                )
+            }
+        }
+        compose.onNodeWithTag(SelectedCheckTag, useUnmergedTree = true).assertIsDisplayed()
+        selected = false
+        compose.waitForIdle()
+        compose.onNodeWithTag(SelectedCheckTag, useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun explicitLeadingIconKeepsItsIconInsteadOfTheCheck() {
+        // P2-chip2027: a caller that passes its own leadingIcon keeps it
+        // — the default check never overrides an explicit icon.
+        compose.setContent {
+            RaddStreamTheme {
+                RaddChip(
+                    selected = true,
+                    onClick = {},
+                    label = { Text("Hindi") },
+                    leadingIcon = { Text("X") },
+                    modifier = Modifier.testTag("chip_hindi"),
+                )
+            }
+        }
+        compose.onNodeWithTag(SelectedCheckTag, useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithText("X").assertIsDisplayed()
+    }
+
+    @Test
+    fun navigationChipNeverShowsTheSelectedCheck() {
+        // P2-chip2027: Navigation is a pill with no selection — even a
+        // selected=true Navigation chip (the flag is ignored) gets no
+        // check.
+        compose.setContent {
+            RaddStreamTheme {
+                RaddChip(
+                    selected = true,
+                    onClick = {},
+                    label = { Text("All") },
+                    style = RaddChipStyle.Navigation,
+                    modifier = Modifier.testTag("chip_all"),
+                )
+            }
+        }
+        compose.onNodeWithTag(SelectedCheckTag, useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
     fun navigationChipRendersAndClicks() {
         var clicks = 0
         compose.setContent {

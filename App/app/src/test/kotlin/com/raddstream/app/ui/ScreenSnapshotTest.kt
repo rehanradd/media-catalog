@@ -8,10 +8,8 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -40,6 +38,7 @@ import com.raddstream.app.ui.components.HeroCarousel
 import com.raddstream.app.ui.components.PosterCard
 import com.raddstream.app.ui.components.PrintQualityBadge
 import com.raddstream.app.ui.components.PrintSourceBadge
+import com.raddstream.app.ui.components.RaddChip
 import com.raddstream.app.ui.components.SubtitleBadge
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.screens.LiveTvChannelCard
@@ -409,19 +408,19 @@ class ScreenSnapshotTest {
             ) {
                 Text("Filter chips", style = MaterialTheme.typography.titleLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
+                    // P2-chip2027: rendered through RaddChip, so the
+                    // capture pins the 8dp shape and the selected check.
+                    RaddChip(
                         selected = true,
                         onClick = {},
                         label = { Text("Hindi") },
                         colors = raddFilterChipColors(),
-                        modifier = Modifier.heightIn(min = 48.dp),
                     )
-                    FilterChip(
+                    RaddChip(
                         selected = false,
                         onClick = {},
                         label = { Text("English") },
                         colors = raddFilterChipColors(),
-                        modifier = Modifier.heightIn(min = 48.dp),
                     )
                 }
             }

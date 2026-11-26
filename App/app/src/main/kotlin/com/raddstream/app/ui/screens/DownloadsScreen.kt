@@ -1541,12 +1541,16 @@ private fun DoneCheck(modifier: Modifier = Modifier) {
     )
 }
 
-/** D21: quality as a badge, never truncating text — a tonal chip, with the size beside it in the meta line. */
+/** D21: quality as a badge, never truncating text — a tonal chip, with the size beside it in the meta line.
+ * P2-chip2027: a badge, not a filter chip — it keeps the pill
+ * ([RaddTokens.Shape.Pill]) deliberately. The 8dp [RaddTokens.Shape.Chip]
+ * token is the filter-chip shape; a badge that followed it by accident
+ * would read as a filter. */
 @Composable
 private fun QualityBadge(quality: String) {
     Box(
         modifier = Modifier
-            .clip(RaddTokens.Shape.Chip)
+            .clip(RaddTokens.Shape.Pill)
             .background(MaterialTheme.colorScheme.secondaryContainer)
             .padding(
                 horizontal = RaddTokens.Space.Xs,

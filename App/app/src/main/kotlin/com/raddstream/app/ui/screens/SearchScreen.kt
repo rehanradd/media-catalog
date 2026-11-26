@@ -144,6 +144,7 @@ import com.raddstream.app.ui.components.searchNextPrefetchUrls
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.components.RaddChip
 import com.raddstream.app.ui.components.ScrollingChipRow
+import com.raddstream.app.ui.components.SelectedCheckIcon
 import com.raddstream.app.ui.components.UserWords
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.RaddMotion
@@ -521,7 +522,22 @@ fun SearchScreen(
             }
             // The rail stays up whatever is pasted: a link replaces the
             // results, never the whole search UI.
-            FilterRail(state = state, groups = groups, onSelectType = viewModel::selectType, onOpenFilters = { showSheet = true })
+            FilterRail(
+                state = state,
+                groups = groups,
+                onSelectType = viewModel::selectType,
+                onOpenFilters = { showSheet = true },
+                // P2-chip2027: the removable active-filter chips clear
+                // one facet each through the same ViewModel calls the
+                // sheet and the quick chips use.
+                onSelectIndustry = viewModel::selectIndustry,
+                onSelectGenre = viewModel::selectGenre,
+                onSelectQuality = viewModel::selectQuality,
+                onSelectLanguage = viewModel::selectLanguage,
+                onSetYearRange = viewModel::setYearRange,
+                onSetIncludedOnly = viewModel::setIncludedOnly,
+                onSetSort = viewModel::setSort,
+            )
 
             if (pasted is PastedText.NotAUrl) {
                 // Type-ahead titles for what is being typed. A tap searches for
@@ -915,6 +931,11 @@ private fun QuickFilterChip(
         selected = selected,
         onClick = onClick,
         label = label,
+        // P2-chip2027: the selected check — the M3 Expressive mark, the
+        // same one RaddChip shows (this chip keeps its own 0.96 press
+        // scale instead of RaddChip's 0.97, so it takes the shared icon
+        // rather than the shared chip).
+        leadingIcon = if (selected) ({ SelectedCheckIcon() }) else null,
         interactionSource = interactionSource,
         modifier = modifier
             .heightIn(min = 48.dp)
@@ -1168,12 +1189,47 @@ private fun DirectVideoRow(url: String, title: String, onPlay: () -> Unit) {
  * now, so it can never clip; the type chips scroll in the space that is
  * left, under the shared [ScrollingChipRow] fade.
  */
+/**
+ * P2-chip2027: one live filter as one removable input chip (Netflix
+ * pattern) — the kind keys the row, the label is what the viewer reads,
+ * and [onClear] drops just that facet back to All. The chip itself is
+ * a selected RaddChip with a trailing × and no check: it is a remove
+ * control wearing the active fill, not a filter selection.
+ */
+private data class ActiveFilterChip(
+    val kind: String,
+    val label: String,
+    val onClear: () -> Unit,
+)
+
+/** Test-tag prefix for the removable active-filter chips (`activeFilter:genre`, …). */
+internal const val ActiveFilterChipTagPrefix = "activeFilter:"
+
+/** The year facet as one short label: a single year, or a range. */
+private fun yearRangeLabel(from: Int?, to: Int?): String? = when {
+    from == null && to == null -> null
+    from != null && from == to -> "$from"
+    from != null && to != null -> "$from–$to"
+    from != null -> "From $from"
+    else -> "To $to"
+}
+
 @Composable
 internal fun FilterRail(
     state: SearchUiState,
     groups: List<TypeGroup> = emptyList(),
     onSelectType: (String?) -> Unit,
     onOpenFilters: () -> Unit,
+    // P2-chip2027: the per-facet clears behind the removable active-filter
+    // chips below. Defaulted so the rail's unit tests keep compiling with
+    // the old four-arg call — the real screen wires the ViewModel.
+    onSelectIndustry: (IndustryFilter) -> Unit = {},
+    onSelectGenre: (GenreFilter) -> Unit = {},
+    onSelectQuality: (QualityFilter) -> Unit = {},
+    onSelectLanguage: (LanguageFilter) -> Unit = {},
+    onSetYearRange: (Int?, Int?) -> Unit = { _, _ -> },
+    onSetIncludedOnly: (Boolean) -> Unit = {},
+    onSetSort: (SearchSort) -> Unit = {},
 ) {
     // Robo #7: the last chip ("Complete series") was cut off at the right edge — and when it
     // was the SELECTED chip it stayed cut off ("Comp…"), because nothing ever scrolled the
@@ -1224,12 +1280,44 @@ internal fun FilterRail(
         state.filters.includedOnly,
         state.sort != SearchSort.DEFAULT,
     ).count { it }
+    // P2-chip2027: the same live facets as removable chips — one per
+    // active filter, in the same order the count above tallies them, so
+    // the count and the chips can never disagree about what is active.
+    // Type is not here: it already has its own selected chip in the rail.
+    val activeFilters = listOfNotNull(
+        if (state.filters.industry != IndustryFilter.ALL) {
+            ActiveFilterChip("industry", state.filters.industry.label) { onSelectIndustry(IndustryFilter.ALL) }
+        } else null,
+        if (state.filters.genre != GenreFilter.ALL) {
+            ActiveFilterChip("genre", state.filters.genre.label) { onSelectGenre(GenreFilter.ALL) }
+        } else null,
+        if (state.filters.quality != QualityFilter.ALL) {
+            ActiveFilterChip("quality", state.filters.quality.label) { onSelectQuality(QualityFilter.ALL) }
+        } else null,
+        if (state.filters.language != LanguageFilter.ALL) {
+            ActiveFilterChip("language", displayLanguageName(state.filters.language.label)) { onSelectLanguage(LanguageFilter.ALL) }
+        } else null,
+        yearRangeLabel(state.filters.yearFrom, state.filters.yearTo)?.let { yearLabel ->
+            ActiveFilterChip("year", yearLabel) { onSetYearRange(null, null) }
+        },
+        if (state.filters.includedOnly) {
+            ActiveFilterChip("includedOnly", "Included in my plan") { onSetIncludedOnly(false) }
+        } else null,
+        if (state.sort != SearchSort.DEFAULT) {
+            ActiveFilterChip("sort", state.sort.label) { onSetSort(SearchSort.DEFAULT) }
+        } else null,
+    )
     val filtersLabel = if (activeFilterCount > 0) "Filters ($activeFilterCount)" else "Filters"
     val filtersA11y = if (activeFilterCount > 0) "Filters, $activeFilterCount active" else "Filters"
     // Motion (round 2): the rail's taps tick — the same light haptic the
     // press system uses (PressHaptics), so a chip tap feels answered.
     val haptics = LocalHapticFeedback.current
     val chipTick: () -> Unit = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
+    // P2-chip2027: the rail is a column now — the Filters + type row,
+    // then the removable active-filter chips underneath when any filter
+    // is live. No active filters, no second row: the rail is exactly
+    // what it was.
+    Column(modifier = Modifier.fillMaxWidth()) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1261,6 +1349,9 @@ internal fun FilterRail(
                     Text(filtersLabel)
                 }
             },
+            // P2-chip2027: the 24dp pill stays — this chip is an action
+            // (it opens the sheet), not a filter selection, and action
+            // chips keep the pill while filter chips go 8dp.
             shape = RoundedCornerShape(24.dp),
             border = FilterChipDefaults.filterChipBorder(
                 enabled = true,
@@ -1306,7 +1397,9 @@ internal fun FilterRail(
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                         )
                     },
-                    shape = RoundedCornerShape(24.dp),
+                    // P2-chip2027: no explicit shape — these are filter
+                    // chips, so they follow RaddChip's 8dp default (the
+                    // 24dp pill they carried was the P2-2 shape).
                     // CL-3, same as the sheet: the rail's "All" chip is the Type
                     // group's "All", and it must SAY so — the spoken name is
                     // "All types", not the bare label.
@@ -1318,6 +1411,38 @@ internal fun FilterRail(
                 )
             }
         }
+    }
+    if (activeFilters.isNotEmpty()) {
+        // P2-chip2027: the active filters as removable input chips —
+        // one chip per live filter, trailing × clears just that one
+        // (the whole chip is the clear control; the × is the sign).
+        // No check: a remove control is not a selection. The row
+        // scrolls like the rail above it and carries no fade tag of
+        // its own — FilterRailFadeTag belongs to the type row.
+        ScrollingChipRow(
+            contentPadding = PaddingValues(start = 0.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            items(activeFilters, key = { it.kind }) { active ->
+                RaddChip(
+                    selected = true,
+                    onClick = { chipTick(); active.onClear() },
+                    label = { Text(active.label) },
+                    trailingIcon = {
+                        Icon(
+                            painterResource(R.drawable.ic_action_close),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                    showSelectedCheck = false,
+                    modifier = Modifier
+                        .testTag("$ActiveFilterChipTagPrefix${active.kind}")
+                        .semantics { contentDescription = "Remove ${active.label} filter" },
+                )
+            }
+        }
+    }
     }
 }
 
@@ -2568,6 +2693,9 @@ internal fun FilterSheetBody(
                         selected = state.filters.includedOnly,
                         onClick = { onSetIncludedOnly(!state.filters.includedOnly) },
                         label = { Text("Included in my plan") },
+                        // P2-chip2027: the selected check, as on every
+                        // other selected filter chip.
+                        leadingIcon = if (state.filters.includedOnly) ({ SelectedCheckIcon() }) else null,
                         // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
                         modifier = Modifier.heightIn(min = 48.dp),
                     )
@@ -2726,6 +2854,9 @@ private fun <T> FacetChips(
                 selected = isSelected(option),
                 onClick = { onSelect(option) },
                 label = { Text(label(option)) },
+                // P2-chip2027: the selected check — the M3 Expressive
+                // mark, the same one RaddChip shows.
+                leadingIcon = if (isSelected(option)) ({ SelectedCheckIcon() }) else null,
                 // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
                 modifier = if (label(option) == "All") {
                     Modifier.heightIn(min = 48.dp).semantics { contentDescription = allDescription }

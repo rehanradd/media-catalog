@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,7 +28,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -103,7 +101,7 @@ import com.raddstream.app.ui.theme.RaddTokens
 @Composable
 // H3 (2027 Home fix): the shared chip colors are fully tonal now —
 // the UNSELECTED container is surfaceContainerHigh (not transparent
-// with an outline), so a chip row reads as a row of tonal pills and
+// with an outline), so a chip row reads as a row of tonal chips and
 // the selected fill (primaryContainer) is one step up from it, not a
 // different language. Every screen that uses these colors (Home, the
 // Search rail, Live TV) gets the same tonal row.
@@ -121,6 +119,9 @@ fun raddFilterChipColors() = FilterChipDefaults.filterChipColors(
  * beside unselected, on the shared token. A future change to the selected
  * fill, the check or the border shows up here before it ships; the
  * screenshot test in ScreenSnapshotTest pins the same two states in CI.
+ * P2-chip2027: rendered through RaddChip, so the preview shows the
+ * 8dp shape and the selected check — the raw FilterChip below it would
+ * hide both.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Preview(name = "Filter chip states", showBackground = true)
@@ -131,19 +132,17 @@ private fun FilterChipStatesPreview() {
             modifier = Modifier.padding(RaddTokens.Space.Gutter),
             horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
         ) {
-            FilterChip(
+            RaddChip(
                 selected = true,
                 onClick = {},
                 label = { Text("Hindi") },
                 colors = raddFilterChipColors(),
-                modifier = Modifier.heightIn(min = 48.dp),
             )
-            FilterChip(
+            RaddChip(
                 selected = false,
                 onClick = {},
                 label = { Text("English") },
                 colors = raddFilterChipColors(),
-                modifier = Modifier.heightIn(min = 48.dp),
             )
         }
     }

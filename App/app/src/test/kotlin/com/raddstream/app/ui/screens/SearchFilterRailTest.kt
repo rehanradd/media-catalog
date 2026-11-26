@@ -13,12 +13,16 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.ui.theme.RaddStreamTheme
+import com.raddstream.app.viewmodel.GenreFilter
+import com.raddstream.app.viewmodel.LanguageFilter
 import com.raddstream.app.viewmodel.SearchFilters
 import com.raddstream.app.viewmodel.SearchUiState
 import com.raddstream.app.viewmodel.TypeGroup
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -220,5 +224,53 @@ class SearchFilterRailTest {
             }
         }
         compose.onNodeWithTag(FilterRailFadeTag).assertExists()
+    }
+
+    @Test
+    fun activeFilterChipsClearOneFilterEach() {
+        // P2-chip2027: the live filters ride under the rail as removable
+        // input chips — one chip per facet, and tapping one clears just
+        // that facet back to All (the Filters button keeps only the
+        // count). The box is 200dp tall so the second row fits.
+        var clearedGenre: GenreFilter? = null
+        var clearedLanguage: LanguageFilter? = null
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.size(width = 360.dp, height = 200.dp)) {
+                    FilterRail(
+                        state = SearchUiState(
+                            filters = SearchFilters(
+                                genre = GenreFilter.ACTION,
+                                language = LanguageFilter.HINDI,
+                            ),
+                        ),
+                        onSelectType = {},
+                        onOpenFilters = {},
+                        onSelectGenre = { clearedGenre = it },
+                        onSelectLanguage = { clearedLanguage = it },
+                    )
+                }
+            }
+        }
+        compose.onNodeWithTag("${ActiveFilterChipTagPrefix}genre").assertIsDisplayed()
+        compose.onNodeWithTag("${ActiveFilterChipTagPrefix}language").assertIsDisplayed()
+        compose.onNodeWithTag("${ActiveFilterChipTagPrefix}genre").performClick()
+        assertEquals(GenreFilter.ALL, clearedGenre)
+        assertEquals(null, clearedLanguage)
+    }
+
+    @Test
+    fun noActiveFilterChipsWhenNothingIsActive() {
+        // P2-chip2027: with no filter live the rail is exactly what it
+        // was — no second row, no removable chips.
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.size(width = 360.dp, height = 200.dp)) {
+                    FilterRail(state = SearchUiState(), onSelectType = {}, onOpenFilters = {})
+                }
+            }
+        }
+        compose.onNodeWithTag("${ActiveFilterChipTagPrefix}genre").assertDoesNotExist()
+        compose.onNodeWithTag("${ActiveFilterChipTagPrefix}sort").assertDoesNotExist()
     }
 }

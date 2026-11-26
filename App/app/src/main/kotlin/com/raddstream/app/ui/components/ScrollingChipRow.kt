@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
@@ -21,6 +22,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SelectableChipColors
 import androidx.compose.material3.Surface
@@ -32,8 +35,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.raddstream.app.R
 import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.pressScale
@@ -177,7 +182,13 @@ internal fun RowEndFade(modifier: Modifier = Modifier, height: Dp = 48.dp) {
 
 /** The two chip styles the app actually has. */
 enum class RaddChipStyle {
-    /** A Material3 FilterChip: filters in place, with a selected fill. */
+    /**
+     * A Material3 FilterChip: filters in place, with a selected fill —
+     * 8dp radius and a leading check when selected (M3 Expressive,
+     * P2-chip2027): the small radius plus the check is what says
+     * "filter chip", a plain pill with only a colour change is the
+     * 2021 look.
+     */
     Filter,
 
     /**
@@ -202,7 +213,35 @@ enum class RaddChipStyle {
  * primaryContainer, the unselected container surfaceContainerHigh).
  * The label stays a slot so each site's bold-when-selected and maxLines
  * survive untouched.
+ *
+ * P2-chip2027: a Filter chip is 8dp ([FilterChipDefaults.shape]) with a
+ * leading check when selected — the M3 Expressive signature. A selected
+ * chip that only changes colour reads as the old pill; the check is
+ * what marks the selection. Call sites that pass their own [leadingIcon]
+ * keep it; [showSelectedCheck] opts a chip out (the Live TV query chip
+ * is a clear action, not a selection — a check beside its × would fight
+ * it). Navigation ignores both: it is a pill with no selection.
  */
+/** Test tag on the default selected-check icon, so tests can pin its presence. */
+internal const val SelectedCheckTag = "chipSelectedCheck"
+
+/**
+ * The M3 Expressive selected-filter mark: an 18dp check in
+ * onPrimaryContainer — the same role [raddFilterChipColors] already uses
+ * for the selected label, so the check and the label agree. Shared by
+ * [RaddChip] and the raw FilterChip sites (Search sheet, quick chips)
+ * so a selected filter chip shows the same mark everywhere.
+ */
+@Composable
+internal fun SelectedCheckIcon(modifier: Modifier = Modifier) {
+    Icon(
+        painter = painterResource(R.drawable.ic_action_check),
+        contentDescription = null,
+        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+        modifier = modifier.size(18.dp).testTag(SelectedCheckTag),
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RaddChip(
@@ -212,12 +251,15 @@ fun RaddChip(
     modifier: Modifier = Modifier,
     style: RaddChipStyle = RaddChipStyle.Filter,
     colors: SelectableChipColors = raddFilterChipColors(),
-    // H3: chips are pills — the default shape is the token pill, not
-    // FilterChipDefaults.shape (8dp rounded).
-    shape: Shape = RaddTokens.Shape.Pill,
+    // P2-chip2027: filter chips are 8dp — the default shape is
+    // FilterChipDefaults.shape, not the token pill (the H3 "chips are
+    // pills" comment it replaced was the P2-2 overcorrection). The
+    // Navigation style still builds its own pill below.
+    shape: Shape = FilterChipDefaults.shape,
     leadingIcon: @Composable (() -> Unit)? = null,
     trailingIcon: @Composable (() -> Unit)? = null,
     enabled: Boolean = true,
+    showSelectedCheck: Boolean = true,
 ) {
     // Round 6 (motion): the chip's own press source — the scale + haptic
     // track the same presses the chip's click owns. Every RaddChip (Home
@@ -225,6 +267,15 @@ fun RaddChip(
     // (0.97) + haptic on the expressive effects spring.
     val pressSource = remember { MutableInteractionSource() }
     PressHaptics(pressSource)
+    // P2-chip2027: the selected check — a caller's own leadingIcon wins,
+    // otherwise a selected Filter chip shows the check. Unselected chips
+    // and Navigation chips never get one.
+    val resolvedLeadingIcon: @Composable (() -> Unit)? = when {
+        style != RaddChipStyle.Filter -> leadingIcon
+        leadingIcon != null -> leadingIcon
+        selected && showSelectedCheck -> ({ SelectedCheckIcon() })
+        else -> null
+    }
     when (style) {
         RaddChipStyle.Filter -> FilterChip(
             selected = selected,
@@ -232,7 +283,7 @@ fun RaddChip(
             label = label,
             colors = colors,
             shape = shape,
-            leadingIcon = leadingIcon,
+            leadingIcon = resolvedLeadingIcon,
             trailingIcon = trailingIcon,
             enabled = enabled,
             interactionSource = pressSource,

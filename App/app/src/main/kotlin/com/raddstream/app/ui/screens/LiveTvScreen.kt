@@ -535,6 +535,10 @@ internal fun LiveTvCategoryRow(
                             )
                         }
                     },
+                    // P2-chip2027: no selected check here — this chip is a
+                    // clear action wearing the selected fill, not a filter
+                    // selection; a check beside its × would fight it.
+                    showSelectedCheck = false,
                     // The chip itself is 48dp tall, like "All" below.
                     modifier = Modifier.testTag("liveTv_queryPill")
                         .semantics { contentDescription = "Clear search for ${query.trim()}" },

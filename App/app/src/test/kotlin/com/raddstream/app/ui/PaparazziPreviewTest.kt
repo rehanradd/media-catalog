@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
@@ -12,7 +11,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -390,19 +388,20 @@ class PaparazziPreviewTest {
                     modifier = Modifier.padding(16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    FilterChip(
+                    // P2-chip2027: rendered through RaddChip, so the
+                    // golden pins the 8dp shape and the selected check —
+                    // the raw FilterChip it replaced hid both.
+                    RaddChip(
                         selected = true,
                         onClick = {},
                         label = { Text("Hindi") },
                         colors = raddFilterChipColors(),
-                        modifier = Modifier.heightIn(min = 48.dp),
                     )
-                    FilterChip(
+                    RaddChip(
                         selected = false,
                         onClick = {},
                         label = { Text("English") },
                         colors = raddFilterChipColors(),
-                        modifier = Modifier.heightIn(min = 48.dp),
                     )
                 }
             }

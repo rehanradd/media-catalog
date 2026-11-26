@@ -42,9 +42,10 @@ class RaddTokensTest {
         // assertion pinned was the pre-brief value.
         assertEquals(16.dp, RaddTokens.Radius.Poster)
         assertEquals(8.dp, RaddTokens.Radius.Thumb)
-        // P2-2 (B-14): chips are pills — the 4dp token was the outlier
-        // next to RaddChip's pill default; the token is 999dp now.
-        assertEquals(999.dp, RaddTokens.Radius.Chip)
+        // P2-chip2027: filter chips are 8dp (M3 Expressive) — the 999dp
+        // pill from P2-2 (B-14) overshot; the 4dp token was the outlier,
+        // the pill was the overcorrection. Navigation pills keep 999dp.
+        assertEquals(8.dp, RaddTokens.Radius.Chip)
         assertEquals(12.dp, RaddTokens.Radius.Input)
         assertEquals(16.dp, RaddTokens.Radius.Card)
         assertEquals(20.dp, RaddTokens.Radius.Sheet)

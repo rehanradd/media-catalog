@@ -62,10 +62,14 @@ object RaddTokens {
         val Poster: Dp = 16.dp
         /** Thumbnails: 6-8. */
         val Thumb: Dp = 8.dp
-        /** Chips: fully round — one chip geometry, the same pill
-         * RaddChip ships (P2-2, B-14: the 4dp token was the outlier
-         * next to pills; a Chip shape built from it is a pill now). */
-        val Chip: Dp = 999.dp
+        /** Chips: 8dp — M3 Expressive's one deliberate small radius
+         * (P2-chip2027, Nov 2026: the 999dp pill from P2-2 overshot — the
+         * spec puts filter chips at 4–8dp and reserves corner-full for
+         * toggle chips, buttons and avatars; the small radius is the
+         * contrast that says "filter chip" rather than "pill button").
+         * Navigation pills keep [Pill]; a [Shape] built from this token
+         * is a filter chip now. */
+        val Chip: Dp = 8.dp
         /** Inputs and buttons: 8-12. */
         val Input: Dp = 12.dp
         /** Cards: 12-16. */
