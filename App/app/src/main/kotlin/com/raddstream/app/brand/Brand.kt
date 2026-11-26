@@ -163,6 +163,20 @@ object Brand {
         get() = string("network.fallback_server_url")
             .ifBlank { BuildConfig.BRAND_NETWORK_FALLBACK_SERVER_URL }.trim()
 
+    /**
+     * Every host the deadman switch owns, from `network.our_server_hosts`:
+     * the shipped default, the ccwu.cc primary the gateway publishes, and
+     * the fallback IP. [com.raddstream.app.network.DynamicServerDiscovery.isOurServer]
+     * treats exactly these hosts as ours — a host not on this list is a
+     * viewer-chosen server and is never moved onto ours.
+     */
+    val ourServerHosts: List<String>
+        get() = string("network.our_server_hosts")
+            .ifBlank { BuildConfig.BRAND_NETWORK_OUR_SERVER_HOSTS }
+            .split(',')
+            .map { it.trim().lowercase() }
+            .filter { it.isNotEmpty() }
+
     val userAgent: String get() =
         "${string("network.user_agent.product").ifBlank { BuildConfig.BRAND_NETWORK_USER_AGENT_PRODUCT }}" +
             "/${versionName} (${string("network.user_agent.version_suffix")

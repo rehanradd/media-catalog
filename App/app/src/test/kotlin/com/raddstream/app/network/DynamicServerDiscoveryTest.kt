@@ -1,11 +1,34 @@
 package com.raddstream.app.network
 
+import android.app.Application
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import com.raddstream.app.brand.Brand
+import com.raddstream.app.data.ServerSettingsRepository
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+/**
+ * Robolectric (plain Application, on purpose): the recovery-flow tests below
+ * need a real [ServerSettingsRepository], which is DataStore-backed and
+ * needs a Context. A plain Application keeps the real remote-config watcher
+ * out of the process — the manifest's application would start it in
+ * onCreate, and its first tick could fire the real deadman switch into
+ * the same DataStore these fixtures assert on (see
+ * RemoteConfigWatcherDiscoveryTest). The pure parsing tests run under the
+ * same runner; they touch no Android API beyond Brand's BuildConfig
+ * fallback.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class)
 class DynamicServerDiscoveryTest {
 
     // ── JSON shape (what the gateway serves today) ────────────────────────
@@ -143,15 +166,91 @@ class DynamicServerDiscoveryTest {
 
     @Test
     fun isOurServer_onlyOurHostsQualify() {
+        // The shipped default.
         assertTrue(DynamicServerDiscovery.isOurServer("https://raddstream.duckdns.org"))
         assertTrue(DynamicServerDiscovery.isOurServer("https://raddstream.duckdns.org/"))
+        // The ccwu.cc primary the Blogger gateway publishes — the one-shot
+        // bug returned false here, so a migration onto it killed recovery.
+        assertTrue(DynamicServerDiscovery.isOurServer("https://radd-stream.ccwu.cc"))
+        assertTrue(DynamicServerDiscovery.isOurServer("https://radd-stream.ccwu.cc/"))
+        assertTrue(DynamicServerDiscovery.isOurServer("https://RADD-STREAM.CCWU.CC"))
+        // The documented plain-HTTP fallback IP.
         assertTrue(DynamicServerDiscovery.isOurServer("http://92.4.95.252"))
+        assertTrue(DynamicServerDiscovery.isOurServer("http://92.4.95.252:8080"))
 
         // A viewer who pointed the app at their own catalog is never moved.
         assertFalse(DynamicServerDiscovery.isOurServer("https://someone-else.example"))
         assertFalse(DynamicServerDiscovery.isOurServer("https://duckdns.org"))
+        assertFalse(DynamicServerDiscovery.isOurServer("https://ccwu.cc"))
+        // Suffix traps: a host that merely ends with one of ours is not ours.
+        assertFalse(DynamicServerDiscovery.isOurServer("https://raddstream.duckdns.org.evil.com"))
+        assertFalse(DynamicServerDiscovery.isOurServer("https://radd-stream.ccwu.cc.evil.com"))
+        assertFalse(DynamicServerDiscovery.isOurServer("https://92.4.95.252.evil.com"))
         assertFalse(DynamicServerDiscovery.isOurServer("not a url"))
         assertFalse(DynamicServerDiscovery.isOurServer(""))
+    }
+
+    @Test
+    fun ourServerHosts_listsAllThreeHosts() {
+        assertEquals(
+            listOf("raddstream.duckdns.org", "radd-stream.ccwu.cc", "92.4.95.252"),
+            Brand.ourServerHosts,
+        )
+    }
+
+    // ── Recovery flow: the one-shot bug ───────────────────────────────────
+
+    /**
+     * A discovery whose gateway answers with a canned working URL — no
+     * network, no real gateway, no probes.
+     */
+    private class CannedDiscovery(
+        settings: ServerSettingsRepository,
+        apiProvider: ApiProvider,
+        var working: String?,
+    ) : DynamicServerDiscovery(settings, apiProvider) {
+        override suspend fun fetchPublishedNodes(gatewayUrl: String): DiscoveryResult =
+            DiscoveryResult(primary = working, backups = emptyList(), verifiedWorkingUrl = working)
+    }
+
+    /** One settings instance shared by the discovery and the assertions. */
+    private class FlowFixture(savedUrl: String, working: String?) {
+        val settings = ServerSettingsRepository(ApplicationProvider.getApplicationContext<Context>())
+        val discovery = CannedDiscovery(settings, ApiProvider(settings), working)
+
+        init {
+            runBlocking { settings.saveServerUrl(savedUrl) }
+        }
+    }
+
+    @Test
+    fun recoveryTriggersAgainAfterMigratingToCcwu() = runBlocking {
+        // duckdns fails -> recovery migrates the saved primary to ccwu.cc.
+        val fixture = FlowFixture("https://raddstream.duckdns.org", "https://radd-stream.ccwu.cc")
+        val first = fixture.discovery.discoverAndPersistWorkingServer(nowMs = 1_000_000L)
+        assertEquals("https://radd-stream.ccwu.cc", first)
+        assertEquals("https://radd-stream.ccwu.cc", fixture.settings.serverUrl.first())
+
+        // ccwu.cc fails later -> recovery must trigger AGAIN. Before the
+        // fix, isOurServer(ccwu.cc) was false, so this call returned null
+        // and the app stayed on a dead server forever.
+        fixture.discovery.working = "https://raddstream.duckdns.org"
+        val second = fixture.discovery.discoverAndPersistWorkingServer(
+            nowMs = 1_000_000L + DynamicServerDiscovery.RECOVERY_COOLDOWN_MS + 1,
+        )
+        assertEquals("https://raddstream.duckdns.org", second)
+        assertEquals("https://raddstream.duckdns.org", fixture.settings.serverUrl.first())
+    }
+
+    @Test
+    fun recoveryNeverRunsForAViewerChosenServer() = runBlocking {
+        val fixture = FlowFixture("https://someone-else.example", "https://radd-stream.ccwu.cc")
+
+        val result = fixture.discovery.discoverAndPersistWorkingServer(nowMs = 1_000_000L)
+
+        assertEquals(null, result)
+        assertEquals(0L, fixture.discovery.lastRecoveryAttemptMs)
+        assertEquals("https://someone-else.example", fixture.settings.serverUrl.first())
     }
 
     // ── Cooldown ──────────────────────────────────────────────────────────

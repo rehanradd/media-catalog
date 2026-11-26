@@ -38,9 +38,11 @@ data class DiscoveryResult(
  *  1. Only an HTTPS candidate may overwrite the saved primary. A plain-HTTP candidate
  *     (the fallback IP) is session-only: it is handed to [ApiProvider] as an in-memory
  *     override and never written to settings, so the next launch tries HTTPS first again.
- *  2. Discovery only ever runs for the app's own servers (the shipped default host and
- *     the documented fallback IP). A viewer who pointed the app at their own catalog
- *     must never be moved onto ours because theirs went down.
+ *  2. Discovery only ever runs for the app's own servers — every host in
+ *     `network.our_server_hosts` (the shipped default, the ccwu.cc primary
+ *     the gateway publishes, and the documented fallback IP). A viewer who
+ *     pointed the app at their own catalog must never be moved onto ours
+ *     because theirs went down.
  *
  * It runs only when the configured server has already failed — the caller is the
  * remote-config watcher's failure path — never on a healthy launch and never on a
@@ -203,13 +205,22 @@ open class DynamicServerDiscovery @Inject constructor(
         }
 
         /**
-         * True only when the configured server is one of ours — the shipped default
-         * host, or the documented plain-HTTP fallback IP. A viewer who pointed the
-         * app at their own catalog is never moved onto ours because theirs went
-         * down: their server is theirs, and this switch has nothing to say about it.
+         * True only when the configured server is one of ours — every host in
+         * `network.our_server_hosts` (the shipped default, the ccwu.cc primary
+         * the gateway publishes, and the documented plain-HTTP fallback IP).
+         * A viewer who pointed the app at their own catalog is never moved
+         * onto ours because theirs went down: their server is theirs, and
+         * this switch has nothing to say about it.
+         *
+         * The list is the source of truth, but the shipped default and the
+         * fallback IP are always ours even if a brand file predates the
+         * list — so a migration duckdns -> ccwu.cc never makes recovery
+         * one-shot: when ccwu.cc later fails, the watcher still runs
+         * discovery again instead of returning null here.
          */
         fun isOurServer(url: String): Boolean {
             val host = hostOf(url) ?: return false
+            if (host in Brand.ourServerHosts) return true
             val defaultHost = hostOf(Brand.defaultServerUrl)
             if (host == defaultHost) return true
             val fallbackHost = hostOf(Brand.fallbackServerUrl)
@@ -234,8 +245,13 @@ open class DynamicServerDiscovery @Inject constructor(
 
     /**
      * Discovers all nodes published on the stealth gateway.
+     *
+     * Open so a test can stand in a discovery that answers with canned
+     * nodes — the same reason [discoverAndPersistWorkingServer] is open:
+     * the recovery flow must be testable without ever touching the real
+     * gateway.
      */
-    suspend fun fetchPublishedNodes(gatewayUrl: String = Brand.gatewayDiscoveryUrl): DiscoveryResult = withContext(Dispatchers.IO) {
+    open suspend fun fetchPublishedNodes(gatewayUrl: String = Brand.gatewayDiscoveryUrl): DiscoveryResult = withContext(Dispatchers.IO) {
         val targetUrl = gatewayUrl.trim().ifBlank { "https://rehan-radd.blogspot.com/" }
         val gatewayHost = hostOf(targetUrl)
         val rawBody = try {
