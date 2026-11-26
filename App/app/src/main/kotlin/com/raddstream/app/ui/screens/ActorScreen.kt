@@ -246,22 +246,22 @@ internal fun ActorContent(
                     )
                 }
             } else {
-                // Two-across poster grid, the same PosterCard the search
-                // grid uses. Chunked into pairs because a LazyVerticalGrid
-                // cannot live inside this LazyColumn; a pair is one row.
-                items(state.works.chunked(2), key = { it.first().id }) { pair ->
+                // Three-across poster grid, the same PosterCard the search
+                // grid uses. Chunked into triples because a LazyVerticalGrid
+                // cannot live inside this LazyColumn; a triple is one row.
+                items(state.works.chunked(3), key = { it.first().id }) { triple ->
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        pair.forEach { post ->
+                        triple.forEach { post ->
                             PosterCard(
                                 post = post,
                                 onClick = { onPostClick(post) },
                                 modifier = Modifier.weight(1f),
                             )
                         }
-                        if (pair.size == 1) {
+                        repeat(3 - triple.size) {
                             Box(modifier = Modifier.weight(1f))
                         }
                     }
