@@ -1164,7 +1164,9 @@ class TestMoviesdriveRestExtract(unittest.TestCase):
         data = import_moviesdrive.extract_post_data_moviesdrive(
             MD_REST_POST_BIGG_BOSS, archive_pages)
         self.assertIsNotNone(data)
-        self.assertEqual(data["imdb_rating"], 3.6)
+        # Banked as a string: posts.imdb_rating is a TEXT column
+        # (the shared parser banks strings too).
+        self.assertEqual(data["imdb_rating"], "3.6")
         # "Director/Creator:" is empty on this post — nothing banked.
         self.assertIsNone(data["director"])
         self.assertEqual(
