@@ -42,6 +42,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -73,6 +74,7 @@ import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.player.AspectMode
 import com.raddstream.app.player.AudioBoostUi
+import com.raddstream.app.player.CacheAffordance
 import com.raddstream.app.player.GestureSettings
 import com.raddstream.app.player.KeepUiState
 import com.raddstream.app.player.PlayerStatusWord
@@ -90,7 +92,10 @@ import com.raddstream.app.ui.theme.PlayerChromeTheme
 import com.raddstream.app.ui.theme.PlayerOnVideo
 import com.raddstream.app.ui.theme.PressHaptics
 import com.raddstream.app.ui.theme.RaddCurrent500
+import com.raddstream.app.ui.theme.RaddDanger
 import com.raddstream.app.ui.theme.RaddMotion
+import com.raddstream.app.ui.theme.RaddSuccess
+import com.raddstream.app.ui.theme.RaddTideIndigo
 import com.raddstream.app.ui.theme.brandSp
 import com.raddstream.app.ui.theme.paint
 import com.raddstream.app.ui.theme.pressScale
@@ -692,6 +697,14 @@ internal fun BottomControls(
     scrimScale: Float = 1f,
 ) {
     var showVolumeDialog by remember { mutableStateOf(false) }
+    // P1-16 (road to 100/100, audit B-21): the pause X-Ray is one line
+    // that expands on tap. A fresh pause always starts collapsed, and
+    // resuming collapses it again — the cast is never advertised on
+    // every pause, only when the viewer asks for it.
+    var xrayExpanded by remember { mutableStateOf(false) }
+    LaunchedEffect(state.isPlaying) {
+        if (state.isPlaying) xrayExpanded = false
+    }
     val chrome = PlayerChromeTheme.forId(state.playerTheme)
     val rail = playerChromeRail()
     // Review fix (16 Nov): the bottom scrim is a full-height gradient — the
@@ -720,14 +733,16 @@ internal fun BottomControls(
                 .heightIn(min = CinemaChrome.BOTTOM_BAR_MIN_DP.dp)
                 .padding(start = rail, end = rail, bottom = 0.dp),
         ) {
-            // SC §3: pause is discovery — the X-Ray overlay. The context
-            // line above the cast strip names what is playing and on which
-            // track (P9 round 2); the strip below is the "who", this line
-            // is the "what". Only while paused: a strip that appears
-            // mid-play is a strip that steals the picture. The cast list
-            // itself is the loaded signal — it is empty until the title
-            // stages it. The line shows whenever paused (the rung alone is
-            // worth naming); the chips only when cast is known.
+            // P1-16 (road to 100/100, audit B-21): pause is discovery,
+            // but the X-Ray is ONE line now — the context line (episode ·
+            // quality · audio · subtitles, P9 round 2) with a chevron.
+            // The cast chips only appear when the viewer taps the line;
+            // a pause no longer advertises the whole cast on every
+            // pause, and the strip never appears mid-play (it would
+            // steal the picture). The cast list itself is the loaded
+            // signal — it is empty until the title stages it. The line
+            // shows whenever paused (the rung alone is worth naming);
+            // the chips only when cast is known AND the line is open.
             if (!state.isPlaying) {
                 // The episode label is formatted from the string resource
                 // here (series only, both numbers > 0) — the pure line
@@ -754,53 +769,79 @@ internal fun BottomControls(
                     ),
                 )
                 if (xrayLine.isNotBlank()) {
-                    Text(
-                        xrayLine,
-                        color = PlayerOnVideo.text.copy(alpha = 0.75f),
-                        fontSize = brandSp(12),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 8.dp),
+                    val hasCast = state.castNames.isNotEmpty()
+                    val expandLabel = stringResource(
+                        if (xrayExpanded) R.string.player_xray_hide_cast else R.string.player_xray_show_cast,
                     )
-                }
-                if (state.castNames.isNotEmpty()) {
-                    // A4-F3: rides ScrollingChipRow + RaddChip now — the fade
-                    // and the row are the shared component, not a hand-rolled
-                    // copy. The cast strip gains the fade the other rows
-                    // already had.
-                    ScrollingChipRow(
-                        modifier = Modifier.padding(top = 8.dp),
-                        contentPadding = PaddingValues(start = 0.dp, end = 16.dp),
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                            .then(
+                                if (hasCast) {
+                                    Modifier
+                                        .clickable(
+                                            role = Role.Button,
+                                            onClick = { xrayExpanded = !xrayExpanded },
+                                        )
+                                        .semantics { contentDescription = expandLabel }
+                                } else {
+                                    Modifier
+                                },
+                            ),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        // F-06: keyed by index + name, not by name alone —
-                        // staged cast data can list the same actor twice, and
-                        // two items sharing a Lazy key throw at composition.
-                        // The duplicate chip still renders (same label, same
-                        // search target); only the crash is gone.
-                        itemsIndexed(state.castNames, key = { index, actor -> "$index:$actor" }) { _, actor ->
-                            RaddChip(
-                                selected = false,
-                                onClick = { onActorClick(actor) },
-                                label = { Text(actor, maxLines = 1) },
-                                colors = raddFilterChipColors(),
+                        Text(
+                            xrayLine,
+                            color = PlayerOnVideo.text.copy(alpha = 0.75f),
+                            fontSize = brandSp(12),
+                            maxLines = if (xrayExpanded) 2 else 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (hasCast) {
+                            Icon(
+                                painter = painterResource(
+                                    if (xrayExpanded) R.drawable.ic_action_keyboard_arrow_up
+                                    else R.drawable.ic_action_keyboard_arrow_down,
+                                ),
+                                contentDescription = null,
+                                tint = PlayerOnVideo.mutedText,
+                                modifier = Modifier.size(16.dp),
                             )
+                        }
+                    }
+                    if (xrayExpanded && hasCast) {
+                        // A4-F3: rides ScrollingChipRow + RaddChip now — the fade
+                        // and the row are the shared component, not a hand-rolled
+                        // copy. The cast strip gains the fade the other rows
+                        // already had.
+                        ScrollingChipRow(
+                            modifier = Modifier.padding(top = 8.dp),
+                            contentPadding = PaddingValues(start = 0.dp, end = 16.dp),
+                        ) {
+                            // F-06: keyed by index + name, not by name alone —
+                            // staged cast data can list the same actor twice, and
+                            // two items sharing a Lazy key throw at composition.
+                            // The duplicate chip still renders (same label, same
+                            // search target); only the crash is gone.
+                            itemsIndexed(state.castNames, key = { index, actor -> "$index:$actor" }) { _, actor ->
+                                RaddChip(
+                                    selected = false,
+                                    onClick = { onActorClick(actor) },
+                                    label = { Text(actor, maxLines = 1) },
+                                    colors = raddFilterChipColors(),
+                                )
+                            }
                         }
                     }
                 }
             }
-            // Session 121 (P-35): the keep chip's own row, above the scrubber. It is
-            // not a seventh transport button, so the six-primaries rule still holds —
-            // and here it cannot crowd the title the way it did in the top bar.
-            // The guard matters: an empty row would still take its top padding.
-            if (state.keep !is KeepUiState.Unavailable) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
-                ) {
-                    KeepChip(state, onKeepCurrent)
-                }
-            }
+            // P1-16 (road to 100/100, audit B-21): the KeepChip row is
+            // gone — its own 48dp row above the scrubber made the paused
+            // stack three rows tall. The keep status rides the
+            // scrubber/time row now ([KeepTimeRowStatus], below); nothing
+            // about the keep is deleted, only moved.
             // F19b (Batch A): the seek bar and its time row only exist once the
             // player knows a duration. A live stream never reports one
             // (ExoPlayer's duration stays TIME_UNSET, so durationMs stays 0),
@@ -868,12 +909,31 @@ internal fun BottomControls(
                         // Cinema (Nov 2026): the time reads at 11sp, not 12sp.
                         style = MaterialTheme.typography.labelSmall,
                     )
+                    // P1-16 (road to 100/100, audit B-21): the keep status
+                    // rides this row now — the KeepChip row above the
+                    // scrubber is gone. Same gate, same words, same live
+                    // ring as the chip had; the tap still keeps the title.
+                    if (keepStatusVisible(state)) {
+                        Spacer(Modifier.width(8.dp))
+                        KeepTimeRowStatus(state, onKeepCurrent)
+                    }
                 }
             } else if (state.isLive) {
                 // Review fix (16 Nov): the single live mark in the whole
                 // chrome — jade while playing, muted grey reading PAUSED
                 // while paused, so a frozen live picture never reads live.
-                LiveMark(paused = !state.isPlaying, modifier = Modifier.padding(bottom = 8.dp))
+                // P1-16: a live title with a keep rides the same row as
+                // the mark — live has no time row to carry the status.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                ) {
+                    LiveMark(paused = !state.isPlaying)
+                    if (keepStatusVisible(state)) {
+                        Spacer(Modifier.width(8.dp))
+                        KeepTimeRowStatus(state, onKeepCurrent)
+                    }
+                }
             }
             // Review fix (16 Nov): a D-43 reversal. SpaceEvenly spread the six
             // primaries into a row of identical islands with no relation between
@@ -1132,6 +1192,84 @@ internal fun xrayContextLine(
     audio?.takeIf { it.isNotBlank() },
     subtitle?.takeIf { it.isNotBlank() },
 ).joinToString(" · ")
+
+/**
+ * P1-16 (road to 100/100, audit B-21): whether the keep status shows in
+ * the scrubber/time row. The exact gate the old KeepChip row used, moved
+ * here with the status: App-design audit #7 — an automatic ahead-window
+ * copy never announces itself when the viewer just pressed Play (its
+ * progress lives in Downloads); Player review D3 — a keep the viewer
+ * TAPPED is theirs to watch, so [KeepUiState.Keeping] shows only while
+ * [PlayerUiState.keepRequested] is true, and `refreshKeepState` resets
+ * that flag on every switch so a stale request cannot un-silence the
+ * next title's automatic copy.
+ */
+internal fun keepStatusVisible(state: PlayerUiState): Boolean {
+    val keep = state.keep
+    if (keep is KeepUiState.Unavailable) return false
+    if (keep is KeepUiState.Keeping && !state.keepRequested) return false
+    return true
+}
+
+/**
+ * P1-16 (road to 100/100, audit B-21): the keep status as one small
+ * element of the scrubber/time row, after the duration (beside the LIVE
+ * mark on a live title, which has no time row). The KeepChip row above
+ * the scrubber is gone; this is the same status in the row the audit
+ * names — same words ([CacheAffordance.chipText]), same live ring
+ * ([CacheAffordance.keepingProgress], only while the total is known —
+ * a ring at 0% with an unknown total is the Session 120 lie in a
+ * circle), same state tint the chip used, and the tap still runs
+ * [onKeepCurrent]. The 12dp vertical padding gives the tap a ~40dp
+ * target inside the row's 48dp height without growing the row.
+ */
+@Composable
+internal fun KeepTimeRowStatus(
+    state: PlayerUiState,
+    onKeepCurrent: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (!keepStatusVisible(state)) return
+    val keep = state.keep
+    val stateTint = when (keep) {
+        is KeepUiState.Stored -> RaddSuccess
+        is KeepUiState.Blocked -> RaddDanger
+        is KeepUiState.Keeping -> RaddTideIndigo
+        else -> Color.White
+    }
+    Row(
+        modifier = modifier
+            .padding(vertical = 12.dp)
+            .clickableNoRipple(onClick = onKeepCurrent),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val progress = CacheAffordance.keepingProgress(keep)
+        if (progress != null) {
+            CircularProgressIndicator(
+                progress = progress,
+                modifier = Modifier.size(14.dp),
+                color = stateTint,
+                strokeWidth = 2.dp,
+            )
+        } else {
+            Icon(
+                painter = painterResource(R.drawable.ic_action_download),
+                contentDescription = null,
+                tint = stateTint,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+        Spacer(Modifier.width(4.dp))
+        Text(
+            CacheAffordance.chipText(keep),
+            color = PlayerOnVideo.mutedText,
+            fontSize = brandSp(11),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 110.dp),
+        )
+    }
+}
 
 /**
  * P10 (round 2) — the zoom reset chip. Pinch is the only on-screen path

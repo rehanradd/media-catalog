@@ -140,8 +140,10 @@ import kotlinx.coroutines.launch
  *  - [SubtitleOverlay] — custom-rendered external SRT/VTT (delay read straight from the
  *    settings); embedded and Media3-parsed tracks get the same delay from the service's
  *    decoder wrapper.
- *  - [KeepChip] — signature "watching → keeping" affordance fed by `ProgressiveCacheEngine`
- *    snapshots through [CacheAffordance].
+ *  - Keep status — the signature "watching → keeping" affordance, fed by
+ *    `ProgressiveCacheEngine` snapshots through [CacheAffordance], rides
+ *    the scrubber/time row ([KeepTimeRowStatus]) instead of its own row
+ *    (P1-16, audit B-21).
  *
  * Entry points: the `streamId`/`title` route the NavGraph uses (an opaque handle of ours,
  * never an upstream address), plus a title-only overload for bundle-driven navigation.

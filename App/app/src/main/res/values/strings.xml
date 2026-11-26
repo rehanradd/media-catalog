@@ -128,6 +128,10 @@
     <string name="player_step_warming">Finding your video…</string>
     <string name="player_step_buffering">Buffering</string>
     <string name="player_finding_note">Trying the best version first</string>
+    <!-- P1-16 (road to 100/100, audit B-21): the pause X-Ray is one line —
+         the cast chips only appear when the viewer taps it. -->
+    <string name="player_xray_show_cast">Show cast</string>
+    <string name="player_xray_hide_cast">Hide cast</string>
     <string name="player_volume_boost">Volume boost</string>
     <string name="player_seek">Seek: %1$s of %2$s</string>
     <string name="player_seek_chapter">, %1$s</string>

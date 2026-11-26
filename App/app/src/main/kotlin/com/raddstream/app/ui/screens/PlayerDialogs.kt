@@ -1,9 +1,7 @@
 package com.raddstream.app.ui.screens
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,8 +15,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -34,99 +30,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.R
-import com.raddstream.app.player.CacheAffordance
 import com.raddstream.app.player.CalibrationState
-import com.raddstream.app.player.KeepUiState
-import com.raddstream.app.player.PlayerUiState
 import com.raddstream.app.ui.components.RaddDialogTitle
 import com.raddstream.app.ui.theme.RaddCurrent500
-import com.raddstream.app.ui.theme.RaddDanger
-import com.raddstream.app.ui.theme.PlayerChromeTheme
 import com.raddstream.app.ui.theme.RaddHudPillIdle
 import com.raddstream.app.ui.theme.RaddPlayerDialog
 import com.raddstream.app.ui.theme.RaddPlayerStage
-import com.raddstream.app.ui.theme.RaddSuccess
-import com.raddstream.app.ui.theme.RaddTideIndigo
 import com.raddstream.app.ui.theme.brandSp
 import com.raddstream.app.ui.theme.paint
 import com.raddstream.app.viewmodel.formatTime
 
-
-// ── Keep chip — the signature "watching → keeping" affordance ─────────────────
-
-@Composable
-internal fun KeepChip(state: PlayerUiState, onKeepCurrent: () -> Unit) {
-    val keep = state.keep
-    if (keep is KeepUiState.Unavailable) return
-    // App-design audit #7: pressing Play must never announce a background
-    // download. The "Keeping" state is the player's automatic ahead-window
-    // copy, not something the viewer asked for — it shows no chip here at
-    // all (its progress lives in Downloads). A finished keep (Stored) or a
-    // blocked one still says so, because those are facts about the title.
-    // Player review D3: a keep the viewer TAPPED is theirs to watch — the
-    // ring and the live rate are already built below, they were only ever
-    // hidden by this return. Gate on keepRequested, which refreshKeepState
-    // resets on every switch, so a stale request from a previous title
-    // cannot un-silence the next title's automatic copy.
-    if (keep is KeepUiState.Keeping && !state.keepRequested) return
-    val chrome = PlayerChromeTheme.forId(state.playerTheme)
-    // E-C4: the chip sat on a 40%-alpha tint with no bar behind it — white
-    // text on the Stored tint over a bright frame was 1.23:1. The surface is
-    // now chrome.card (60% black); the state tint survives only as the
-    // icon/ring colour, at full strength.
-    val stateTint = when (keep) {
-        is KeepUiState.Stored -> RaddSuccess
-        is KeepUiState.Blocked -> RaddDanger
-        is KeepUiState.Keeping -> RaddTideIndigo
-        else -> Color.White
-    }
-    Surface(
-        color = chrome.card,
-        shape = MaterialTheme.shapes.small,
-        modifier = Modifier
-            .padding(end = 6.dp)
-            .clickableNoRipple(onClick = onKeepCurrent),
-    ) {
-        Row(
-            Modifier
-                .heightIn(min = MinControlTarget)
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // SC.7: the living progress ring while keeping — real %, from the
-            // pure keepingProgress, shown only when the total is known. A ring
-            // at 0% with an unknown total would be the same lie Session 120
-            // fixed in the chip text ("Keeping 0 B of 3.05 GB"), in a circle.
-            val progress = CacheAffordance.keepingProgress(keep)
-            if (progress != null) {
-                CircularProgressIndicator(
-                    progress = progress,
-                    modifier = Modifier.size(14.dp),
-                    color = stateTint,
-                    strokeWidth = 2.dp,
-                )
-            } else {
-                Icon(painter = painterResource(R.drawable.ic_action_download), contentDescription = null, tint = stateTint, modifier = Modifier.size(14.dp))
-            }
-            Spacer(Modifier.width(4.dp))
-            Text(
-                CacheAffordance.chipText(keep),
-                color = Color.White,
-                fontSize = brandSp(11),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 160.dp),
-            )
-        }
-    }
-}
 
 // ── Dialogs ────────────────────────────────────────────────────────────────────
 

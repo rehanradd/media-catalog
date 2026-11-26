@@ -1,8 +1,13 @@
 package com.raddstream.app.ui
 
+import android.content.Context
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performClick
+import androidx.test.core.app.ApplicationProvider
+import com.raddstream.app.R
 import com.raddstream.app.player.LadderRung
 import com.raddstream.app.player.PlaybackInfo
 import com.raddstream.app.player.PlaybackRendition
@@ -22,6 +27,10 @@ import org.robolectric.RobolectricTestRunner
  * Rows are keyed by index + name now: the same name twice renders two
  * chips (same label, same search target) instead of crashing.
  *
+ * P1-16 (audit B-21): the chips only appear once the one-line X-Ray is
+ * tapped, so the test taps the line first — the crash was in the strip,
+ * and the strip is what is under test.
+ *
  * Fixture mirrors PlayerMockupTest's vodBase — the strip only shows while
  * paused, so the state is a paused one.
  */
@@ -30,6 +39,9 @@ class PlayerCastDuplicateTest {
 
     @get:Rule
     val compose = createComposeRule()
+
+    private val context: Context
+        get() = ApplicationProvider.getApplicationContext()
 
     @Test
     fun `a duplicated cast name renders two chips instead of crashing`() {
@@ -80,6 +92,8 @@ class PlayerCastDuplicateTest {
             }
         }
 
+        compose.onNodeWithContentDescription(context.getString(R.string.player_xray_show_cast))
+            .performClick()
         compose.onAllNodesWithText("Aamir Khan").assertCountEquals(2)
     }
 }

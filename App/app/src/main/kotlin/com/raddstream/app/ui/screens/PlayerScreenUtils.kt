@@ -195,7 +195,7 @@ internal fun Context.findActivity(): Activity? {
  *
  * It used to be a raw tap detector, which is invisible to an accessibility service: nothing
  * downstream of `pointerInput` publishes a click action, so every sheet row, quality rung,
- * keep chip and play-again button in this screen could be seen by TalkBack but not pressed.
+ * keep status and play-again button in this screen could be seen by TalkBack but not pressed.
  * This is a real clickable with a Button role and no indication, so the borderless look is
  * exactly what it was and the press is now an action a screen reader can take.
  */

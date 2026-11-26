@@ -704,8 +704,9 @@ class PlayerControlSemanticsTest {
 
     @Test
     fun `a switch resets the keep request so the next title stays silent`() {
-        // Player review D3: KeepChip gates the Keeping chip on keepRequested,
-        // and refreshKeepState is what keeps that flag honest — a new title,
+        // Player review D3: keepStatusVisible gates the Keeping status on
+        // keepRequested (P1-16: the gate moved with the status into the
+        // time row), and refreshKeepState is what keeps that flag honest — a new title,
         // episode or rendition has had no tap yet, so a stale true from the
         // previous title must not un-silence its automatic ahead-window keep.
         val vmSource = playerViewModel.readText()

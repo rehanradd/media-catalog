@@ -106,7 +106,9 @@ import org.junit.Test
  * internal; 2-button detail, Nov 2026: two buttons, no rung cards),
  * `SearchContent` (extracted
  * from SearchScreen) and the player chrome (`TopBar`, `CenterSpinner`,
- * `EdgeHud`, `BottomControls`, `KeepChip` — all internal with callbacks).
+ * `EdgeHud`, `BottomControls` — all internal with callbacks; the keep
+ * status rides the scrubber/time row, the cast chips only on a tap of
+ * the one-line X-Ray, both P1-16).
  * The volume dialog is not shot: it opens only on a long-press, which a
  * snapshot cannot perform.
  *

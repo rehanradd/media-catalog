@@ -26,7 +26,6 @@ import com.raddstream.app.player.QualityOption
 import com.raddstream.app.player.SleepTimerState
 import com.raddstream.app.ui.screens.BottomControls
 import com.raddstream.app.ui.screens.CenterPlayPause
-import com.raddstream.app.ui.screens.KeepChip
 import com.raddstream.app.ui.screens.SkipSegmentButton
 import com.raddstream.app.ui.screens.SwitchSourceRow
 import com.raddstream.app.ui.screens.TopBar
@@ -319,17 +318,14 @@ class PlayerMockupTest {
         // Player review D3: the ring and the live rate were already built —
         // only the early return hid them. A viewer who tapped Keep sees the
         // copy running; the Downloads screen is not the only witness.
-        compose.setContent {
-            RaddStreamTheme {
-                KeepChip(
-                    state = vodBase().copy(
-                        keep = KeepUiState.Keeping(40_000_000L, 3_050_000_000L, 1_200_000L),
-                        keepRequested = true,
-                    ),
-                    onKeepCurrent = {},
-                )
-            }
-        }
+        // P1-16 (audit B-21): the KeepChip row is gone — the status rides
+        // the scrubber/time row now, so this pins it there, not on a chip.
+        setBottom(
+            vodBase().copy(
+                keep = KeepUiState.Keeping(40_000_000L, 3_050_000_000L, 1_200_000L),
+                keepRequested = true,
+            ),
+        )
         compose.onNodeWithText("Saving a copy in the background · 1.2 MB/s").assertIsDisplayed()
     }
 
@@ -340,18 +336,39 @@ class PlayerMockupTest {
         // lives in Downloads. keepRequested is false here because no tap
         // happened; refreshKeepState also resets it on every switch, so a
         // stale request from a previous title cannot un-silence this one.
-        compose.setContent {
-            RaddStreamTheme {
-                KeepChip(
-                    state = vodBase().copy(
-                        keep = KeepUiState.Keeping(40_000_000L, 3_050_000_000L, 1_200_000L),
-                        keepRequested = false,
-                    ),
-                    onKeepCurrent = {},
-                )
-            }
-        }
+        // P1-16: the gate moved with the status into the time row.
+        setBottom(
+            vodBase().copy(
+                keep = KeepUiState.Keeping(40_000_000L, 3_050_000_000L, 1_200_000L),
+                keepRequested = false,
+            ),
+        )
         compose.onNodeWithText("Saving a copy in the background", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `a finished keep says so in the time row`() {
+        // P1-16: "Kept ✓" is the time row's word for a stored keep — the
+        // chip that used to carry it is gone, the fact is not.
+        setBottom(vodBase().copy(keep = KeepUiState.Stored(playableOffline = true, note = null)))
+        compose.onNodeWithText("Kept ✓").assertIsDisplayed()
+    }
+
+    @Test
+    fun `the pause X-Ray is one line and the cast stays hidden until tapped`() {
+        // P1-16 (audit B-21): a pause no longer advertises the whole cast
+        // — the context line is the strip, and the chips appear only on a
+        // tap of that line.
+        setBottom(
+            vodBase(isPlaying = false).copy(
+                castNames = listOf("Shah Rukh Khan", "Nayanthara"),
+            ),
+        )
+        compose.onNodeWithText("Shah Rukh Khan").assertDoesNotExist()
+        compose.onNodeWithContentDescription(context.getString(R.string.player_xray_show_cast))
+            .performClick()
+        compose.onNodeWithText("Shah Rukh Khan").assertIsDisplayed()
+        compose.onNodeWithText("Nayanthara").assertIsDisplayed()
     }
 
     @Test
