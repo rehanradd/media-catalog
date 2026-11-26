@@ -1,0 +1,40 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+>
+    <!-- P0-11 (Nov 2026 audit, B-15): the house timer glyph — a stopwatch
+         (button + stem + dial + hand, as strokes). Feather has no timer, so
+         this is drawn to the house stroke style (stroke 2, round caps; the
+         caller's tint recolours it). Replaces Icons.Default.Timer in
+         MediaBadges (ephemeral-link mark). -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M9.5 2h5"
+        android:strokeWidth="2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M12 2v5"
+        android:strokeWidth="2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M19 14A7 7 0 1 1 5 14A7 7 0 1 1 19 14z"
+        android:strokeWidth="2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M12 10.5V14l2.5 2"
+        android:strokeWidth="2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+</vector>

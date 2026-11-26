@@ -1,0 +1,32 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+>
+    <!-- P0-11 (Nov 2026 audit, B-15): the house bar-chart glyph — Feather
+         "bar-chart-2". Same stroke style as the tab icons (stroke 2, round
+         caps; the caller's tint recolours it). Replaces
+         Icons.Default.BarChart in AnalyticsConsentDialog. -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M18 20V10"
+        android:strokeWidth="2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M12 20V4"
+        android:strokeWidth="2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M6 20v-6"
+        android:strokeWidth="2"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+</vector>

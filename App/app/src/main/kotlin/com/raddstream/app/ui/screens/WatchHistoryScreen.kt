@@ -14,10 +14,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -34,9 +30,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.raddstream.app.R
 import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.viewmodel.HistoryRow
@@ -97,7 +95,7 @@ internal fun WatchHistoryContent(
                 title = { Text("History") },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(painterResource(R.drawable.ic_action_arrow_left), contentDescription = "Back")
                     }
                 },
                 actions = {
@@ -118,7 +116,7 @@ internal fun WatchHistoryContent(
                     "including ones you finished.",
                 icon = {
                     Icon(
-                        Icons.Default.History,
+                        painterResource(R.drawable.ic_action_history),
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.secondary,
                         modifier = Modifier.size(40.dp),
@@ -223,7 +221,7 @@ internal fun HistoryRowItem(
                 modifier = Modifier.testTag("history_remove"),
             ) {
                 Icon(
-                    imageVector = Icons.Default.Close,
+                    painter = painterResource(R.drawable.ic_action_close),
                     contentDescription = "Remove ${row.title} from history",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

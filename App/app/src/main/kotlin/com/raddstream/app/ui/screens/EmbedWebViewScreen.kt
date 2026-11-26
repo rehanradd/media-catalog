@@ -25,10 +25,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.OpenInNew
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -51,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -152,7 +149,7 @@ fun EmbedWebViewScreen(
                     },
                     navigationIcon = {
                         IconButton(onClick = onBack) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = backCopy)
+                            Icon(painterResource(R.drawable.ic_action_arrow_left), contentDescription = backCopy)
                         }
                     },
                     actions = {
@@ -163,7 +160,7 @@ fun EmbedWebViewScreen(
                             enabled = target != null,
                             onClick = { target?.let { openInExternalBrowser(context, it) } },
                         ) {
-                            Icon(Icons.Default.OpenInNew, contentDescription = openCopy)
+                            Icon(painterResource(R.drawable.ic_action_open_in_new), contentDescription = openCopy)
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -412,7 +409,7 @@ private fun StatusPanel(
         verticalArrangement = Arrangement.Center,
     ) {
         Icon(
-            imageVector = Icons.Default.Refresh,
+            painter = painterResource(R.drawable.ic_action_refresh),
             contentDescription = null,
             modifier = Modifier.size(40.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,

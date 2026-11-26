@@ -1087,7 +1087,7 @@ internal fun FilterRail(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    // S8 (round 2): the house sliders glyph, not Icons.Default.Tune.
+                    // S8 (round 2): the house sliders glyph, not the Material default Tune icon.
                     Icon(painterResource(R.drawable.ic_action_sliders), contentDescription = null, modifier = Modifier.size(18.dp))
                     Text(filtersLabel)
                 }
@@ -1196,7 +1196,7 @@ internal fun RecentsList(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Icon(
-                    // S8 (round 2): the house history glyph, not Icons.Default.History.
+                    // S8 (round 2): the house history glyph, not the Material default History icon.
                     painterResource(R.drawable.ic_action_history),
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1510,7 +1510,7 @@ private fun SeeAllButton(onClick: () -> Unit, tag: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Icon(
-            // S8 (round 2): the house chevron glyph, not Icons.Default.ChevronRight.
+            // S8 (round 2): the house chevron glyph, not the Material default ChevronRight icon.
             painterResource(R.drawable.ic_action_chevron_right),
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1829,7 +1829,7 @@ internal fun SearchContent(
             // list — and the way back is right here.
             title = "No exact matches",
             message = "No titles exactly match \"${state.query}\".",
-            // S8 (round 2): the house search glyph, not Icons.Default.Search.
+            // S8 (round 2): the house search glyph, not the Material default Search icon.
             icon = { Icon(painterResource(R.drawable.ic_tab_search), contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp)) },
             action = {
                 OutlinedButton(onClick = onShowCloseMatches) { Text("Show close matches") }
@@ -2376,8 +2376,8 @@ private fun <T> FacetChips(
     allDescription: String,
     // F10 (Batch B): the section's icon, painted beside the title so the
     // groups read apart at a glance instead of five bare headings in a
-    // row. S8 (round 2): a house drawable resource, not an Icons.Default
-    // vector — the sheet is part of the icon system now.
+    // row. S8 (round 2): a house drawable resource, not a Material
+    // default vector — the sheet is part of the icon system now.
     @DrawableRes icon: Int? = null,
 ) {
     FacetHeader(title = title, icon = icon)

@@ -19,13 +19,6 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.StarBorder
-import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -49,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -57,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.raddstream.app.R
 import com.raddstream.app.network.models.LiveTvChannel
 import com.raddstream.app.network.models.WireText
 import com.raddstream.app.ui.components.CatalogGridColumns
@@ -146,7 +141,7 @@ fun LiveTvScreen(
                                 strokeWidth = 2.dp,
                             )
                         } else {
-                            Icon(Icons.Default.Refresh, contentDescription = null)
+                            Icon(painterResource(R.drawable.ic_action_refresh), contentDescription = null)
                         }
                     }
                 },
@@ -175,7 +170,7 @@ fun LiveTvScreen(
                 // as a state, never as a broken screen.
                 icon = {
                     Icon(
-                        Icons.Default.Tv,
+                        painterResource(R.drawable.ic_action_tv),
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(48.dp),
@@ -475,7 +470,7 @@ internal fun LiveTvChannelGrid(
                     .testTag("liveTv_backToTop")
                     .semantics { contentDescription = "Back to top" },
             ) {
-                Icon(Icons.Default.KeyboardArrowUp, contentDescription = null)
+                Icon(painterResource(R.drawable.ic_action_keyboard_arrow_up), contentDescription = null)
             }
         }
     }
@@ -574,7 +569,7 @@ internal fun LiveTvCategoryRow(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Icon(
-                                Icons.Default.Close,
+                                painterResource(R.drawable.ic_action_close),
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp),
                             )
@@ -837,7 +832,7 @@ internal fun LiveTvChannelCard(
                         },
                 ) {
                     Icon(
-                        imageVector = if (isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
+                        painter = painterResource(if (isFavorite) R.drawable.ic_action_star_filled else R.drawable.ic_action_star),
                         contentDescription = null,
                         tint = if (isFavorite) {
                             MaterialTheme.colorScheme.secondary

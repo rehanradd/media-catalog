@@ -28,12 +28,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -59,6 +53,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -137,7 +132,7 @@ fun LocalFilesScreen(
                         else onBackClick()
                     }) {
                         Icon(
-                            Icons.Default.ArrowBack,
+                            painterResource(R.drawable.ic_action_arrow_left),
                             contentDescription = stringResource(R.string.local_library_back),
                         )
                     }
@@ -148,7 +143,7 @@ fun LocalFilesScreen(
                         else viewModel.refresh()
                     }) {
                         Icon(
-                            Icons.Default.Refresh,
+                            painterResource(R.drawable.ic_action_refresh),
                             contentDescription = stringResource(R.string.local_library_refresh),
                         )
                     }
@@ -221,7 +216,7 @@ fun LocalFilesScreen(
                     message = stringResource(R.string.local_library_empty_message),
                     icon = {
                         Icon(
-                            Icons.Default.Folder,
+                            painterResource(R.drawable.ic_action_folder),
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(40.dp),
@@ -326,7 +321,7 @@ private fun LocalFolderRow(
                     )
                 } else {
                     Icon(
-                        Icons.Default.Folder,
+                        painterResource(R.drawable.ic_action_folder),
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(28.dp),
@@ -354,7 +349,7 @@ private fun LocalFolderRow(
                 )
             }
             Icon(
-                Icons.Default.ChevronRight,
+                painterResource(R.drawable.ic_action_chevron_right),
                 contentDescription = stringResource(
                     R.string.local_library_open_folder,
                     folder.displayName,
@@ -411,7 +406,7 @@ internal fun LocalVideoRow(file: LocalVideoFile, onPlay: () -> Unit) {
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    Icons.Default.PlayArrow,
+                    painterResource(R.drawable.ic_player_play),
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(28.dp),
@@ -453,7 +448,7 @@ internal fun LocalVideoRow(file: LocalVideoFile, onPlay: () -> Unit) {
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    Icons.Default.PlayArrow,
+                    painterResource(R.drawable.ic_player_play),
                     contentDescription = stringResource(R.string.local_library_play_video, file.title),
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(22.dp),

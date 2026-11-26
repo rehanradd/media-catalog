@@ -2,15 +2,16 @@ package com.raddstream.app.ui.screens
 
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.ui.components.CenteredMockupDialog
 
@@ -45,7 +46,7 @@ internal fun AnalyticsConsentDialog(
 ) {
     CenteredMockupDialog(
         onDismissRequest = onSkip,
-        icon = Icons.Default.BarChart,
+        icon = ImageVector.vectorResource(R.drawable.ic_action_bar_chart),
         // The name comes from Brand, never a literal — the drift test
         // scans raw file text, comments included, so even a quoted
         // brand name in a comment trips it. The short name is the

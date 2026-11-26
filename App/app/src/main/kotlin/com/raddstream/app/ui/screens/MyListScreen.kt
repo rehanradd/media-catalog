@@ -192,7 +192,7 @@ fun MyListScreen(
                         onClick = onOpenWatchHistory,
                         modifier = Modifier.heightIn(min = 48.dp),
                     ) {
-                        // S8 (round 2): the last Icons.Default on this
+                        // S8 (round 2): the last Material default icon on this
                         // screen — the clock is the house history glyph
                         // (ic_action_history), the same stroke style as
                         // the tab icons. The "History" text beside it
@@ -1010,7 +1010,7 @@ private fun MyListEmptyHeartIcon() {
             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
         contentAlignment = Alignment.Center,
     ) {
-        // S8 (round 2): the last Icons.Default on this screen — the
+        // S8 (round 2): the last Material default icon on this screen — the
         // heart outline is the house tab glyph (ic_tab_my_list), the
         // same stroke style as the tab icons. The tint recolors the
         // stroke; the shape is the Material heart path.

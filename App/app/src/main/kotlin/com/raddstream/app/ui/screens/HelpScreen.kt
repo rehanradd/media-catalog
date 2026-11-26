@@ -14,14 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.ContactSupport
-import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.HelpOutline
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -44,12 +36,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.ui.components.RaddDialogTitle
 import com.raddstream.app.viewmodel.HelpViewModel
@@ -98,7 +92,7 @@ fun HelpScreen(
                 title = { Text("Help") },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(painterResource(R.drawable.ic_action_arrow_left), contentDescription = "Back")
                     }
                 },
             )
@@ -200,7 +194,7 @@ internal fun HelpContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         HelpRow(
-            icon = Icons.Default.HelpOutline,
+            icon = ImageVector.vectorResource(R.drawable.ic_action_help_outline),
             label = "Frequently asked questions",
             onClick = onFaqToggle,
             expanded = faqExpanded,
@@ -253,19 +247,19 @@ internal fun HelpContent(
             )
         }
         HelpRow(
-            icon = Icons.Default.ErrorOutline,
+            icon = ImageVector.vectorResource(R.drawable.ic_action_error_outline),
             label = "Report a problem",
             onClick = onReportClick,
             testTag = "help_row_report",
         )
         HelpRow(
-            icon = Icons.Default.ContactSupport,
+            icon = ImageVector.vectorResource(R.drawable.ic_action_contact_support),
             label = "Contact us",
             onClick = onContactClick,
             testTag = "help_row_contact",
         )
         HelpRow(
-            icon = Icons.Default.Info,
+            icon = ImageVector.vectorResource(R.drawable.ic_action_info),
             label = Brand.copy("settings_about_heading", "About ${Brand.name}"),
             onClick = onAboutClick,
             testTag = "help_row_about",
@@ -339,8 +333,8 @@ private fun HelpRow(
                         .padding(start = 12.dp),
                 )
                 Icon(
-                    imageVector = if (expanded == true) Icons.Default.KeyboardArrowDown
-                    else Icons.Default.ChevronRight,
+                    painter = painterResource(if (expanded == true) R.drawable.ic_action_keyboard_arrow_down
+                    else R.drawable.ic_action_chevron_right),
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

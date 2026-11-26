@@ -16,15 +16,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -53,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -61,6 +53,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.data.VipPendingSubmission
 import com.raddstream.app.network.models.PassTier
@@ -142,7 +135,7 @@ fun VipUpgradeScreen(
                 title = { Text("VIP Membership") },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(painterResource(R.drawable.ic_action_arrow_left), contentDescription = "Back")
                     }
                 },
             )
@@ -257,7 +250,7 @@ private fun EntitlementCard(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        if (earned.vip) Icons.Default.Check else Icons.Default.Info,
+                        painterResource(if (earned.vip) R.drawable.ic_action_check else R.drawable.ic_action_info),
                         contentDescription = null,
                         tint = if (earned.vip) RaddSignalGold else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp),
@@ -401,7 +394,7 @@ private fun VipHero() {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Star, contentDescription = null, tint = RaddSignalGold)
+                Icon(painterResource(R.drawable.ic_action_star_filled), contentDescription = null, tint = RaddSignalGold)
                 Spacer(Modifier.width(10.dp))
                 Text(
                     "Go VIP",
@@ -462,7 +455,7 @@ private fun RewardedVipSection(expiresAt: Long, onActivatePass: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = RaddSignalGold)
+                Icon(painterResource(R.drawable.ic_player_play), contentDescription = null, tint = RaddSignalGold)
                 Spacer(Modifier.width(10.dp))
                 Text(
                     if (active) "VIP pass active" else "Try VIP for 4 hours",
@@ -493,7 +486,7 @@ private fun RewardedVipSection(expiresAt: Long, onActivatePass: () -> Unit) {
                 )
                 Button(onClick = onActivatePass, modifier = Modifier.fillMaxWidth()) {
                     Icon(
-                        Icons.Default.PlayArrow,
+                        painterResource(R.drawable.ic_player_play),
                         contentDescription = null,
                         modifier = Modifier.size(18.dp),
                     )
@@ -637,7 +630,7 @@ internal fun PaymentSection(state: VipUiState, onCopy: (label: String, value: St
             if (!state.hasPaymentHandle) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        Icons.Default.Info,
+                        painterResource(R.drawable.ic_action_info),
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp),
@@ -714,7 +707,7 @@ internal fun PaymentHandleRow(
         if (value.isNotBlank()) {
             IconButton(onClick = { onCopy(label, value) }) {
                 Icon(
-                    Icons.Default.ContentCopy,
+                    painterResource(R.drawable.ic_action_copy),
                     contentDescription = "Copy $label",
                     tint = RaddSignalGold,
                 )
@@ -802,7 +795,7 @@ private fun PendingCard(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    Icons.Default.Info,
+                    painterResource(R.drawable.ic_action_info),
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -868,7 +861,7 @@ private fun LoadErrorCard(message: String, onRetry: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             OutlinedButton(onClick = onRetry) {
-                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(painterResource(R.drawable.ic_action_refresh), contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Try again")
             }

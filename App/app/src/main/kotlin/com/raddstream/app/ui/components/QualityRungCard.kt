@@ -13,9 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -24,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -246,7 +244,7 @@ private fun RungRow(
             if (option.playsHere) {
                 RungIconButton(onClick = onPlay) {
                     Icon(
-                        imageVector = Icons.Default.PlayArrow,
+                        painter = painterResource(R.drawable.ic_player_play),
                         contentDescription = "Play in ${option.title}",
                         tint = MaterialTheme.colorScheme.primary,
                     )
@@ -254,7 +252,7 @@ private fun RungRow(
             }
             RungIconButton(onClick = onKeep, enabled = !isLocked) {
                 Icon(
-                    imageVector = Icons.Default.Download,
+                    painter = painterResource(R.drawable.ic_action_download),
                     contentDescription = "Download ${option.title}",
                     tint = if (isLocked) {
                         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
