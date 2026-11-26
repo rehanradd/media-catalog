@@ -9,11 +9,13 @@ produced them:
   the 22 Cloudflare ``set_real_ip_from`` ranges must be exactly
   Cloudflare's published lists (verified against cloudflare.com/ips-v4
   and /ips-v6 on 2026-11-24) plus ``real_ip_header CF-Connecting-IP``.
-- ``nginx-hardening.patch`` (SEC-05, 2026-11-24): 28 insertions of the
+- ``nginx-hardening.patch`` (SEC-05, 2026-11-24; patch regenerated
+  2026-11-27 against the drifted live file — same 14 locations x 2
+  servers, still 28 insertions): 28 insertions of the
   identical HSTS line, one per location that defines its own
   ``add_header`` without HSTS. nginx ``add_header`` is NOT inherited: a
   location with any ``add_header`` loses every server-level one, so the
-  server-level HSTS (lines 128, 807 of the live file) never reached
+  server-level HSTS (lines 134, 913 of the live file) never reached
   those 28 locations' responses.
 
 No network, no nginx binary, stdlib only. The live-file proof
@@ -274,9 +276,11 @@ class HardeningPatchTests(unittest.TestCase):
         header, _ = _patch_lines(HARDENING_PATCH)
         header_text = "\n".join(header)
         # Anchor: md5 of live /etc/nginx/sites-enabled/radd-stream as
-        # fetched 2026-11-24 (1,465 lines). The gate re-checks it.
-        self.assertIn("73fdcff003edb79b246ac77705f27f3e", header_text)
-        self.assertIn("2026-11-24", header_text)
+        # fetched 2026-11-27 (1,671 lines). The gate re-checks it.
+        # (Supersedes the 2026-11-24 anchor 73fdcff0...: the live file
+        # drifted, the old patch no longer applied; gap set unchanged.)
+        self.assertIn("8378f1196f154179ee300e362fc1145d", header_text)
+        self.assertIn("2026-11-27", header_text)
 
     def test_no_secret_material_in_either_patch(self):
         secretish = re.compile(

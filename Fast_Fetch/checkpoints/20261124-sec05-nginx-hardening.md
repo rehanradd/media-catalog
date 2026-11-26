@@ -165,3 +165,29 @@ error in the journal at 08:12:15. That is NOT this item's fix.
    each must carry
    `Strict-Transport-Security: max-age=31536000; includeSubDomains`.
 4. Prove no regression: posts 200, remote-config 200, panel 303, press 302.
+
+## Addendum — 2026-11-27: patch regenerated (gate step 1 fired)
+
+The live file moved, exactly as gate step 1 anticipated: re-fetched
+2026-11-27 it is 1,671 lines, md5
+`8378f1196f154179ee300e362fc1145d` (was 1,465 lines,
+`73fdcff003edb79b246ac77705f27f3e` on 2026-11-24). Drift since the anchor:
+`/api/v1/person` location added (cast gate), Session 125 poster-cache
+comments, and CSP/X-Frame-Options/Permissions-Policy headers added to
+other locations — which is why the old patch failed `git apply --check`
+at its first hunk.
+
+The patch was regenerated from the fresh live copy (same rule: identical
+HSTS line after the last `add_header` of each gap location; the branch's
+own `audit_hsts_gaps` is the authority). The gap set is UNCHANGED — same
+14 locations x 2 servers, still 28 insertions, 0 removals — so the test
+still asserts 28 and the audit still proves 28 → 0. Verified:
+`git apply --check` PASS against the current live copy, applied copy
+audits 0 gaps. New anchor recorded in the patch header and in
+`test_nginx_hardening.py::test_anchor_is_recorded` (now pins
+`8378f119...` + `2026-11-27`); the old anchor is kept in the header as
+the superseded one. Server-level HSTS lines moved 128/807 → 134/913.
+
+Gate step 1 now reads: confirm md5 is still
+`8378f1196f154179ee300e362fc1145d` — if it moves again, re-anchor the
+same way and re-verify `git apply --check` before applying.
