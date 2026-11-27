@@ -4567,18 +4567,20 @@ def unwrap_filemoon(url: str, verify: bool = True, fetch=None,
     # answers 200 application/vnd.apple.mpegurl with a #EXTM3U body (the
     # CDN ignores Range on the small text file); an mp4 answers 206
     # video/*. Anything else is not proven media.
+    # Branch 2 (self-healing): the probe reads the first 4096 bytes and
+    # gates on the shared media-bytes checker, not on the Content-Type
+    # alone — an HTML shell served as application/octet-stream (or with
+    # a video-ish type) is refused, where the old type-only test passed
+    # it as "active". Real filemoon media (video/*, HLS master) still
+    # passes: the checker accepts EBML/ftyp/RIFF-AVI/#EXTM3U and
+    # video/* types.
     _status, _body, _ctype = _filemoon_api_request(
         "GET", media_url,
         {"User-Agent": USER_AGENT, "Referer": embed_url,
-         "Range": "bytes=0-0"},
+         "Range": "bytes=0-4095"},
         None, _request=fetch)
     ctype = (_ctype or "").split(";")[0].strip().lower()
-    body_head = (_body or b"")[:7]
-    is_master = ("mpegurl" in ctype or body_head.startswith(b"#EXTM3U")
-                 or media_url.split("?")[0].endswith(".m3u8"))
-    is_file = (ctype.startswith(("video/", "audio/"))
-               or "octet-stream" in ctype)
-    if _status in (200, 206) and (is_master or is_file):
+    if _status in (200, 206) and verify_media_bytes(_body or b"", _ctype):
         result["status"] = "active"
         result["http_status"] = _status
         result["content_type"] = ctype or src.get("mime_type") or ""
@@ -9834,9 +9836,23 @@ def _verdict_from_unwrap(verdict: dict) -> dict:
     read from the answer itself: an m3u8 master is a playlist, anything
     else a file, so the download caller still refuses a playlist exactly
     as it would from a generic probe.
+
+    Branch 2 (self-healing): the unwrapper's verdict is trusted for the
+    bytes it probed, but a text/* Content-Type is never media — an HTML
+    shell served with a video-ish type, or a plain text page, is refused
+    here so the gate discards the candidate and failover proceeds. This
+    is the shared checker's first rule, applied to the unwrapper's own
+    measured Content-Type (no extra request: the unwrapper already
+    fetched the final URL). It runs before the playlist test so an HTML
+    error page at a .m3u8 URL is refused too, not trusted by suffix.
     """
     content_type = (verdict.get("content_type") or "").lower()
     final_url = verdict.get("final_url") or ""
+    ct = content_type.split(";")[0].strip()
+    if ct.startswith("text/") or ct == "application/xhtml+xml":
+        return {"ok": False, "kind": None, "mime": None, "size": None,
+                "resumable": False, "renditions": [],
+                "failure": "html_shell"}
     is_playlist = ("mpegurl" in content_type or "m3u8" in content_type
                    or final_url.split("?")[0].endswith(".m3u8"))
     kind = "playlist" if is_playlist else "file"

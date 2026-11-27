@@ -253,5 +253,78 @@ class TestProbeMediaBytes(unittest.TestCase):
         self.assertEqual(total, 1432132599)
 
 
+class TestStage2MediaBytesGate(unittest.TestCase):
+    """Hook 1 (Branch 2): the trusted-verdict gate refuses non-media.
+
+    ``_verdict_from_unwrap`` maps a `verify=True` unwrapper's own verdict
+    to a stage-2 verdict. The unwrapper already Range-probed the byte
+    endpoint with the headers the host requires, so its verdict IS the
+    gate evidence — but a text/* Content-Type is never media, and an
+    HTML shell served with a video-ish type must not sail through on
+    the unwrapper's "active" word alone. The named regression below is
+    the v2.0.0 incident: HTML saved as .mkv and reported success.
+    """
+
+    def _verdict(self, **over):
+        verdict = {"status": "active",
+                   "final_url": "https://media.example.test/file.mkv",
+                   "content_type": "video/mp4",
+                   "http_status": 206, "size_bytes": 1432132599}
+        verdict.update(over)
+        return ff._verdict_from_unwrap(verdict)
+
+    def test_html_as_mkv_regression(self):
+        # v2.0.0: an HTML page at a .mkv URL was banked and served as a
+        # file. An unwrapper that says "active" with a text/html
+        # Content-Type is refused — the gate discards the candidate and
+        # failover proceeds, instead of handing ExoPlayer a page.
+        got = self._verdict(content_type="text/html")
+        self.assertFalse(got["ok"])
+        self.assertEqual(got["failure"], "html_shell")
+        self.assertIsNone(got["kind"])
+
+    def test_text_plain_refused(self):
+        got = self._verdict(content_type="text/plain")
+        self.assertFalse(got["ok"])
+        self.assertEqual(got["failure"], "html_shell")
+
+    def test_xhtml_refused(self):
+        got = self._verdict(content_type="application/xhtml+xml")
+        self.assertFalse(got["ok"])
+        self.assertEqual(got["failure"], "html_shell")
+
+    def test_html_at_m3u8_url_refused(self):
+        # A .m3u8 suffix must not save an HTML error page: the refusal
+        # runs before the playlist test.
+        got = self._verdict(
+            content_type="text/html; charset=utf-8",
+            final_url="https://media.example.test/master.m3u8")
+        self.assertFalse(got["ok"])
+        self.assertEqual(got["failure"], "html_shell")
+
+    def test_real_mp4_accepted(self):
+        got = self._verdict()
+        self.assertTrue(got["ok"])
+        self.assertEqual(got["kind"], "file")
+        self.assertTrue(got["resumable"])
+        self.assertEqual(got["size"], 1432132599)
+
+    def test_hls_master_accepted(self):
+        got = self._verdict(
+            content_type="application/vnd.apple.mpegurl",
+            final_url="https://media.example.test/master.m3u8",
+            http_status=200, size_bytes=None)
+        self.assertTrue(got["ok"])
+        self.assertEqual(got["kind"], "playlist")
+
+    def test_octet_stream_file_accepted(self):
+        # The unwrapper probed the bytes; a generic type with no
+        # contradiction is still a file — the checker trusts it exactly
+        # as Branch 1 does. Only a text/* type is refused here.
+        got = self._verdict(content_type="application/octet-stream")
+        self.assertTrue(got["ok"])
+        self.assertEqual(got["kind"], "file")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

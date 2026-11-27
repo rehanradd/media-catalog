@@ -59,6 +59,7 @@ guard has ``minted_ip`` NULL and is never served while bound.
 from __future__ import annotations
 
 import sqlite3
+import sys
 import time
 import urllib.parse
 
@@ -443,9 +444,23 @@ def _derive_ip_bound(data: dict, url: str) -> int | None:
     return 1 if scope is not None else None
 
 
+def _media_probe(url):
+    """Bank-time media check (seam: tests patch this to avoid network).
+
+    The real check is ``fast_fetch.probe_media_bytes`` — a Range probe
+    plus the shared media-bytes checker. Kept behind this indirection
+    (and imported lazily, as elsewhere in this module: fast_fetch does
+    not import resolved_cache at module level, and a top-level import
+    would close the loop) so the offline suite can fake the boundary
+    without importing fast_fetch.
+    """
+    from fast_fetch import probe_media_bytes
+    return probe_media_bytes(url, timeout=10)
+
+
 def record_resolved_cache(conn: sqlite3.Connection, link_id: int,
                           data: dict, *, source: str = "jit",
-                          now: float | None = None) -> dict | None:
+                          now: float | None = None) -> dict | bool | None:
     """Upsert the cache row for ``link_id`` from a successful resolve answer.
 
     ``data`` is the dict ``resolve_live_source`` returns (``url`` required;
@@ -453,8 +468,10 @@ def record_resolved_cache(conn: sqlite3.Connection, link_id: int,
     ``expires_at``/``expires_in``, ``is_temporary``, ``service``, ``ip_bound``,
     ``r2_bucket`` used where present). ``minted_ip`` (the pressing client's IP) is stored
     only on ``ip_bound=1`` rows — a client IP is never kept where the guard
-    does not need it. Returns the stored row summary, or None when there was
-    nothing to cache (no url). Does NOT commit — the caller's transaction owns
+    does not need it. Returns the stored row summary, None when there was
+    nothing to cache (no url), or False when the URL failed the media-bytes
+    check and was refused (Branch 2: the row is not banked and nothing is
+    written). Does NOT commit — the caller's transaction owns
     that, matching ``fast_fetch.get_db`` and ``viewer.get_db`` semantics.
     """
     url = data.get("url")
@@ -478,6 +495,24 @@ def record_resolved_cache(conn: sqlite3.Connection, link_id: int,
     # actually stored and can actually be replayed — and no row, summary or
     # later play_url ever carries the part after the '#'.
     url = _strip_fragment(url)
+    # Branch 2 (self-healing): a banked URL must be real media, not an
+    # HTML shell a resolver believed. The stage-2 gate already refuses
+    # non-media at resolve time; this is the bank-time backstop, so a
+    # caller that banks a resolve answer (pool warm, JIT warm, press)
+    # cannot persist a text/HTML payload by accident — and a refused
+    # bank is not an error: the caller still serves the press from the
+    # resolve answer, it just does not cache it. A transport failure
+    # also refuses the bank (the URL is unproven, not proven-dead):
+    # refusing only skips the cache, it never poisons it. Always
+    # probed — no skip flag: a caller may hand in a different URL
+    # than the one it resolved (serve_verify re-banks under
+    # final_url), so a flag from the resolve step cannot be trusted
+    # here.
+    _media_ok, _media_total = _media_probe(url)
+    if not _media_ok:
+        print(f"resolved_cache: refusing to bank non-media url "
+              f"{url} for link {link_id}", file=sys.stderr)
+        return False
     _ensure_schema(conn)
     if source not in ("pool", "jit"):
         raise ValueError(f"invalid source {source!r}")

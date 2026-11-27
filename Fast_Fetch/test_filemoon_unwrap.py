@@ -312,6 +312,31 @@ class UnwrapTests(unittest.TestCase):
         self.assertIn("/playback", paths)
         self.assertIn(MASTER_URL, [u for _m, u in fake.calls])
 
+    def test_html_master_as_octet_stream_is_not_active(self):
+        # Branch 2 (self-healing): the verify probe gates on the shared
+        # media-bytes checker, not on the Content-Type alone. An HTML
+        # shell served as application/octet-stream — the exact hole the
+        # old type-only test left open (octet-stream passed as "active")
+        # — is refused: the master is not proven media, so the verdict
+        # stays unverified instead of going active.
+        fake = _FakeFilemoon()
+
+        def _html_master(method, url, headers, data, timeout_s=15,
+                         _request=None):
+            if url == MASTER_URL:
+                return (200,
+                        b"<!DOCTYPE html><html><head><title>Not Found"
+                        b"</title></head><body>gone</body></html>",
+                        "application/octet-stream")
+            return fake(method, url, headers, data, timeout_s, _request)
+
+        ff._filemoon_api_request = _html_master
+        verdict = ff.unwrap_filemoon("https://filemoon.sx/e/testcode12")
+        # The status is what the dispatch gates on (embed_from_verdict
+        # only serves "active"), so a non-active verdict is refused
+        # even though the decrypted URL still rides in the dict.
+        self.assertNotEqual(verdict["status"], "active")
+
     def test_unwrap_captcha_pow_flow_and_token_reuse(self):
         # API-06: the solve is opt-in now — a background caller passes
         # allow_pow_solve=True; the default call must NOT solve.

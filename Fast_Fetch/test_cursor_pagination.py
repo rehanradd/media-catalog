@@ -35,6 +35,22 @@ import resolved_cache
 import viewer
 from viewer import InvalidPostsCursor
 
+
+def setUpModule():
+    """Branch 2: ``record_resolved_cache`` now probes the URL at bank
+    time. This suite banks fixture URLs offline, so the probe is faked
+    as passing — the refusal itself is proven by
+    ``test_resolved_cache.TestBankRefusesNonMedia``."""
+    global _probe_patcher
+    _probe_patcher = unittest.mock.patch.object(
+        resolved_cache, "_media_probe", return_value=(True, None))
+    _probe_patcher.start()
+
+
+def tearDownModule():
+    _probe_patcher.stop()
+
+
 HOST = "http://our.host"
 SECRET = "test-secret-for-cursor-pagination"
 

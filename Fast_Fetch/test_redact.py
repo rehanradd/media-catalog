@@ -45,8 +45,26 @@ import current_hosts        # noqa: E402
 import fast_fetch           # noqa: E402
 import current_hosts        # noqa: E402
 import redact               # noqa: E402
+import resolved_cache       # noqa: E402
 import title_clean          # noqa: E402
 import viewer               # noqa: E402
+
+
+def setUpModule():
+    """Branch 2: ``record_resolved_cache`` now probes the URL at bank
+    time. This suite presses through a live in-process server that
+    banks fixture URLs, so the probe is faked as passing — the refusal
+    itself is proven by ``test_resolved_cache.TestBankRefusesNonMedia``.
+    Without this, the bank probe does live network calls to fixture
+    hosts inside the request handler and the 10 s test timeouts fire."""
+    global _probe_patcher
+    _probe_patcher = patch.object(
+        resolved_cache, "_media_probe", return_value=(True, None))
+    _probe_patcher.start()
+
+
+def tearDownModule():
+    _probe_patcher.stop()
 
 #: What we plant, and therefore what must never be found in a public body.
 SENTINELS = (

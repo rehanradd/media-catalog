@@ -307,5 +307,89 @@ class ResolverGateTests(unittest.TestCase):
         self.assertEqual(res2.get("reason"), "stale_probe_failed")
 
 
+class _FakeGofileResolvers:
+    """A gofile unwrapper that says "active" for an HTML page.
+
+    Branch 2 fixture: the v2.0.0 shape — status active, final_url a
+    .mkv-looking address, content_type text/html. The stage-2
+    trusted-verdict gate must refuse it. Only the attributes the
+    dispatch reads before the gofile branch are faked (the SERVICE_*
+    constants, and `is_animahd_player`, which the animahd condition
+    calls); the real values come from `importers/host_resolvers.py`.
+    """
+    SERVICE_MXDROP = "mxdrop"
+    SERVICE_PKEMBED = "pkembed"
+    SERVICE_ANIMAHD = "animahd-player"
+    SERVICE_GOFILE = "gofile"
+
+    def __init__(self, html_url):
+        self.html_url = html_url
+
+    def is_animahd_player(self, url):
+        return False
+
+    def unwrap_gofile(self, url, verify=True):
+        return {"status": "active", "final_url": self.html_url,
+                "content_type": "text/html", "http_status": 200,
+                "size_bytes": 4096}
+
+
+class MediaBytesGateIntegrationTests(unittest.TestCase):
+    """Hook 1 end-to-end (Branch 2): an unwrapper that says "active"
+    for an HTML page at a .mkv URL must not get that URL served.
+
+    The fake gofile unwrapper returns the v2.0.0 shape — status active,
+    final_url a .mkv-looking address, content_type text/html — and the
+    resolve must answer no_playable_source on the v2 contract instead
+    of serving the page as a file. The .mkv-looking URL matters: it is
+    not a bridge URL, so the bridge check passes it through and only
+    the trusted-verdict gate can refuse it.
+    """
+
+    def setUp(self):
+        self._orig_probe = ch.probe_media
+        self._orig_db = ff.DB_PATH
+        self._orig_resolvers = ff._embed_resolvers
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = str(Path(self._tmp.name) / "stage2-b2.db")
+        ff.DB_PATH = Path(self.db)
+        ff.init_db()
+        self.probe = FakeProbe({})
+        ch.probe_media = self.probe
+        with ff.get_db() as conn:
+            conn.execute(
+                "INSERT INTO posts (id, url, is_18_plus) VALUES (1, ?, 0)",
+                ("https://site.example.test/post-1",))
+            conn.execute(
+                "INSERT INTO releases (id, post_id, quality) VALUES (10, 1, ?)",
+                ("720p",))
+
+    def tearDown(self):
+        ch.probe_media = self._orig_probe
+        ff._embed_resolvers = self._orig_resolvers
+        ff.DB_PATH = self._orig_db
+        self._tmp.cleanup()
+
+    def _row(self, rid, release, source_url, final_url, service="gofile",
+             is_temporary=0, last_checked=None, file_size=999999):
+        with ff.get_db() as conn:
+            conn.execute(
+                "INSERT INTO download_sources (id, release_id, source_name, "
+                "service, source_url, final_url, is_temporary, status, "
+                "is_resumable, mime_type, file_size_bytes, last_checked_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 0, NULL, ?, ?)",
+                (rid, release, "copy", service, source_url, final_url,
+                 is_temporary, file_size, last_checked))
+
+    def test_html_as_mkv_from_unwrapper_refused_on_v2(self):
+        html_url = "https://media.example.test/file.mkv"
+        ff._embed_resolvers = lambda: _FakeGofileResolvers(html_url)
+        self._row(10, 10, "https://gofile.io/d/TEST", "")
+        res = ff.resolve_live_source(10, v2=True, want="watch")
+        self.assertFalse(res.get("success"))
+        self.assertEqual(res.get("code"), "no_playable_source")
+        self.assertNotEqual(res.get("url"), html_url)
+
+
 if __name__ == "__main__":
     unittest.main()

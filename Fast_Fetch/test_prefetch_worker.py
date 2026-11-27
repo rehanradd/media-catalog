@@ -46,6 +46,22 @@ import resolved_cache  # noqa: E402
 import tiers  # noqa: E402
 
 
+def setUpModule():
+    """Branch 2: ``record_resolved_cache`` now probes the URL at bank
+    time. This suite banks fixture URLs offline, so the probe is faked
+    as passing for every existing test — the refusal itself is proven
+    by ``test_refused_bank_counts_as_failed_row`` below, which
+    overrides this patch per test."""
+    global _probe_patcher
+    _probe_patcher = mock.patch.object(
+        resolved_cache, "_media_probe", return_value=(True, None))
+    _probe_patcher.start()
+
+
+def tearDownModule():
+    _probe_patcher.stop()
+
+
 #: The only tables the worker's queries touch, with the columns `tiers`
 #: reads when it ranks a release's links.
 _SCHEMA = """
@@ -216,6 +232,51 @@ class TestSweepWarmsCache(unittest.TestCase):
             n = conn.execute(
                 "SELECT COUNT(*) FROM resolved_cache").fetchone()[0]
             self.assertEqual(n, 0, "a failed resolve must bank nothing")
+            stats2 = prefetch_worker.prefetch_once(
+                limit=1, min_fresh=3600.0, load_ceiling=4.0, fail_backoff=900.0,
+                dry_run=False, verbose=False, max_wait_seconds=300.0,
+                _failure_backoff=backoff)
+            self.assertEqual(stats2["resolved"], 0,
+                             "the backoff must hold the failed link")
+            self.assertEqual(len(calls), 1)
+
+    def test_refused_bank_counts_as_failed_row(self):
+        """Branch 2 (self-healing): a resolve that banks nothing because
+        the bank refused a non-media URL counts as a failed row — same
+        as no_playable_source — so the backoff holds the link instead
+        of retrying it hot. The named regression is the v2.0.0
+        incident: HTML saved as .mkv and reported success."""
+        conn = _make_conn()
+        _add_public_post(conn)
+        calls: list = []
+        backoff: dict[int, float] = {}
+
+        def _html_resolve(sid, v2=True, background=False,
+                          allow_pow_solve=False):
+            calls.append((sid, v2))
+            return {"success": True, "id": sid,
+                    "url": "https://media.example.test/file.mkv",
+                    "service": "pixeldrain", "is_temporary": False,
+                    "is_resumable": True, "mime_type": "video/mp4",
+                    "file_size_bytes": 2_000_000_000}
+
+        with mock.patch.object(fast_fetch, "get_db",
+                               side_effect=lambda: _yield_conn(conn)), \
+             mock.patch.object(fast_fetch, "resolve_live_source",
+                               side_effect=_html_resolve), \
+             mock.patch.object(prefetch_worker, "current_load",
+                               return_value=0.1), \
+             mock.patch.object(resolved_cache, "_media_probe",
+                               return_value=(False, None)):
+            stats = prefetch_worker.prefetch_once(
+                limit=1, min_fresh=3600.0, load_ceiling=4.0, fail_backoff=900.0,
+                dry_run=False, verbose=False, max_wait_seconds=300.0,
+                _failure_backoff=backoff)
+            self.assertEqual(stats["failed"], 1)
+            self.assertEqual(stats["resolved"], 1)
+            n = conn.execute(
+                "SELECT COUNT(*) FROM resolved_cache").fetchone()[0]
+            self.assertEqual(n, 0, "a refused bank must write no row")
             stats2 = prefetch_worker.prefetch_once(
                 limit=1, min_fresh=3600.0, load_ceiling=4.0, fail_backoff=900.0,
                 dry_run=False, verbose=False, max_wait_seconds=300.0,

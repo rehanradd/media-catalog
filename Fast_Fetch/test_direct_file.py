@@ -15,6 +15,7 @@ import sqlite3
 import sys
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -22,6 +23,21 @@ import redact
 import resolved_cache
 import tiers
 import viewer
+
+
+def setUpModule():
+    """Branch 2: ``record_resolved_cache`` now probes the URL at bank
+    time. This suite banks fixture URLs offline, so the probe is faked
+    as passing — the refusal itself is proven by
+    ``test_resolved_cache.TestBankRefusesNonMedia``."""
+    global _probe_patcher
+    _probe_patcher = mock.patch.object(
+        resolved_cache, "_media_probe", return_value=(True, None))
+    _probe_patcher.start()
+
+
+def tearDownModule():
+    _probe_patcher.stop()
 
 SECRET = "test-secret-for-direct-file"
 

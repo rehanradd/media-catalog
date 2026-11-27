@@ -69,6 +69,22 @@ import host_resolvers as hr  # noqa: E402
 import resolved_cache  # noqa: E402
 import serve_verify  # noqa: E402
 
+
+def setUpModule():
+    """Branch 2: ``record_resolved_cache`` now probes the URL at bank
+    time. This suite banks fixture URLs offline, so the probe is faked
+    as passing — the refusal itself is proven by
+    ``test_resolved_cache.TestBankRefusesNonMedia``."""
+    global _probe_patcher
+    _probe_patcher = patch.object(
+        resolved_cache, "_media_probe", return_value=(True, None))
+    _probe_patcher.start()
+
+
+def tearDownModule():
+    _probe_patcher.stop()
+
+
 NOW = 1_800_000_000.0
 
 # ---------------------------------------------------------------------------

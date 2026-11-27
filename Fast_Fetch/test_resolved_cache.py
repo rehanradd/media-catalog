@@ -31,6 +31,22 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import resolved_cache  # noqa: E402
 
 
+def setUpModule():
+    """Branch 2: ``record_resolved_cache`` now probes the URL at bank
+    time. This suite banks fixture URLs offline, so the probe is faked
+    as passing for every existing test — the refusal itself is proven
+    by ``TestBankRefusesNonMedia`` below, which overrides this patch
+    per test."""
+    global _probe_patcher
+    _probe_patcher = mock.patch.object(
+        resolved_cache, "_media_probe", return_value=(True, None))
+    _probe_patcher.start()
+
+
+def tearDownModule():
+    _probe_patcher.stop()
+
+
 def fresh_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     resolved_cache.init_resolved_cache(conn)
@@ -134,6 +150,61 @@ class TestHitMiss(unittest.TestCase):
         self.assertIsNotNone(hit, "fresh resolve must reset the failure circuit")
         self.assertEqual(hit["url"], "https://pixeldrain.com/api/file/NEWHASH")
         self.assertEqual(hit["fail_count"], 0)
+
+
+class TestBankRefusesNonMedia(unittest.TestCase):
+    """Hook 2 (Branch 2): a non-media URL is never banked.
+
+    The bank-time probe is the last line of defence: the stage-2 gate
+    already refuses non-media at resolve time, but a caller that banks
+    a resolve answer cannot persist a text/HTML payload by accident.
+    The named regression is the v2.0.0 incident: HTML saved as .mkv
+    and reported success. These tests override the module-level
+    passing-probe fake (see setUpModule) with a refusing one.
+    """
+
+    def test_html_as_mkv_refused(self):
+        conn = fresh_conn()
+        html = file_resolve(
+            url="https://media.example.test/file.mkv",
+            mime_type="video/mp4")
+        with mock.patch.object(resolved_cache, "_media_probe",
+                               return_value=(False, None)):
+            stored = resolved_cache.record_resolved_cache(conn, 77, html)
+        self.assertIs(stored, False)
+        self.assertIsNone(resolved_cache.lookup_cache(conn, 77))
+        n = conn.execute(
+            "SELECT COUNT(*) FROM resolved_cache").fetchone()[0]
+        self.assertEqual(n, 0, "a refused bank must write no row")
+
+    def test_transport_failure_refuses_the_bank(self):
+        # A URL the probe cannot reach is unproven, not proven-dead —
+        # but refusing only skips the cache, it never poisons it, so
+        # the bank refuses it too instead of banking an unproven URL.
+        conn = fresh_conn()
+        with mock.patch.object(resolved_cache, "_media_probe",
+                               return_value=(False, None)):
+            stored = resolved_cache.record_resolved_cache(
+                conn, 77, file_resolve())
+        self.assertIs(stored, False)
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM resolved_cache").fetchone()[0],
+            0)
+
+    def test_real_media_banks(self):
+        # The probe passing banks exactly as before (the module-level
+        # fake already returns (True, None); this pins the shape
+        # explicitly so a future change to the fake is visible).
+        conn = fresh_conn()
+        now = time.time()
+        with mock.patch.object(resolved_cache, "_media_probe",
+                               return_value=(True, 2_405_181_686)):
+            stored = resolved_cache.record_resolved_cache(
+                conn, 77, file_resolve(), now=now)
+        self.assertIsInstance(stored, dict)
+        self.assertEqual(stored["url"], file_resolve()["url"])
+        self.assertIsNotNone(
+            resolved_cache.lookup_cache(conn, 77, now=now + 5))
 
 
 class TestKindAndCategoryFiltering(unittest.TestCase):

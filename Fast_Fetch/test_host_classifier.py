@@ -15,6 +15,7 @@ import sys
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 BASE_DIR = Path(__file__).parent.resolve()
 if str(BASE_DIR) not in sys.path:
@@ -34,6 +35,24 @@ else:
     _RC_REASON = ""
 
 HAS_RC = _rc is not None
+
+
+def setUpModule():
+    """Branch 2: ``record_resolved_cache`` now probes the URL at bank
+    time. This suite banks fixture URLs offline, so the probe is faked
+    as passing wherever resolved_cache exists — the refusal itself is
+    proven by ``test_resolved_cache.TestBankRefusesNonMedia``."""
+    global _probe_patcher
+    _probe_patcher = None
+    if _rc is not None:
+        _probe_patcher = mock.patch.object(
+            _rc, "_media_probe", return_value=(True, None))
+        _probe_patcher.start()
+
+
+def tearDownModule():
+    if _probe_patcher is not None:
+        _probe_patcher.stop()
 
 try:
     import site_scout as _ss

@@ -2,6 +2,7 @@
 
 Newest first. Each file is a session block moved verbatim out of `Fast_Fetch/CONTINUITY.md` on 2026-10-30.
 
+- 2026-11-27 — Self-healing Branch 2 (hook the media-bytes checker in): branch `selfheal-b2-hook-checker` from `64fbc289`. `_verdict_from_unwrap` refuses text/* verdicts; filemoon verify probe gates on `verify_media_bytes`; `record_resolved_cache` refuses to bank non-media (returns False); pool refused-bank counts as a failed row. Named HTML-as-.mkv regression at each hook point. Full note: `20261127-selfheal-b2-hook-checker.md`. (New session note, not a CONTINUITY.md rotation — that file is at 11,980 / 12,000 bytes.)
 - 2026-11-25 — CONTINUITY.md rotation (mega wave-4 rebase lane): the four oldest session-history bullets (API-01 IP-bound guard; Catalog pipeline fixes; 1fichier resolver wiring; One Piece identity cluster) rotated out of `CONTINUITY.md` verbatim to bring the index back under its 12 KB budget. Full note: `20261125-continuity-rotation-mega-wave4.md`.
 - 2026-11-25 — CONTINUITY.md rotation (doc03): the oldest session-history bullet (Registry §2, MovieBox + wp_family) rotated out of `CONTINUITY.md` verbatim to bring the index back under its 12 KB budget. Full note: `20261125-continuity-rotation-doc03-registry.md`.
 - 2026-11-25 — CONTINUITY.md rotation (doc05): the oldest session-history bullet (Registry §2, MovieBox + wp_family) rotated out of `CONTINUITY.md` verbatim to bring the index back under its 12 KB budget. Full note: `20261125-continuity-rotation-doc05-registry.md`.

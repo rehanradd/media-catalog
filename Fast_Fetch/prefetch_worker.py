@@ -574,6 +574,15 @@ def _resolve_one(*, fast_fetch, resolved_cache, source_id, title,
             stored = resolved_cache.record_resolved_cache(
                 task_conn, source_id, result, source="pool")
             task_conn.commit()
+        if stored is False:
+            # Branch 2 (self-healing): the bank refused a non-media
+            # URL — a resolve that banks nothing counts as a failed
+            # row, same as no_playable_source, so the backoff holds
+            # it for the rest of the sweep instead of retrying it hot.
+            _failure_backoff[source_id] = time.time() + fail_backoff
+            log(f"cold #{source_id} '{title}': "
+                f"bank refused non-media url")
+            return "failed" if not blocked else "failed_gated"
         if verbose:
             remaining = (horizon_seconds_left(stored, time.time())
                          if stored else 0.0)
