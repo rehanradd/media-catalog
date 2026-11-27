@@ -3716,3 +3716,13 @@ CI on tip `2d35eb91`: Android 45897077406 (auto-triggered on push) + Backend 458
 **Post-merge flag (not a gate blocker):** the main-push Backend run 45939999563 on `3d0c6d6f` FAILED on the known ETag flake (`V2CachingTests` `test_if_none_match`, 200 != 304). Parent re-ran once; SUCCESS 09:38 PKT. Flake confirmed; main healthy. The branch-tip verdicts above are what the gate required and they are green.
 
 **Outcome (2026-11-27): LANDED at `3d0c6d6f`.** Self-healing Branch 1 of 6 done. Next: Branch 2 (hook the checker into the stage-2 probe, `record_resolved_cache` refusal, pool banking).
+
+## Session — Video-audit crash batch, hero-side guards (2026-11-27, branch videofix-crash-20261127, NOT landed)
+
+**Branch:** `videofix-crash-20261127`, tip `69255765` (1 commit, off main `1b580bcd`). App-only. Video-audit issue 1: app crashed on Home right after a hero auto-advance tick following a return from Live TV; video 2 (issue 25) shows the SAME crash after leaving a local video with audio still playing — the leaked/unreleased player is the prime crash suspect, and the player batch owns that fix (player-release on close). This batch hardens the hero side only.
+
+**Changes (HeroCarousel.kt only):** (1) `LaunchedEffect(posts.size)` clamps a stale restored page to the last valid page via new pure helper `clampHeroPage` when the list shrinks under the pager; (2) the auto-advance loop re-checks `pagerState.currentPage < posts.size` immediately before `animateScrollToPage` and skips the tick if stale. No visual change, so no Paparazzi record run. **Tests:** `HeroCarouselTest.kt` — `nextPageWrapsSafelyFromAStalePage` (5,3→0), `clampHeroPageHoldsTheLastValidPage`, `clampHeroPageHandlesDegenerateAndNegativePages`.
+
+**PROVEN vs SUSPECTED:** the hero guard is proven-safe hardening (bounds already verified: `nextHeroPage` modulo-guarded, all index reads `getOrNull`). The OOM-via-unreleased-player crash cause remains SUSPECTED, not proven — no Crashlytics trace exists; the sibling player batch's service-stop fix is the real fix for the prime suspect.
+
+**CI on exact tip `69255765`:** Backend 46027050875 SUCCESS + Android 46027081278 SUCCESS. (The push-triggered Android run 46027022602 was cancelled by concurrency; the dispatched runs above are the verdicts.) Not landed — coordinator lands batches in order.
