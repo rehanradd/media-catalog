@@ -91,7 +91,7 @@ class PlayerBufferingTest {
         assertTrue(isStuckBuffering(5_000))
         assertFalse(isStuckBuffering(11_999, isLive = true))
         assertTrue(isStuckBuffering(12_000, isLive = true))
-        assertEquals(12_000L, PlayerBuffering.STUCK_AFTER_MS_LIVE)
+        assertEquals(12_000, PlayerBuffering.STUCK_AFTER_MS_LIVE)
         assertTrue(
             "the live stuck clock must stay inside the start watchdog",
             PlayerBuffering.STUCK_AFTER_MS_LIVE < StartDeadline.START_WATCHDOG_MS,

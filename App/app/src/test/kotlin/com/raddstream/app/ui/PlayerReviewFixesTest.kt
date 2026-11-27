@@ -311,8 +311,10 @@ class PlayerReviewFixesTest {
     fun `the compact row decision follows the 360dp arithmetic`() {
         // Video-audit #20 (27 Nov 2026): seven 48dp controls (376dp) plus
         // 48dp rails cannot fit a 360dp or 411dp phone; the compact row
-        // (304dp + 16dp rails) fits 360dp with room to spare, and a wide
-        // landscape frame keeps the full row.
+        // (336dp of controls + 8dp rails, no gaps) fits 360dp with room to
+        // spare, and a wide landscape frame keeps the full row. The press
+        // targets stay 48dp — the pinned minimum-target rule — so only
+        // the rails and gaps tighten.
         assertTrue(playerControlsNeedCompact(360, 48.dp))
         assertTrue(playerControlsNeedCompact(411, 48.dp))
         assertFalse(playerControlsNeedCompact(851, 48.dp))

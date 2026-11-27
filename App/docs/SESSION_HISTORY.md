@@ -3736,7 +3736,7 @@ CI on tip `2d35eb91`: Android 45897077406 (auto-triggered on push) + Backend 458
 - #6: live stuck clock 5 s → 12 s (resolve mints take 6–12 s); stuck card gains a "Browse channels" fallback (live only, back to the grid) alongside Retry / 480p; dismiss-on-play already true.
 - #17: raw muxer ids (`audio_0`) never print — `AudioTrackMatcher.isRawTrackId` + `displayAudioName` (language first, e.g. Urdu); Audio field hidden when only one audio track; same treatment for subtitle status.
 - #18: player opens forced LANDSCAPE on Play (VOD + Live TV), portrait on exit; supersedes H18 "held orientation wins" per user order 20:11 PKT 27 Nov. Rotate button + fullscreen toggle unchanged.
-- #20: bottom row goes compact on narrow screens (16dp rails, 40dp targets, 4dp gaps — 304dp fits 360dp); all 7 controls stay, none dropped; landscape keeps the full 48dp row.
+- #20: bottom row goes compact on narrow screens (8dp rails, no gaps — 336dp of 48dp controls fits 360dp); all 7 controls stay, none dropped; landscape keeps the full 48dp row. CORRECTION after Android CI 46030663536: the first cut shrank press targets to 40dp, which broke the pinned 48dp minimum-target scan test (PlayerControlSemanticsTest) — targets stay 48dp and only rails/gaps tighten. See fixup commit.
 - #21: forward-10 drawable gains the missing "1" path.
 - #23: `isBuffering` derived from both halves (playbackState BUFFERING *and* playWhenReady) — pausing mid-stall clears the "Buffering…" chip at once.
 - #34: line-jump toast silent when no subtitles exist; plain "Can't jump between subtitle lines for this video" when native subtitles exist.

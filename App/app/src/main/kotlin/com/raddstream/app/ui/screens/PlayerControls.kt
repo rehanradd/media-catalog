@@ -87,11 +87,6 @@ internal fun ControlTarget(
     // disabled control dims and does not fire.
     selected: Boolean = false,
     enabled: Boolean = true,
-    // Video-audit #20 (27 Nov 2026): the press target is 48dp by default,
-    // but on a narrow portrait phone seven 48dp controls cannot fit at
-    // all (376dp of row in 264dp of space) — the compact row passes 40dp
-    // here instead of dropping buttons. Landscape keeps 48dp.
-    targetSize: Dp = MinControlTarget,
     content: @Composable () -> Unit,
 ) {
     val spoken = label
@@ -105,7 +100,7 @@ internal fun ControlTarget(
     // Long-press is opt-in per control (the Volume button's level slider). A control
     // without one keeps the plain clickable below — the press the semantics test pins.
     val base = modifier
-        .size(targetSize)
+        .size(MinControlTarget)
         .clip(CircleShape)
         .background(
             if (selected) RaddCurrent500.copy(alpha = 0.25f) else Color.Transparent,
@@ -145,13 +140,9 @@ internal fun PlayerControlButton(
     // Cinema (Nov 2026): the glyph is 22dp; the 48dp press target in
     // ControlTarget stays.
     iconSize: Dp = 22.dp,
-    // Video-audit #20 (27 Nov 2026): the compact row's press target —
-    // see [ControlTarget.targetSize]. The glyph stays 22dp; only the
-    // press circle shrinks, and only on a narrow screen.
-    targetSize: Dp = MinControlTarget,
     content: @Composable () -> Unit,
 ) {
-    ControlTarget(label = label, onClick = onClick, onLongClick = onLongClick, selected = selected, enabled = enabled, targetSize = targetSize) {
+    ControlTarget(label = label, onClick = onClick, onLongClick = onLongClick, selected = selected, enabled = enabled) {
         Box(Modifier.size(iconSize), contentAlignment = Alignment.Center) { content() }
     }
 }

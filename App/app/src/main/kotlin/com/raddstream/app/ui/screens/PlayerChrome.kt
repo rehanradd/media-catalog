@@ -124,20 +124,22 @@ internal fun playerSafeRailDp(cutoutLeft: Dp, cutoutRight: Dp): Dp =
 
 /**
  * Video-audit #20 (27 Nov 2026): the bottom control row is seven fixed
- * 48dp controls with 8dp gaps — 376dp — but the 48dp rails leave only
+ * 48dp controls in two clusters — 376dp — but the 48dp rails leave only
  * 264dp on a 360dp phone, so Fullscreen and More were off-screen in
  * portrait (the code mechanism behind issue 18's missing fullscreen
  * button). The row goes compact when the full row plus rails does not
- * fit: 16dp rails, 40dp targets, 4dp gaps — 304dp of row, which fits a
- * 360dp screen with room to spare. The seven controls never move and
- * none is dropped; only the chrome around them tightens, and only on a
- * narrow screen. Landscape keeps the full 48dp row. Pure so a JVM test
- * can pin the 360dp arithmetic without a device.
+ * fit: 8dp rails and no gaps between the controls — 336dp of row, which
+ * fits a 360dp screen with room to spare. The seven controls never move
+ * and none is dropped, and every press target stays 48dp: the repo pins
+ * the 48dp minimum target (PlayerControlSemanticsTest), so the row fits
+ * by tightening the chrome around the controls, never by shrinking a
+ * target. Landscape keeps the full 48dp row. Pure so a JVM test can pin
+ * the 360dp arithmetic without a device.
  */
 internal val PlayerRowFullWidth = 376.dp
-internal val PlayerRowCompactWidth = 304.dp
-internal val PlayerRowCompactRail = 16.dp
-internal val PlayerRowCompactTarget = 40.dp
+internal val PlayerRowCompactWidth = 336.dp
+internal val PlayerRowCompactRail = 8.dp
+internal val PlayerRowCompactGap = 0.dp
 
 internal fun playerControlsNeedCompact(screenWidthDp: Int, railDp: Dp): Boolean =
     screenWidthDp.dp < PlayerRowFullWidth + railDp * 2
@@ -759,14 +761,14 @@ internal fun BottomControls(
     val rail = playerChromeRail()
     // Video-audit #20 (27 Nov 2026): the seven 48dp controls need 376dp
     // plus rails — on a 360dp phone the full row cannot fit, so the row
-    // goes compact (16dp rails, 40dp targets, 4dp gaps) instead of
-    // clipping Fullscreen and More off the edge. The compact decision
-    // reads the screen width, so a landscape frame and a wide tablet
-    // keep the full 48dp row.
+    // goes compact (8dp rails, no gaps between the controls) instead of
+    // clipping Fullscreen and More off the edge. The press targets stay
+    // 48dp — the minimum-target rule is pinned, so only the chrome
+    // tightens. The compact decision reads the screen width, so a
+    // landscape frame and a wide tablet keep the full 48dp row.
     val compactControls = playerControlsNeedCompact(LocalConfiguration.current.screenWidthDp, rail)
     val controlRail = if (compactControls) PlayerRowCompactRail else rail
-    val controlTarget = if (compactControls) PlayerRowCompactTarget else MinControlTarget
-    val controlGap = if (compactControls) 4.dp else 8.dp
+    val controlGap = if (compactControls) PlayerRowCompactGap else 8.dp
     // Review fix (16 Nov): the bottom scrim is a full-height gradient — the
     // old one went transparent exactly where the live mark sits, so the mark
     // read over a bright ticker instead of over the dark. P2-6 (audit
@@ -1046,7 +1048,6 @@ internal fun BottomControls(
                         // Cinema (Nov 2026): the primary glyph is 36dp; the
                         // 48dp press target stays.
                         iconSize = 36.dp,
-                        targetSize = controlTarget,
                     ) {
                         Icon(
                             painter = if (state.isPlaying) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play_filled),
@@ -1063,7 +1064,6 @@ internal fun BottomControls(
                         { onSeekBy(-10_000) },
                         stringResource(R.string.player_rewind_10),
                         enabled = state.seekEnabled,
-                        targetSize = controlTarget,
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.ic_player_replay_10),
@@ -1075,7 +1075,6 @@ internal fun BottomControls(
                         { onSeekBy(10_000) },
                         stringResource(R.string.player_forward_10),
                         enabled = state.seekEnabled,
-                        targetSize = controlTarget,
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.ic_player_forward_10),
@@ -1094,7 +1093,6 @@ internal fun BottomControls(
                             if (state.userVolume > 0f) stringResource(R.string.player_volume, volumePercent)
                             else stringResource(R.string.player_volume_muted),
                             onLongClick = { showVolumeSlider = true },
-                            targetSize = controlTarget,
                         ) {
                             if (state.userVolume > 0f) {
                                 Icon(
@@ -1127,7 +1125,6 @@ internal fun BottomControls(
                         { onShowSubtitleSheet() },
                         stringResource(R.string.player_audio_subtitles_title),
                         selected = subtitleActive(state),
-                        targetSize = controlTarget,
                     ) {
                         Icon(painterResource(R.drawable.ic_player_subtitles), null, tint = if (subtitleActive(state)) RaddCurrent500 else PlayerOnVideo.text)
                     }
@@ -1135,7 +1132,6 @@ internal fun BottomControls(
                         { onToggleFullscreen() },
                         if (state.fullscreen) stringResource(R.string.player_exit_fullscreen)
                         else stringResource(R.string.player_fullscreen),
-                        targetSize = controlTarget,
                     ) {
                         if (state.fullscreen) {
                             Icon(
@@ -1150,7 +1146,6 @@ internal fun BottomControls(
                     PlayerControlButton(
                         { onShowMoreSheet() },
                         stringResource(R.string.player_more),
-                        targetSize = controlTarget,
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.ic_player_more),
@@ -1247,15 +1242,13 @@ private fun subtitleActive(state: PlayerUiState) =
 /**
  * The word the subtitles control speaks: which text is loaded, or an honest "off". Internal
  * so `PlayerControlSemanticsTest` can assert a named control is never rendered nameless.
+ * Video-audit #17 (27 Nov 2026): a subtitle track's label gets the same treatment as audio —
+ * the real language when it has one, never a raw muxer id ("sub_0"). A track with nothing
+ * printable keeps its own label rather than reading "Off" while subtitles are on.
  */
 internal fun subtitleStatusLabel(state: PlayerUiState, offWord: String): String =
     state.customSubtitleLoaded
         ?: state.selectedSubtitleId?.let { id ->
-            // Video-audit #17 (27 Nov 2026): a subtitle track's label gets
-            // the same treatment as audio — the real language when it has
-            // one, never a raw muxer id ("sub_0"). A track with nothing
-            // printable keeps its own label rather than reading "Off"
-            // while subtitles are on.
             state.subtitleTracks.firstOrNull { it.id == id }?.let { track ->
                 AudioTrackMatcher.displayAudioName(track.language, track.label) ?: track.label
             }
