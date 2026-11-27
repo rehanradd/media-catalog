@@ -937,6 +937,19 @@ class TestLiveRoutesAndRecovery(LiveBase):
     def _get(self, app, path):
         return app.handle("GET", path, {}, {"Cookie": self.cookie}, b"")
 
+    def test_analytics_compute_without_day_uses_today(self):
+        # A bare compute must aggregate today (UTC), not the old
+        # hardcoded 2026-11-05 default.
+        import datetime as _dt
+        app = self._app()
+        st, _ct, payload, _k, _l = self._post(
+            app, "/admin/api/v2/analytics/compute", {})
+        self.assertEqual(st, 200)
+        today = _dt.datetime.now(_dt.timezone.utc).date().isoformat()
+        self.assertIn(('"day": "%s"' % today).encode(), payload)
+        rows = self.svc.get_analytics(self.owner)["items"]
+        self.assertTrue(any(r["day"] == today for r in rows))
+
     def test_contact_and_report_intake_routes(self):
         app = self._app()
         st, _ct, payload, _k, _l = self._post(

@@ -1321,7 +1321,30 @@ class Service:
                  NOW()))
             self.admin.commit()
 
-    def _record_versioned_snapshot(self, published_by, expected_version=None):
+    def _last_published_snapshot(self):
+        """The last published snapshot's (config, home).
+
+        The published record the app reads v2-only fields and sections
+        from. A caller that bumps the version without publishing the
+        draft (a feature pause/resume) snapshots THIS, not the draft
+        row — otherwise un-published Live draft changes (force_update,
+        min_version, brand, region) and un-published section edits
+        would ride out silently in its snapshot. Returns
+        ({}, {"sections": []}) when nothing was ever published.
+        """
+        hist = self.admin.execute(
+            "SELECT snapshot_json FROM app_remote_config_history "
+            "ORDER BY config_version DESC LIMIT 1").fetchone()
+        if hist is None:
+            return {}, {"sections": []}
+        try:
+            snap = json.loads(hist["snapshot_json"])
+            return snap.get("config", {}), snap.get("home", {"sections": []})
+        except (TypeError, ValueError):
+            return {}, {"sections": []}
+
+    def _record_versioned_snapshot(self, published_by, expected_version=None,
+                                   config=None, home=None):
         """Bump config_version and write the history snapshot for it.
 
         One helper for every version bump that is not the remote-config
@@ -1340,14 +1363,27 @@ class Service:
         twice. That lock serialises threads only: the live catalog is a
         separate SQLite DB/connection, so there is still no cross-DB
         atomicity and the orphan window on an admin-commit failure
-        remains (see pause())."""
+        remains (see pause()).
+
+        config/home are the exact config/home to snapshot. Default
+        (None) is the current draft row + current home — correct for a
+        Live publish, which publishes the whole draft. Callers that
+        publish only a subset (a monetization save, a feature pause)
+        MUST pass the last published config/home overlaid with just
+        their fields: snapshotting the draft row there would silently
+        publish un-published Live draft changes (force_update,
+        min_version, brand, region) and un-published section edits,
+        because the app reads those from the published snapshot."""
         with WRITE_LOCK:
             if expected_version is None:
                 new_version = self._config_row()["config_version"] + 1
             else:
                 new_version = expected_version
-            snap = {"config": self._redacted_config(self._config_row()),
-                    "home": self._home_snapshot()}
+            if config is None:
+                config = self._redacted_config(self._config_row())
+            if home is None:
+                home = self._home_snapshot()
+            snap = {"config": dict(config), "home": home}
             snap["config"]["config_version"] = new_version
             self.admin.execute(
                 "UPDATE app_remote_config_v2 SET config_version=?, updated_by=?, updated_at=? WHERE id=1",
@@ -1529,20 +1565,34 @@ class Service:
                 except Exception:
                     old_live = {}
             old_snap = {}
+            old_home = {"sections": []}
             hist = self.admin.execute(
                 "SELECT snapshot_json FROM app_remote_config_history "
                 "ORDER BY config_version DESC LIMIT 1").fetchone()
             if hist is not None:
                 try:
-                    old_snap = json.loads(hist["snapshot_json"]).get("config", {})
+                    _hist_snap = json.loads(hist["snapshot_json"])
+                    old_snap = _hist_snap.get("config", {})
+                    old_home = _hist_snap.get("home", {"sections": []})
                 except (TypeError, ValueError):
                     old_snap = {}
+                    old_home = {"sections": []}
             if live is not None:
                 self._backup_preflight(live, actor["id"], "publish.refused", ip)
                 self._live_write(live, staged, new_version)
             paused_active = self._paused_features_note()
-            snap = {"config": self._redacted_config(row),
-                    "home": self._home_snapshot()}
+            # The snapshot must carry only what this publish puts out:
+            # the staged monetization fields on top of the last published
+            # config, and the last published home. Snapshotting the draft
+            # row here would silently publish un-published Live draft
+            # changes (force_update, min_version, brand, region) and
+            # un-published section edits — the app reads those from the
+            # published snapshot, and the Live page would then report
+            # "nothing to publish" for changes nobody published.
+            snap_config = self._redacted_config(row)
+            for _key in V2_ONLY_SNAPSHOT_FIELDS:
+                snap_config[_key] = old_snap.get(_key)
+            snap = {"config": snap_config, "home": old_home}
             snap["config"]["config_version"] = new_version
             snap_sha = self._snapshot_sha256(snap)
             fields_changed = {}
@@ -1556,7 +1606,9 @@ class Service:
                 if old != new:
                     fields_changed[key] = [old, new]
             try:
-                self._record_versioned_snapshot(actor["id"], new_version)
+                self._record_versioned_snapshot(actor["id"], new_version,
+                                                config=snap["config"],
+                                                home=snap["home"])
                 after = self.get_monetization(actor)
                 before_audit = dict(before)
                 before_audit["config_version"] = before_version
@@ -2987,10 +3039,11 @@ class Service:
         row = self.admin.execute("SELECT * FROM tuning_settings WHERE id=1").fetchone()
         d = _row(row)
         out = {k: d.get(k) for k in TUNING_DEFAULTS}
-        # Honest labelling: a read-only grep of the VM Fast_Fetch code
-        # found NO consumer for 13 of the 20 controls. Only VIP prices,
-        # the free quality cap, the theme knobs and hero_max ride in
-        # remote-config to the app.
+        # Every control has a live consumer now (re-verified 2026-11-24
+        # against main: all 24 keys reach a backend reader; the
+        # tuning_consumers test fails if any current key falls back to
+        # stored-only). The old "13 of 20 have no consumer" reading is
+        # stale — the tuning_consumers docstring carries the detail.
         out["consumers"] = self.tuning_consumers(actor)
         return out
 
@@ -3139,7 +3192,15 @@ class Service:
                 row = self.admin.execute("SELECT * FROM pauses WHERE id=?", (cur.lastrowid,)).fetchone()
                 # D-4: a live feature pause changes what the app must serve,
                 # so it is versioned like a flag flip (bump + snapshot).
-                self._record_versioned_snapshot(actor["id"], expected_version)
+                # Snapshot the last published config/home, not the draft
+                # row: a pause publishes nothing, so un-published Live
+                # draft changes (force_update, min_version, brand,
+                # region) and un-published section edits must not ride
+                # out in its snapshot.
+                _pub_config, _pub_home = self._last_published_snapshot()
+                self._record_versioned_snapshot(actor["id"], expected_version,
+                                                config=_pub_config,
+                                                home=_pub_home)
         else:
             with WRITE_LOCK:
                 cur = self.admin.execute(
@@ -3175,7 +3236,12 @@ class Service:
                     (NOW(), actor["id"], pause_id))
                 self.admin.commit()
                 # D-4: clearing a feature pause is a versioned change too.
-                self._record_versioned_snapshot(actor["id"], expected_version)
+                # Snapshot the last published config/home, not the draft
+                # row — a resume publishes nothing (see pause()).
+                _pub_config, _pub_home = self._last_published_snapshot()
+                self._record_versioned_snapshot(actor["id"], expected_version,
+                                                config=_pub_config,
+                                                home=_pub_home)
         else:
             with WRITE_LOCK:
                 self.admin.execute(

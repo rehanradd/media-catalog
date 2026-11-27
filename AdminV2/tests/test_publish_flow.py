@@ -201,6 +201,46 @@ class TestPublish(PublishFlowBase):
         self.assertEqual(row["config_version"], before + 1)
         self.assertEqual(self.svc._config_row()["config_version"], before + 1)
 
+    def test_monetization_save_does_not_publish_unpublished_live_draft(self):
+        """A monetization save must not publish an un-published Live draft.
+
+        The Live draft's v2-only fields (force_update, min_version_code,
+        brand, region) reach the app only through the published snapshot,
+        and only a Live publish may put them there. Saving monetization
+        (e.g. a VIP price) snapshots the draft row today, so the draft's
+        force_update/min_version ride out silently — and the Live page
+        then reports "nothing to publish" for changes the operator never
+        published. The monetization publish must snapshot the last
+        published config plus its own fields, never the draft row.
+        """
+        self._live_service()
+        # Baseline: publish once so there is a last-published snapshot.
+        self.svc.publish_remote_config(self.owner, {"confirm": True})
+        # Draft a force update + minimum version, but do NOT publish it.
+        self.svc.draft_remote_config(
+            self.owner, {"force_update": 1, "min_version_code": 99,
+                         "latest_version_code": 99,
+                         "latest_version_name": "9.9.9"})
+        # Save monetization (a VIP price change) — this publishes.
+        self.svc.put_monetization(self.owner, {"vip_monthly_pkr": 300})
+        # The monetization field DID go out.
+        row = self._catalog().execute(
+            "SELECT * FROM app_remote_config WHERE id=1").fetchone()
+        self.assertEqual(row["vip_monthly_pkr"], 300)
+        # But the Live draft's v2-only fields must NOT be in the snapshot.
+        hist = self.svc.admin.execute(
+            "SELECT snapshot_json FROM app_remote_config_history "
+            "ORDER BY config_version DESC LIMIT 1").fetchone()
+        snap = json.loads(hist["snapshot_json"])["config"]
+        self.assertEqual(snap.get("force_update"), 0)
+        self.assertEqual(snap.get("min_version_code") or 0, 0)
+        self.assertEqual(snap.get("latest_version_code") or 0, 0)
+        self.assertEqual(snap.get("latest_version_name") or "", "")
+        # And the Live page must still show the draft as waiting to go out.
+        live = self.svc.get_live(self.owner)
+        self.assertIn("force_update", live["changed_keys"])
+        self.assertIn("min_version_code", live["changed_keys"])
+
     def test_monetization_ads_switch_publishes_to_the_catalog(self):
         """Lane F: the ads switch is a real toggle, not a zone id. The
         draft flip publishes to the live catalog row the app reads — on
@@ -383,6 +423,30 @@ class TestFeaturePause(PublishFlowBase):
         # The panel fixture still folds the pause too.
         flags = fixture_app.public_remote_config(self.svc)["feature_flags"]
         self.assertFalse(flags["downloads"])
+
+    def test_pause_feature_does_not_publish_unpublished_live_draft(self):
+        """A feature pause bumps the version but publishes nothing: an
+        un-published Live draft (force_update, min_version) must not
+        ride out in the pause's snapshot."""
+        self._live_service()
+        self.svc.publish_remote_config(self.owner, {"confirm": True})
+        self.svc.draft_remote_config(
+            self.owner, {"force_update": 1, "min_version_code": 99})
+        self.svc.pause(self.owner, {"target_type": "feature",
+                                    "target_id": "downloads",
+                                    "reason": "test pause"})
+        # The pause itself worked.
+        self.assertEqual(self._live_row()["feature_downloads"], 0)
+        # But the snapshot must not carry the un-published draft.
+        hist = self.svc.admin.execute(
+            "SELECT snapshot_json FROM app_remote_config_history "
+            "ORDER BY config_version DESC LIMIT 1").fetchone()
+        snap = json.loads(hist["snapshot_json"])["config"]
+        self.assertEqual(snap.get("force_update"), 0)
+        self.assertEqual(snap.get("min_version_code") or 0, 0)
+        live = self.svc.get_live(self.owner)
+        self.assertIn("force_update", live["changed_keys"])
+        self.assertIn("min_version_code", live["changed_keys"])
 
     def test_resume_feature_restores_draft_value(self):
         self._live_service()

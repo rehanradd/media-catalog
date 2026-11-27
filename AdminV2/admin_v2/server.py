@@ -7,6 +7,7 @@ over HTTPS (the gated live step); this workspace server over plain
 HTTP must not claim HSTS, and strict-host mode (Host must be the
 panel domain + HTTPS) is off by default here and on at the gate.
 """
+import datetime
 import json
 import re
 import time
@@ -394,14 +395,17 @@ def _api(self, method, path, query, headers, body_bytes):
     R(("POST", r"^/admin/api/v2/links/(\d+)/evidence$", lambda u, _ip: svc.refold_evidence(u, int(_last2(path)), ip=_ip), True))
     R(("GET", r"^/admin/api/v2/analytics$", lambda u, _ip: svc.get_analytics(u), False))
     R(("GET", r"^/admin/api/v2/usage$", lambda u, _ip: svc.usage_summary(u), False))
-    R(("POST", r"^/admin/api/v2/analytics/compute$", lambda u, _ip: svc.compute_analytics_day(u, body.get("day", "2026-11-05")), True))
+    # No day given means today (UTC) — the old default was a hardcoded
+    # 2026-11-05, so a bare compute always re-aggregated a stale day.
+    R(("POST", r"^/admin/api/v2/analytics/compute$", lambda u, _ip: svc.compute_analytics_day(u, body.get("day") or datetime.datetime.now(datetime.timezone.utc).date().isoformat()), True))
     R(("POST", r"^/admin/api/v2/contact$", lambda u, _ip: svc.create_contact(u, body), True))
     R(("POST", r"^/admin/api/v2/reports$", lambda u, _ip: svc.create_report(u, body), True))
     R(("PUT", r"^/admin/api/v2/broadcasts/(\d+)$", lambda u, _ip: svc.update_broadcast(u, int(_last(path)), body, ip=_ip), True))
     R(("GET", r"^/admin/api/v2/users/([^/]+)/payments$", lambda u, _ip: svc.user_payment_history(u, urllib.parse.unquote(_last2(path))), False))
     R(("POST", r"^/admin/api/v2/payments/(\d+)/refund-note$", lambda u, _ip: svc.add_refund_note(u, int(_last2(path)), body, ip=_ip), True))
     R(("GET", r"^/admin/api/v2/sections/([^/]+)/preview$", lambda u, _ip: svc.resolve_section_preview(u, _last2(path)), False))
-    R(("GET", r"^/admin/api/v2/analytics/export$", lambda u, _ip: {"csv": svc.export_analytics_csv(u)}, False))
+    # (No analytics/export route here: the raw-CSV download above
+    # matches first and serves it as text/csv.)
     R(("GET", r"^/admin/api/v2/fleet/([^/]+)/audit$", lambda u, _ip: svc.live.fleet_audit(_last2(path)) if svc.live is not None and svc.live.has_catalog else {"items": [], "count": 0, "note": "no live catalog wired"}, False))
     R(("GET", r"^/admin/api/v2/review-queue$", lambda u, _ip: svc.live.review_queue() if svc.live is not None and svc.live.has_catalog else {"items": [], "count": 0, "note": "no live catalog wired"}, False))
     R(("GET", r"^/admin/api/v2/search$", lambda u, _ip: svc.global_search(u, q("q", "")), False))
@@ -500,7 +504,7 @@ def _page_dashboard(self, user, sess, query):
 """ % (stat_html, needs, paused, sys_line)
     hid = templates.form_hidden(sess.get("csrf_token"), "/admin")
     body += """<div class="card"><h3>Pause something</h3>
-<p class="muted">Pauses are recorded here, but the backend does not enforce them yet — pausing changes nothing in the app until a backend consumer reads them.</p>
+<p class="muted">Pauses take effect immediately: feature pauses turn the feature off in the app, section and category pauses hide them from Home, broadcast pauses hide the broadcast, and import, source and domain-check pauses block those runs. Only a global prefetch pause is stored-only — nothing reads it yet.</p>
 <form method="post" action="/admin/api/v2/pauses">%s
 <label for="pause-target-type">Target type</label><select id="pause-target-type" name="target_type">
 <option value="import_global">import_global</option><option value="prefetch_global">prefetch_global</option>
@@ -888,9 +892,9 @@ def _page_live(self, user, sess, query):
     # ── Draft settings (force-update / versions / brand / region) ──
     # These fields had an API (PUT remote-config) but no HTML form, so
     # the operator could never set them from the panel. They save as a
-    # draft (no version bump); publish to go live. Only min_version_code
-    # reaches the app today — the rest are served once the backend
-    # remote-config carries them (backend batch).
+    # draft (no version bump); publish to go live. All of them reach
+    # the app once published — the backend remote-config serves them
+    # from the published snapshot (panel_feed.read_force_update).
     dc = live["draft"]["config"]
 
     def _dv(name):

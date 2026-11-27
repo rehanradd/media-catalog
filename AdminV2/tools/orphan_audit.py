@@ -55,6 +55,9 @@ NON_R_ROUTES = {
     ("POST", "/admin/api/v2/auth/logout"),
     ("POST", "/admin/api/v2/auth/password-change"),
     ("GET", "/api/v1/app/remote-config"),
+    # Served by the early raw-CSV return in server.py _api, not by an
+    # R() table entry (the R() entry was a dead duplicate).
+    ("GET", "/admin/api/v2/analytics/export"),
 }
 
 
