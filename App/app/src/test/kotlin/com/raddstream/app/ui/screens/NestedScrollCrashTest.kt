@@ -489,6 +489,11 @@ class NestedScrollCrashTest {
             compose.waitForIdle()
             swipes++
         }
+        // Video audit (Nov 2026): the rail cards shrank 120dp → 100dp, so
+        // the error row is composed (Lazy beyond-bounds) a swipe earlier —
+        // while still below the fold. The loop above only proves the row
+        // EXISTS; scroll it into view before asserting it is displayed.
+        compose.onNodeWithText("Could not load more.").performScrollTo()
         compose.onNodeWithText("Could not load more.").assertIsDisplayed()
     }
 
