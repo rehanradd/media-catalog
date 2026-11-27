@@ -791,10 +791,13 @@ private const val TILE_PRESS_SCALE = 0.96f
  * S2 (2027 Home fix): word-safe trim for the meta line. When the line
  * still ellipsizes, back off to the previous word boundary and strip a
  * dangling separator ("97% Match · …" → "97% Match…").
- * Mirrors the title's [UserWords.trimToWordBoundary] for the meta line.
+ * Mirrors the title's [UserWords.trimToWordBoundary] for the meta line —
+ * except the title stub guard: a meta line's segments are not title
+ * words, so "97%" is a complete segment that still trims ("97%…"),
+ * never a bare stub ("The…") that keeps the layout's own cut.
  */
 internal fun trimMetaLineToWordBoundary(text: String, cutIndex: Int): String {
-    val trimmed = UserWords.trimToWordBoundary(text, cutIndex)
+    val trimmed = UserWords.trimToWordBoundary(text, cutIndex, stubGuard = false)
     // trimToWordBoundary appends "…" after the boundary — if the boundary
     // fell just after a separator ("97% Match · …"), drop the separator
     // first so the line never ends on a dangling "·".

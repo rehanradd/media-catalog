@@ -104,8 +104,13 @@ object UserWords {
      * or more words, or one word of eight or more letters, is a real
      * fragment and still trims. Pure string work, so the boundary rule is
      * assertable without a layout.
+     *
+     * The stub guard is a TITLE rule. A meta line's segments are not
+     * title words — "97%" is a complete match-percent segment, not a
+     * stub — so [com.raddstream.app.ui.components.trimMetaLineToWordBoundary]
+     * passes `stubGuard = false` and keeps trimming to it.
      */
-    fun trimToWordBoundary(text: String, cutIndex: Int): String {
+    fun trimToWordBoundary(text: String, cutIndex: Int, stubGuard: Boolean = true): String {
         if (cutIndex <= 0 || cutIndex >= text.length) return text
         if (text[cutIndex].isWhitespace() || text[cutIndex - 1].isWhitespace()) return text
         val boundary = text.lastIndexOf(' ', cutIndex - 1)
@@ -114,7 +119,7 @@ object UserWords {
         // A stub is a lone short word: "The", "A", "It" — the cut backed
         // off past the only word that fit. Keep the layout's own cut
         // instead; the mid-word ellipsis shows strictly more of the title.
-        if (!kept.contains(' ') && kept.length < 8) return text
+        if (stubGuard && !kept.contains(' ') && kept.length < 8) return text
         return "$kept…"
     }
 
