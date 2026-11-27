@@ -28,18 +28,12 @@ import com.raddstream.app.ui.components.ImageFallbackCard
 import com.raddstream.app.ui.components.UserWords
 import com.raddstream.app.ui.components.channelMonogram
 import com.raddstream.app.ui.components.posterMetaLine
+import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.posterSharedElement
 
 /** Test tag on a search-result rich row, so a test can count result rows. */
 internal const val SearchResultRowTag = "search-result-row"
-
-/**
- * The rich row's thumb width — bigger than a home rail card on the same
- * phone, the YouTube-style lead the row is built around. A 2:3 thumb, so
- * the row stands ~168dp tall.
- */
-internal const val SearchResultRowThumbWidthDp = 112
 
 /**
  * Design direction REFINED (Nov 2026): the rich row's second line — the
@@ -101,8 +95,8 @@ internal fun SearchResultRow(
     ) {
         Box(
             modifier = Modifier
-                .width(SearchResultRowThumbWidthDp.dp)
-                .aspectRatio(2f / 3f)
+                .width(CardGeometry.SEARCH_RESULT_ROW_THUMB_WIDTH_DP.dp)
+                .aspectRatio(CardGeometry.POSTER_ASPECT)
                 .clip(RaddTokens.Shape.Card)
                 .posterSharedElement(
                     key = "poster-${post.workId ?: post.id}",

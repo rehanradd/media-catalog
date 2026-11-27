@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -160,8 +161,10 @@ class SearchResultRowTest {
             }
         }
         // The first result is a rich row, not a poster card: the row tag is
-        // on screen with its title and rating.
-        compose.onNodeWithTag(SearchResultRowTag).assertIsDisplayed()
+        // on screen with its title and rating. Two rows are visible at rest
+        // (both movie rows), so the tag matches more than one node — the
+        // first one is the assertion.
+        compose.onAllNodesWithTag(SearchResultRowTag)[0].assertIsDisplayed()
         compose.onNodeWithText("Jawan").assertIsDisplayed()
         compose.onNodeWithText("2023 · ★ 7.0 · Movie").assertIsDisplayed()
         // The last result scrolls into its own rich row too — the grid's

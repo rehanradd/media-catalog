@@ -49,13 +49,22 @@ object CardGeometry {
      */
     const val SPOTLIGHT_RAIL_CARD_WIDTH_DP: Int = 150
 
-    /**
-     * Continue Watching rows: the poster's width in the full-width row (mockup,
+    /** Continue Watching rows: the poster's width in the full-width row (mockup,
      * 2026-11-15). At [POSTER_ASPECT] the thumb is 144 dp tall, so the row is
      * the poster's height plus its padding — the title, remaining label and
      * progress bar sit beside it, vertically centred.
      */
     const val CONTINUE_WATCHING_ROW_THUMB_WIDTH_DP: Int = 96
+
+    /**
+     * Search result rows (refined direction, Nov 2026): the rich row's thumb
+     * width — bigger than a Continue Watching thumb and a home rail card on
+     * the same phone, the YouTube-style lead the row is built around. At
+     * [POSTER_ASPECT] the thumb is 168 dp tall, so the row is the poster's
+     * height plus its padding — the title, rating and more info sit beside
+     * it, top-aligned.
+     */
+    const val SEARCH_RESULT_ROW_THUMB_WIDTH_DP: Int = 112
 
     /** The detail header's poster column: the same ratio, a fixed column instead of a rail cell. */
     const val DETAIL_POSTER_WIDTH_DP: Int = 120
