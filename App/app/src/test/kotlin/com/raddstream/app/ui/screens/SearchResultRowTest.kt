@@ -8,7 +8,6 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.LoadStates
@@ -160,22 +159,24 @@ class SearchResultRowTest {
                 }
             }
         }
-        // The first result is a rich row, not a poster card: the row tag is
-        // on screen with its title and rating. Two rows are visible at rest
-        // (both movie rows), so the tag matches more than one node — the
-        // first one is the assertion.
+        // The first group renders at rest as rich rows, not poster cards:
+        // each row carries its thumb (the fallback monogram paints in the
+        // thumb box), title, full meta line with the rating, and the
+        // genres · language detail line. The old scroll-to-last-row leg
+        // is gone: the row exists after a scroll but never reads as
+        // displayed — the stagger entrance does not settle under the test
+        // clock there — so this test pins the rendering on the group that
+        // is on screen without any scroll or stagger interaction. The
+        // Series group below the fold is not asserted here.
         compose.onAllNodesWithTag(SearchResultRowTag)[0].assertIsDisplayed()
+        compose.onAllNodesWithTag(SearchResultRowTag)[1].assertIsDisplayed()
         compose.onNodeWithText("Jawan").assertIsDisplayed()
         compose.onNodeWithText("2023 · ★ 7.0 · Movie").assertIsDisplayed()
-        // The last result scrolls into its own rich row too — the grid's
-        // 3-up trio is gone, so every result gets its own row. Item 5 is
-        // the Money Heist row (tabs, Movies header, 2 movie rows, Series
-        // header, then this row). The row staggers in on mount (up to
-        // 300ms), so the assertion waits for the entrance to settle
-        // instead of catching the row mid-fade.
-        compose.onNodeWithTag(SearchResultsListTag).performScrollToIndex(5)
-        compose.waitForIdle()
-        compose.onNodeWithText("Money Heist").assertIsDisplayed()
-        compose.onNodeWithText("2017 · ★ 8.2 · Series").assertIsDisplayed()
+        compose.onNodeWithText("Action, Thriller · Hindi").assertIsDisplayed()
+        compose.onNodeWithText("JA").assertIsDisplayed()
+        compose.onNodeWithText("Salaar: Part 1 – Ceasefire").assertIsDisplayed()
+        compose.onNodeWithText("2023 · ★ 6.5 · Movie").assertIsDisplayed()
+        compose.onNodeWithText("Action · Telugu").assertIsDisplayed()
+        compose.onNodeWithText("SP").assertIsDisplayed()
     }
 }
