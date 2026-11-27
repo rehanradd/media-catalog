@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -55,7 +56,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.R
 import com.raddstream.app.network.models.LiveTvChannel
 import com.raddstream.app.network.models.WireText
-import com.raddstream.app.ui.components.CatalogGridColumns
 import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.ErrorState
@@ -458,7 +458,14 @@ internal fun LiveTvChannelGrid(
     }
     Box(modifier = modifier.fillMaxSize()) {
         LazyVerticalGrid(
-            columns = CatalogGridColumns,
+            // Video-audit #24/#36 (Nov 2026): Live TV gets its own column
+            // rule, not the shared 100dp one — on a 360dp phone the shared
+            // rule laid three ~101dp columns, and names cut mid-word after
+            // ~10 characters ("Discover …", "Al Jazeer…"). At 160dp a
+            // narrow phone gets two ~158dp columns, so names + the star fit;
+            // wider screens still gain columns. Browse / My List keep the
+            // shared rule — this is a Live TV fix, not a grid redesign.
+            columns = GridCells.Adaptive(minSize = 160.dp),
             state = gridState,
             modifier = Modifier.fillMaxSize().testTag("liveTv_grid"),
             contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp, start = 16.dp, end = 16.dp),
@@ -687,6 +694,25 @@ internal fun languageLabel(code: String?): String? {
     }
 }
 
+/**
+ * Video-audit #36 (Nov 2026): the tile's ONE displayed meta line — category
+ * + language only ("News · Urdu"). The full triple (category · country ·
+ * language) is what [channelMetaLine] builds for the card's spoken
+ * sentence, but on the tile it wrapped to 2–3 lines and the language — the
+ * segment that tells two same-name channels apart — was the part that
+ * vanished under the ellipsis. The tile shows the short line; the spoken
+ * sentence keeps the full one. Pure, so the shapes are pinned in a unit test.
+ */
+internal fun channelShortMetaLine(channel: LiveTvChannel): String =
+    listOfNotNull(
+        categoryLabel(channel.category).takeIf { it.isNotBlank() },
+        channel.language.trim()
+            .takeIf(::isKnownLanguage)
+            ?.let(::languageLabel),
+    )
+        .distinctBy { it.lowercase() }
+        .joinToString(" · ")
+
 internal fun channelMetaLine(channel: LiveTvChannel): String =
     listOfNotNull(
         categoryLabel(channel.category).takeIf { it.isNotBlank() },
@@ -808,23 +834,43 @@ internal fun LiveTvChannelCard(
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                 }
-                // E2 slice 1: the star lives top-end, opposite the LIVE
-                // badge — the logo's safe zone is centred at 60%, so the
-                // corners are free, and the same 0.85 surface disc keeps
-                // the mark legible over any logo. It is a nested click
-                // inside the card: tapping it stars the channel and never
-                // plays it. The filled star takes the Detail favourite's
-                // secondary tint, so a starred card reads starred at a
-                // glance without a second colour language.
+                // Video-audit #15 (Nov 2026): the star lived here, top-end
+                // of the logo plate — and covered the logo's corner on every
+                // wide logo (the plate is ~101dp wide at three columns, the
+                // logo safe zone reaches 80% of it, the 48dp star spans the
+                // corner). It now rides the name row below: same nested
+                // click, same 48dp target, no logo behind it, so it can
+                // cover nothing.
+            }
+            // Video-audit #15/#24/#36 (Nov 2026): the name rides with the
+            // star in one row, off the logo plate. The name is smaller
+            // text (12sp, the user's direction) and wraps to two lines, so
+            // "Al Jazeera English" and "Al Jazeera Arabic" read as two
+            // channels instead of one duplicated "Al Jazeer…" card.
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = channel.name,
+                    style = MaterialTheme.typography.bodySmall,
+                    // Mockup: the channel name is bold, not medium.
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(vertical = 6.dp).clearAndSetSemantics { },
+                )
+                // E2 slice 1: the star is a nested click inside the card:
+                // tapping it stars the channel and never plays it. The
+                // filled star takes the Detail favourite's secondary tint,
+                // so a starred card reads starred at a glance without a
+                // second colour language. No disc background here — the
+                // disc existed only to keep the mark legible over logo art,
+                // and the card surface behind it needs none.
                 IconButton(
                     onClick = onFavoriteClick,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(2.dp)
-                        .background(
-                            MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                            CircleShape,
-                        )
+                    modifier = Modifier.size(48.dp)
                         .testTag("liveTv_favorite_${channel.id}")
                         .semantics {
                             contentDescription = if (isFavorite) {
@@ -846,35 +892,13 @@ internal fun LiveTvChannelCard(
                 }
             }
             Text(
-                text = channel.name,
-                style = MaterialTheme.typography.titleSmall,
-                // Mockup: the channel name is bold, not medium.
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-                // F11 (Batch B): one line, not two — a wrapping name was half
-                // the uneven card heights, and a channel name that needs two
-                // lines in a 120dp column is a truncated name anyway.
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp).clearAndSetSemantics { },
-            )
-            Text(
-                text = metaLine,
-                style = MaterialTheme.typography.bodySmall,
+                text = channelShortMetaLine(channel),
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                // A4-F2: two lines, not one — a one-line ellipsis cut the
-                // meta mid-segment ("Religious · Pakistan · Ur…"), so the
-                // language the viewer filters by was the part that vanished.
-                // Two lines hold the full "Category · Country · Language"
-                // triple on a 2-column card; anything longer still ellipsizes.
-                // P2-9 (B-40): no minLines reserve — the old minLines = 2
-                // held a blank second line under every short meta ("News ·
-                // Pakistan"), buying equal heights with empty space. Cards
-                // now take their natural height and the grid aligns by the
-                // fixed 16:9 logo plate above the text; a long triple still
-                // wraps to two lines under maxLines = 2. There is no EPG
-                // data to fill a second line with, so nothing is invented.
-                maxLines = 2,
+                // Video-audit #36: ONE short meta line, not two — the tile
+                // carries name + one line only, smaller text, uniform size.
+                // The full triple survives in the card's spoken sentence.
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 // The tag MUST sit before clearAndSetSemantics: the clear
                 // wipes every semantics set after it in the chain, so a tag

@@ -145,25 +145,53 @@ class LiveTvChannelCardTest {
     }
 
     @Test
+    fun channelShortMetaLineIsCategoryPlusLanguage() {
+        // Video-audit #36 (Nov 2026): the tile's ONE displayed meta line
+        // is category + language ("News · Urdu") — the full triple wrapped
+        // to 2–3 lines and the language, the segment that tells two
+        // same-name channels apart, was the part that vanished. The full
+        // triple survives in the card's spoken sentence ([channelMetaLine]).
+        val channel = LiveTvChannel(
+            id = 1,
+            name = "Geo News",
+            category = "news",
+            country = "PK",
+            language = "urdu",
+            logoUrl = "",
+            streamId = "stream-1",
+        )
+        assertEquals("News · Urdu", channelShortMetaLine(channel))
+
+        val madani = channel.copy(name = "Madani Channel", category = "religious")
+        assertEquals("Religious · Urdu", channelShortMetaLine(madani))
+
+        // An unknown language drops out instead of reading "Unknown".
+        assertEquals("News", channelShortMetaLine(channel.copy(language = "Unknown")))
+        // A language that duplicates the category is not repeated.
+        assertEquals("News", channelShortMetaLine(channel.copy(country = "Pakistan", language = "pakistan")))
+    }
+
+    @Test
     fun channelMetaTakesNaturalHeightWithNoBlankSecondLine() {
         // P2-9 (B-40): reverses the old minLines = 2 pin. The reserve
         // bought equal heights with a blank second line under every short
-        // meta ("News · Pakistan") — visible gaps, top-heavy cards. Cards
-        // now take their natural height and the grid aligns by the fixed
-        // 16:9 logo plate, so a one-line meta is one line tall.
+        // meta ("News") — visible gaps, top-heavy cards. Cards now take
+        // their natural height and the grid aligns by the fixed 16:9 logo
+        // plate, so a one-line meta is one line tall.
         //
         // The pin is metric-independent: the card meta must measure
         // exactly as tall as the same text in the same style with the
         // same bottom padding and maxLines = 1. With the old minLines = 2
         // the card meta would be a full line (~16dp) taller than the
-        // reference, far outside the 1px tolerance. No wrapping is
-        // asserted here: whether a long triple wraps to two lines is
-        // pinned by the Paparazzi populated golden (byte-identical after
-        // this change), and Robolectric wrap behaviour is font-metric
-        // dependent — the first version of this test asserted a wrap and
-        // failed on CI with both metas at 35px, one line (run
-        // 45799626946), and the wrap pin that fixup 69356fcc removed
-        // died the same way.
+        // reference, far outside the 1px tolerance. Video-audit #36 made
+        // the displayed meta the short line ("News" here — the language
+        // is Unknown, so it drops out); the reference is that same short
+        // text in the same labelSmall style. Whether a long name wraps to
+        // two lines is pinned by the Paparazzi populated golden, and
+        // Robolectric wrap behaviour is font-metric dependent — the first
+        // version of this test asserted a wrap and failed on CI with both
+        // metas at 35px, one line (run 45799626946), and the wrap pin that
+        // fixup 69356fcc removed died the same way.
         //
         // The tag lives inside Card(onClick = …), a clickable that merges
         // its descendants' semantics into the card node — so the merged
@@ -187,8 +215,8 @@ class LiveTvChannelCardTest {
                         modifier = Modifier.width(180.dp),
                     )
                     Text(
-                        text = "News · Pakistan",
-                        style = MaterialTheme.typography.bodySmall,
+                        text = "News",
+                        style = MaterialTheme.typography.labelSmall,
                         maxLines = 1,
                         modifier = Modifier.width(160.dp).padding(bottom = 10.dp)
                             .testTag("liveTv_metaReference"),
