@@ -42,6 +42,21 @@ internal const val SearchResultRowTag = "search-result-row"
  * title it is and what it speaks without opening it. Blank when the row
  * carries neither. Pure, so a test can pin it without a composition.
  */
+/**
+ * The rich row's meta line — the full one (year · ★ rating · type), not
+ * the card line: the row has room, and the rating is the point. This is
+ * the old `posterMetaLine(post, compact = false)` composition, kept here
+ * because [posterMetaLine] is language-only now (home-card direction, Nov
+ * 2026) and must not grow a second shape for one caller.
+ */
+internal fun searchResultMetaLine(post: Post): String {
+    return listOfNotNull(
+        post.yearLabel,
+        UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
+        post.typeLabel,
+    ).joinToString(" · ")
+}
+
 internal fun searchResultDetailLine(post: Post): String {
     val genres = post.genreList.take(2).joinToString(", ")
     val language = WireText.listOf(post.language).firstOrNull()
@@ -83,7 +98,7 @@ internal fun SearchResultRow(
     val posterUrl = post.posterUrl?.takeIf { it.isNotBlank() }
     // The meta line is the full one — year · ★ rating · type — not the
     // compact card line: the row has room, and the rating is the point.
-    val metaLine = posterMetaLine(post, compact = false)
+    val metaLine = searchResultMetaLine(post)
     val detailLine = searchResultDetailLine(post)
     Row(
         modifier = modifier

@@ -1803,9 +1803,9 @@ internal fun SearchDiscoveryContent(
             // against the screen edge when fully scrolled.
             MediaRail(items = state.visibleTrending, key = { it.id }, contentPadding = PaddingValues(start = 0.dp, end = 16.dp), itemWidthDp = cardWidthDp) { post ->
                 // Design direction (Nov 2026): a card shows poster + title
-                // + rating only — the compact meta line drops the type word
-                // ("2024 · ★ 8.6", no "· Series").
-                PosterCard(post = post, onClick = { onPostClick(post) }, compactMeta = true)
+                // + language only — the rating lives in the rich result
+                // rows and on Detail, not on cards.
+                PosterCard(post = post, onClick = { onPostClick(post) })
             }
         }
         if (state.visibleRecommended.isNotEmpty()) {
@@ -1822,7 +1822,7 @@ internal fun SearchDiscoveryContent(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     trio.forEach { post ->
-                        PosterCard(post = post, onClick = { onPostClick(post) }, modifier = Modifier.width(cardWidthDp.dp), compactMeta = true)
+                        PosterCard(post = post, onClick = { onPostClick(post) }, modifier = Modifier.width(cardWidthDp.dp))
                     }
                     // An incomplete last row keeps the grid's columns —
                     // spacers hold the width the missing cards would take.
@@ -2222,7 +2222,7 @@ internal fun SearchNoResultsContent(
                 titleStyle = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
             )
             MediaRail(items = state.visibleTrending, key = { it.id }, contentPadding = PaddingValues(start = 0.dp, end = 16.dp), itemWidthDp = cardWidthDp) { post ->
-                PosterCard(post = post, onClick = { onPostClick(post) }, compactMeta = true)
+                PosterCard(post = post, onClick = { onPostClick(post) })
             }
         } else {
             Spacer(Modifier.height(8.dp))
