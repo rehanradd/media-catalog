@@ -42,6 +42,18 @@ class ActorLargeFontPaparazziTest {
             ydpi = 320,
             fontScale = 1.3f,
         ),
+        // 0.5% tolerance, THIS TEST ONLY. Verify fails this snapshot at
+        // exactly 0.185406% on two CI runs (46042244088, 46043852095) while
+        // a re-record on the same tip produces byte-identical goldens
+        // (record 46045033341, md5 6e4b4a479ce1355f53632f3b7f3ffeec) — so
+        // the golden is correct and the delta is render-time font
+        // rasterization variance at 1.3x font scale, not a layout change:
+        // this screen is the densest 1.3x text in the suite (bio paragraph
+        // + birth line + Known-for rows) and its sibling castRowLargeFont
+        // passes at 0%. 0.5% still fails any real regression (a wrapped or
+        // clipped line differs by whole percents). Do not raise it further
+        // without re-recording first.
+        maxPercentDifference = 0.5,
     )
 
     @Composable
