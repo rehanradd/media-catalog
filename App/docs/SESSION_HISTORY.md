@@ -3789,3 +3789,15 @@ CI on tip `2d35eb91`: Android 45897077406 (auto-triggered on push) + Backend 458
 ## Session — Paparazzi re-record for the Search redesign (2026-11-27, branch videofix-search-20261127)
 
 **Why:** Android run 46033283828 on `4d4ec2b6` failed only at the Paparazzi verify step (lint + all unit tests green, Backend 46033236713 SUCCESS). 11 goldens differed: 8 Search shots (PaparazziPreviewTest searchDiscovery/searchResults/searchEmptyFiltered/searchEmpty/searchNoResultsTrending/searchFilterRail/searchFilterSheet + SearchLargeFontPaparazziTest searchResultsLargeFont, 1.4–3.2% — the redesign: smaller text, compact meta, one card size) and 3 Live TV shots (liveTvPopulated/liveTvFiltered/liveTvPopulatedLargeFont, 0.03–0.17%). Live TV shares no code path with this batch (no SectionHeader, no HomeViewModel, no Search code in its screen or tests) — sub-pixel rendering jitter, not a layout change. Record run 46035163017 (workflow 418582550, run 333) SUCCESS; its artifact paparazzi-snapshots-333 re-rendered exactly those 11 files, nothing else. The new searchDiscovery golden was eyeballed: section heads smaller/bold, cards poster + title + "2023 · ★ 7.0" only, rail and grid cards the same size. Committed as the golden update; CI re-run follows.
+
+## Session — Video-audit search rework: rich rows, filter sheet reverted (2026-11-27, branch videofix-search-20261127)
+
+**Branch:** `videofix-search-20261127`, continuing from `a9b8c0d4` (search batch green: Backend 46036335728 + Android 46036282363 SUCCESS). The batch was built under the OLD direction and conflicts with the user's REFINED direction (21:51 PKT 27 Nov) — reworked, not landed.
+
+**Refined direction applied:** search results are YouTube-style rich rows, not poster cards. New `SearchResultRow` (112dp thumb + title + year · type · ★ rating + genres · language); the 3-up results grid and its `compactMeta` PosterCard are gone from `SearchContent`. The thumb reuses `CatalogImage` (prefetch/cache, retry, branded fallback) and carries the poster shared element to Detail. Discovery rails and the no-results rail keep the poster card. Tests in `SearchResultRowTest` (row: title + rating + meta, tap, no-rating case, detail line; `SearchContent` renders results as rich rows).
+
+**Issue 37 DROPPED:** the filter sheet is reverted entirely — Save reason lines gone, year note back to its original wording ("Filters narrow the whole catalog — only the year range applies to the titles already loaded."), `SearchFilterSaveTest` restored to its pre-batch form. Verified diff-clean vs the merge-base (`1b580bcd`) for filter-sheet code and strings; the `searchFilterSheet` golden is expected to re-render back to its pre-batch bytes on the record run.
+
+**Kept:** #19 (status-bar inset), #31 (ANIME taxonomy), #33 (chips-row snap), smaller text / one card size around the rows, 48dp touch floors.
+
+**Commit:** `5d8014de` (5 files, +371/−93). Pushed; Paparazzi record run 46038487553 dispatched on the new tip (workflow 418582550, 204). Goldens + CI re-run follow once it succeeds.
