@@ -773,6 +773,11 @@ jobs:
       - name: 🧪 test_fast_fetch_domains.py
         run: python3 -S Fast_Fetch/test_fast_fetch_domains.py
 
+      # Self-healing Branch 1 (validation core): verify_media_bytes +
+      # probe_media_bytes, checker only, no callers yet.
+      - name: 🧪 test_fast_fetch.py
+        run: python3 -S Fast_Fetch/test_fast_fetch.py
+
       - name: 🧪 importers/test_stream_resolvers.py
         run: python3 -S Fast_Fetch/importers/test_stream_resolvers.py
 

@@ -10163,6 +10163,105 @@ def _bank_hubcloud_siblings(*, release_id, pressed_id, candidates):
     return len(banked)
 
 
+def verify_media_bytes(data, content_type=""):
+    """True when the first bytes look like a real video container.
+
+    Self-healing Branch 1 (validation core, checker only — no caller
+    yet; Branch 2 hooks it into the stage-2 probe, the resolved-cache
+    bank and pool banking). A direct port of the movie-downloader
+    script's ``is_video_bytes`` (same rules, same order); a bridge /
+    landing page returns HTTP 200 HTML, so status alone proves nothing
+    — this is the check that caught the v2.0.0 bug where HTML was saved
+    as .mkv and reported success:
+      * an explicit text/html (or any text/*) Content-Type -> NOT video.
+      * EBML magic 1A 45 DF A3 -> Matroska / WebM.
+      * "ftyp" at offset 4 -> MP4 / M4V / MOV.
+      * "RIFF....AVI " -> AVI.  "#EXTM3U" -> HLS playlist (a real
+        stream manifest, not an error page — accepted as video-ish).
+      * a body that starts with <!doctype html / <html / <head / <body
+        (or carries a <title> in the first bytes) -> HTML, NOT video.
+    A generic application/octet-stream with NO recognisable magic is
+    treated as video (some hosts serve video with a generic type and
+    no sniffable header) — the advertised-size check is the backstop
+    for those (Branch 2, not here).
+    """
+    if not data:
+        return False
+    ct = (content_type or "").lower().split(";")[0].strip()
+    if ct.startswith("text/") or ct == "application/xhtml+xml":
+        return False
+    if data[:4] == b"\x1a\x45\xdf\xa3":  # EBML: MKV / WebM
+        return True
+    if len(data) >= 8 and data[4:8] == b"ftyp":  # MP4 / M4V / MOV
+        return True
+    if data[:4] == b"RIFF" and data[8:12] == b"AVI ":  # AVI
+        return True
+    if data.lstrip().startswith(b"#EXTM3U"):  # HLS playlist
+        return True
+    head = data.lstrip()[:512].lower()
+    if (head.startswith(b"<!doctype html") or head.startswith(b"<html")
+            or head.startswith(b"<head") or head.startswith(b"<body")
+            or b"<title>" in head):
+        return False
+    if ct.startswith("video/") or ct in ("application/octet-stream",
+                                         "application/x-matroska",
+                                         "application/mp4",
+                                         "binary/octet-stream"):
+        return True
+    return False
+
+
+def probe_media_bytes(url, timeout=15):
+    """Range probe: returns (ok, total_size_or_None).
+
+    Port of the movie-downloader script's ``probe_bytes``. The probe
+    reads the first 4 KB (``Range: bytes=0-4095``) and runs
+    :func:`verify_media_bytes` on it — a bridge/landing page answers
+    HTTP 200 with the site's homepage HTML, which a status-only probe
+    would accept blindly. A text/html Content-Type is rejected even
+    before the body check. Never raises: any transport failure,
+    non-200/206 status, or unreadable body is (False, total-or-None).
+    """
+    req = urllib.request.Request(
+        url, headers={"User-Agent": USER_AGENT, "Range": "bytes=0-4095"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            total = _probe_total(resp.headers)
+            if resp.status not in (200, 206):
+                return False, total
+            try:
+                head = resp.read(4096)
+            except Exception:
+                head = b""
+            ok = verify_media_bytes(
+                head, resp.headers.get("Content-Type", ""))
+            return ok, total
+    except urllib.error.HTTPError as exc:
+        # Mirrors the script: an HTTPError never carries 200/206, so
+        # this is False in practice — the status itself is the verdict.
+        return exc.code in (200, 206), _probe_total(exc.headers)
+    except Exception:
+        return False, None
+
+
+def _probe_total(headers):
+    """Total file size from Content-Range (preferred) or Content-Length.
+
+    Returns None when neither header parses. Never raises.
+    """
+    try:
+        cr = (headers.get("Content-Range", "") or "")
+        m = re.search(r"""/(\d+)""", cr)
+        if m:
+            return int(m.group(1))
+        length = headers.get("Content-Length")
+        if length:
+            return int(length)
+    except (ValueError, TypeError, AttributeError):
+        return None
+    return None
+
+
 def resolve_live_source(source_id: int, *, v2: bool = False,
                         want: str = "either", _failover: bool = True,
                         deadline: float | None = None,
