@@ -257,8 +257,10 @@ class HomeHeaderTest {
         // edge, so the merged slide node starts at the screen edge itself.
         // The slide is found by its spoken sentence, which starts with the
         // title: the merged node is the whole slide, and its bounds are the
-        // art's, not the text's.
-        val slideBounds = compose.onNodeWithContentDescription("Hero Title", substring = true)
+        // art's, not the text's. The match carries ", rating" because the
+        // bare title also names the dot indicator ("Slide 1 of 2, Hero
+        // Title") and the finder needs exactly one node.
+        val slideBounds = compose.onNodeWithContentDescription("Hero Title, rating", substring = true)
             .fetchSemanticsNode().boundsInRoot
         with(compose.density) {
             assertTrue("hero art is not edge-to-edge", slideBounds.left.toDp() == 0.dp)

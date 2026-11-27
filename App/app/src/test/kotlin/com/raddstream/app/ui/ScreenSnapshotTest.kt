@@ -471,12 +471,14 @@ class ScreenSnapshotTest {
         compose.onNodeWithContentDescription("Slide 1 of 2, Jawan").assertExists()
         // F2: the server's "Unknown" is a missing value, not a language — it
         // must never reach a visible node, while the real languages do (in
-        // the slide's spoken sentence).
+        // the slide's spoken sentence). The match names the first slide
+        // outright: both slides share the "languages Hindi, English" line,
+        // and the finder needs exactly one node.
         assertTrue(
             "the hero still paints an \"Unknown\" pill",
             compose.onAllNodes(hasText("Unknown")).fetchSemanticsNodes().isEmpty(),
         )
-        compose.onNode(hasContentDescription("languages Hindi, English", substring = true)).assertExists()
+        compose.onNode(hasContentDescription("Jawan, 2023, Action, languages Hindi, English", substring = true)).assertExists()
         capture("08_hero_clean")
     }
 
