@@ -295,8 +295,12 @@ class SubScreensMockupTest {
                 )
             }
         }
-        compose.onAllNodesWithText("Episode 15", substring = true).assertCountEquals(2)
-        compose.onAllNodesWithText("Episode 16", substring = true).assertCountEquals(2)
+        compose.onAllNodesWithText("Episode 15", substring = true).fetchSemanticsNodes().size.let { count ->
+            assertEquals("Episode 15 must appear in the title and in the details line", 2, count)
+        }
+        compose.onAllNodesWithText("Episode 16", substring = true).fetchSemanticsNodes().size.let { count ->
+            assertEquals("Episode 16 must appear in the title and in the details line", 2, count)
+        }
     }
 
     @Test
