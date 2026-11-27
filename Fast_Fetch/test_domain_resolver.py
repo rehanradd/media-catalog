@@ -39,6 +39,7 @@ import fcntl
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -47,6 +48,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 import domain_resolver as dr
+import recheck_queue as rq
 
 WP_GOOD = json.dumps([
     {"link": "https://new1.ssrmovies.page/post/one/",
@@ -521,6 +523,217 @@ class ResolveSiteTests(unittest.TestCase):
         self.assertEqual(dr.resolve_site("nosuchsite", registry_path=path,
                                          fetcher=StubFetch({})), "")
         tmp.cleanup()
+
+
+class RecheckQueueTests(unittest.TestCase):
+    """Self-healing Branch 4: the recheck queue trigger (design §1a),
+    the promotion gate, and the rotation-history close-out."""
+
+    def _queue(self):
+        tmp = tempfile.TemporaryDirectory()
+        return tmp, Path(tmp.name) / "domain_recheck_queue.db"
+
+    def test_threshold_10_queues_9_does_not(self):
+        tmp, path = temp_registry({"ssrmovies": site_entry()})
+        qtmp, qpath = self._queue()
+        try:
+            self.assertFalse(dr.maybe_queue_site_recheck(
+                "ssrmovies", 9, "batch-dead-rows:9", qpath, registry_path=path))
+            self.assertIsNone(rq.get_entry(qpath, "ssrmovies"))
+            self.assertTrue(dr.maybe_queue_site_recheck(
+                "ssrmovies", 10, "batch-dead-rows:10", qpath, registry_path=path))
+            entry = rq.get_entry(qpath, "ssrmovies")
+            self.assertIsNotNone(entry)
+            self.assertEqual(entry["dead_rows"], 10)
+            self.assertEqual(entry["status"], "pending")
+        finally:
+            tmp.cleanup()
+            qtmp.cleanup()
+
+    def test_unknown_site_never_queued(self):
+        tmp, path = temp_registry({"ssrmovies": site_entry()})
+        qtmp, qpath = self._queue()
+        try:
+            self.assertFalse(dr.maybe_queue_site_recheck(
+                "nosuchsite", 50, "batch-dead-rows:50", qpath, registry_path=path))
+            self.assertIsNone(rq.get_entry(qpath, "nosuchsite"))
+        finally:
+            tmp.cleanup()
+            qtmp.cleanup()
+
+    def test_site_hosts_map_uses_active_base_only(self):
+        tmp, path = temp_registry({
+            "ssrmovies": site_entry(),
+            "vegamovies": site_entry(
+                active_base_url="https://vegamovies.lease",
+                slug_variants=["vegamovies"], api_type="xml_sitemap")})
+        try:
+            self.assertEqual(dr.site_hosts_map(path), {
+                "new1.ssrmovies.page": "ssrmovies",
+                "vegamovies.lease": "vegamovies"})
+        finally:
+            tmp.cleanup()
+
+    def test_parked_old_domain_is_closed_parked_on_promotion(self):
+        tmp, path = temp_registry({"ssrmovies": site_entry(
+            known_mirrors=["https://new1.ssrmovies.page",
+                           "https://ssrmovies.surf"])})
+        stub = StubFetch({
+            "https://new1.ssrmovies.page/wp-json/wp/v2/posts": (
+                200, "https://new1.ssrmovies.page/wp-json/wp/v2/posts?per_page=3",
+                HOMEPAGE_PARKED, None),
+            "https://ssrmovies.surf/wp-json/wp/v2/posts": (
+                200, "https://ssrmovies.surf/wp-json/wp/v2/posts?per_page=3",
+                WP_GOOD.replace("new1.ssrmovies.page", "ssrmovies.surf"), None),
+        })
+        try:
+            got = dr.resolve_site("ssrmovies", registry_path=path, fetcher=stub)
+            self.assertEqual(got, "https://ssrmovies.surf")
+            reg = dr.load_registry(path)
+            hist = reg["sites"]["ssrmovies"]["rotation_history"]
+            self.assertEqual(hist[0]["domain"], "https://new1.ssrmovies.page")
+            self.assertEqual(hist[0]["status"], "parked")
+            self.assertTrue(hist[0]["reason"].startswith("parked-marker:"))
+            self.assertTrue(hist[0]["seen_until"])
+            self.assertEqual(hist[1]["domain"], "https://ssrmovies.surf")
+            self.assertEqual(hist[1]["discovered_by"], "mirror")
+            self.assertTrue(hist[1]["seen_from"])
+            self.assertTrue(hist[1]["reason"])
+        finally:
+            tmp.cleanup()
+
+    def test_dead_old_domain_is_closed_dead_on_promotion(self):
+        tmp, path = temp_registry({"ssrmovies": site_entry(
+            known_mirrors=["https://new1.ssrmovies.page",
+                           "https://ssrmovies.surf"])})
+        stub = StubFetch({
+            "https://new1.ssrmovies.page/wp-json/wp/v2/posts": (
+                404, "https://new1.ssrmovies.page/wp-json/wp/v2/posts?per_page=3",
+                "", None),
+            "https://ssrmovies.surf/wp-json/wp/v2/posts": (
+                200, "https://ssrmovies.surf/wp-json/wp/v2/posts?per_page=3",
+                WP_GOOD.replace("new1.ssrmovies.page", "ssrmovies.surf"), None),
+        })
+        try:
+            got = dr.resolve_site("ssrmovies", registry_path=path, fetcher=stub)
+            self.assertEqual(got, "https://ssrmovies.surf")
+            reg = dr.load_registry(path)
+            hist = reg["sites"]["ssrmovies"]["rotation_history"]
+            self.assertEqual(hist[0]["status"], "dead")
+            self.assertEqual(hist[0]["reason"], "http404")
+        finally:
+            tmp.cleanup()
+
+    def test_blocked_old_domain_gets_no_status_on_promotion(self):
+        # The old base answered with a Cloudflare challenge: unproven,
+        # never guessed — the rotation entry closes without a status.
+        tmp, path = temp_registry({"ssrmovies": site_entry(
+            known_mirrors=["https://new1.ssrmovies.page",
+                           "https://ssrmovies.surf"])})
+        stub = StubFetch({
+            "https://new1.ssrmovies.page/wp-json/wp/v2/posts": (
+                403, "https://new1.ssrmovies.page/wp-json/wp/v2/posts?per_page=3",
+                "<html><head><title>Just a moment</title></head></html>", None),
+            "https://ssrmovies.surf/wp-json/wp/v2/posts": (
+                200, "https://ssrmovies.surf/wp-json/wp/v2/posts?per_page=3",
+                WP_GOOD.replace("new1.ssrmovies.page", "ssrmovies.surf"), None),
+        })
+        try:
+            got = dr.resolve_site("ssrmovies", registry_path=path, fetcher=stub)
+            self.assertEqual(got, "https://ssrmovies.surf")
+            reg = dr.load_registry(path)
+            hist = reg["sites"]["ssrmovies"]["rotation_history"]
+            self.assertNotIn("status", hist[0])
+        finally:
+            tmp.cleanup()
+
+    def test_parked_old_domain_is_never_promoted(self):
+        # The cached base is a parking page and every other candidate
+        # fails: the chain returns "" and the old base stays — a parked
+        # domain is never "discovered" as the site's new home, and no
+        # rotation entry is written for a promotion that never happened.
+        tmp, path = temp_registry({"ssrmovies": site_entry(
+            known_mirrors=["https://new1.ssrmovies.page"])})
+        stub = StubFetch({
+            "https://new1.ssrmovies.page/wp-json/wp/v2/posts": (
+                200, "https://new1.ssrmovies.page/wp-json/wp/v2/posts?per_page=3",
+                HOMEPAGE_PARKED, None),
+        })
+        try:
+            got = dr.resolve_site("ssrmovies", registry_path=path, fetcher=stub)
+            self.assertEqual(got, "")
+            reg = dr.load_registry(path)
+            entry = reg["sites"]["ssrmovies"]
+            self.assertEqual(entry["active_base_url"],
+                             "https://new1.ssrmovies.page")
+            self.assertEqual(entry["status"], "down")
+            self.assertNotIn("rotation_history", entry)
+        finally:
+            tmp.cleanup()
+
+    def test_failed_candidate_is_never_written(self):
+        # A TLD candidate answers wp-json with no quality marker:
+        # verify_candidate rejects it, so the registry keeps the old
+        # base, mirrors and rotation history untouched. (status and
+        # last_checked ARE the run's own record — they move; the
+        # candidate's domain must not.)
+        tmp, path = temp_registry({"ssrmovies": site_entry(
+            known_mirrors=["https://new1.ssrmovies.page"])})
+        before = dr.load_registry(path)["sites"]["ssrmovies"]
+        no_marker = json.dumps([
+            {"link": "https://ssrmovies.page/post/one/",
+             "title": {"rendered": "A Quiet Drama Without Any Quality Tag"}},
+        ])
+        stub = StubFetch({
+            "https://new1.ssrmovies.page/wp-json/wp/v2/posts": (
+                404, "https://new1.ssrmovies.page/wp-json/wp/v2/posts?per_page=3",
+                "", None),
+            "https://ssrmovies.page/wp-json/wp/v2/posts": (
+                200, "https://ssrmovies.page/wp-json/wp/v2/posts?per_page=3",
+                no_marker, None),
+        })
+        try:
+            got = dr.resolve_site("ssrmovies", registry_path=path, fetcher=stub)
+            self.assertEqual(got, "")
+            after = dr.load_registry(path)["sites"]["ssrmovies"]
+            self.assertEqual(after["active_base_url"], before["active_base_url"])
+            self.assertEqual(after["known_mirrors"], before["known_mirrors"])
+            self.assertEqual(after.get("rotation_history"),
+                             before.get("rotation_history"))
+        finally:
+            tmp.cleanup()
+
+    def test_probe_all_sites_stale_window(self):
+        # The 7-day window: a site verified 8 days ago is probed, one
+        # verified an hour ago is skipped. The default (no window) still
+        # uses the verify TTL (covered by the fresh-skip test above).
+        tmp, path = temp_registry({"ssrmovies": site_entry()})
+        try:
+            stale = time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                  time.gmtime(time.time() - 8 * 86400))
+            reg = dr.load_registry(path)
+            reg["sites"]["ssrmovies"]["last_verified"] = stale
+            dr.save_registry(reg, path)
+            stub = StubFetch({
+                "https://new1.ssrmovies.page/wp-json/wp/v2/posts": (
+                    200, "https://new1.ssrmovies.page/wp-json/wp/v2/posts?per_page=3",
+                    WP_GOOD, None),
+            })
+            results = dr.probe_all_sites(only_stale=True, registry_path=path,
+                                         fetcher=stub,
+                                         stale_after_seconds=7 * 86400)
+            self.assertEqual(len(results), 1)
+            self.assertFalse(results[0].get("skipped"))
+            self.assertEqual(results[0]["status"], "active")
+            reg = dr.load_registry(path)
+            reg["sites"]["ssrmovies"]["last_verified"] = dr._now_iso()
+            dr.save_registry(reg, path)
+            results = dr.probe_all_sites(only_stale=True, registry_path=path,
+                                         fetcher=StubFetch({}),
+                                         stale_after_seconds=7 * 86400)
+            self.assertTrue(results[0].get("skipped"))
+        finally:
+            tmp.cleanup()
 
 
 class ResolveIfDeadTests(unittest.TestCase):

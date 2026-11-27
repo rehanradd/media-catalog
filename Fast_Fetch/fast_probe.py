@@ -52,6 +52,18 @@ What this module changes (and what it deliberately does NOT change)
   the threshold. A parked domain that answers HEAD 200 cleanly is still
   missed — the sweep's HEAD chain cannot see a body, and a HEAD 200
   short-circuits before any GET — a known, honest limitation.
+* **Site recheck queue (self-healing Branch 4).** After each apply
+  batch, dead/parked verdicts on a catalog site's own active base are
+  counted per site (in rows — every row sharing the dead URL), and a
+  site at or above ``domain_resolver.SITE_ROT_THRESHOLD`` (10) is
+  appended to the recheck queue (``recheck_queue``, a sidecar SQLite
+  table next to the catalog DB). The recheck job
+  (``domain_recheck.py``) drains the queue and runs the discovery
+  chain per site; the sweep loop also runs it as a post-batch hook.
+  Only "dead" and "parked" count — an "expired" (5xx/WAF) answer is a
+  sick intermediary, not a moved site — and a file host can never queue
+  a site, because only registry active-base hosts are counted. The
+  queue is best-effort: a queue failure never fails the batch.
 * **Dedup.** Rows are grouped by probe-target URL; each distinct URL is
   probed ONCE and the verdict is applied to every row sharing it (-17%).
 * **Keep-alive.** One ``http.client`` connection per host for the whole run
@@ -181,6 +193,25 @@ except ImportError:  # running from inside Fast_Fetch/ (the documented way)
         # The registry is optional: a checkout without it still probes,
         # it just cannot learn moves. The verdict path never depends on it.
         host_registry = None  # type: ignore
+
+try:
+    from Fast_Fetch import domain_resolver
+except ImportError:  # running from inside Fast_Fetch/ (the documented way)
+    try:
+        import domain_resolver  # type: ignore
+    except ImportError:
+        # The resolver is optional: a checkout without it still probes,
+        # it just cannot queue site rechecks. The verdict path never
+        # depends on it.
+        domain_resolver = None  # type: ignore
+
+try:
+    from Fast_Fetch import recheck_queue
+except ImportError:  # running from inside Fast_Fetch/ (the documented way)
+    try:
+        import recheck_queue  # type: ignore
+    except ImportError:
+        recheck_queue = None  # type: ignore
 
 __all__ = [
     "payload_for_head",
@@ -1253,7 +1284,8 @@ class VerdictWriter(threading.Thread):
 def _probe_host(host: str, groups: list[dict], *, session_factory=None,
                 timeout: float, spacing_s: float | None,
                 headers: dict, out_queue=None, clearance=None,
-                resolvers=None, stop_event=None, stop_file=None) -> dict:
+                resolvers=None, stop_event=None, stop_file=None,
+                site_hosts: dict | None = None) -> dict:
     """Probe one host's distinct URLs, strictly serially, in id order.
 
     Returns per-host stats. When ``out_queue`` is given, verdicts are
@@ -1267,6 +1299,13 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
     a 403/503 verdict invalidates the host at once, so a dead clearance
     is never re-sent on the next run. ``None`` probes exactly as before.
 
+    ``site_hosts`` (self-healing Branch 4) maps a catalog site's active
+    base host to its site name. When given, a dead or parked verdict on
+    a host in that map counts one rotation signal for the site in
+    ``stats["site_signals"]`` — the batch-level trigger that queues the
+    site for a discovery-chain recheck. A file host is never in the map,
+    so its dead rows never queue a site. ``None`` disables the counting.
+
     ``stop_event`` / ``stop_file`` (INF-05) are checked before every URL:
     when either asks, the walk stops at once, ``stats["stopped"]`` is True,
     and the verdicts earned so far are already queued. The in-flight URL
@@ -1277,6 +1316,7 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
                    "no_verdict": 0, "blocked": 0, "reconnects": 0,
                    "redirects_seen": 0, "moves_applied": 0,
                    "get_fallbacks": 0, "html_observations": 0,
+                   "site_signals": {},
                    "stopped": False, "results": {} if out_queue is None else None}
     # H4 R8: one stored clearance per host, read once per host (not once
     # per URL — the store is the same for the whole serial walk).
@@ -1368,6 +1408,21 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
                 pass
         stats["verdicts"] += 1
         stats["by_status"][verdict] = stats["by_status"].get(verdict, 0) + 1
+        # Self-healing Branch 4: a dead or parked verdict on a catalog
+        # site's own base is a rotation signal for that site, counted in
+        # ROWS (every row sharing the dead URL), because the queue
+        # threshold is a dead-row count. The verdict is final here (HEAD,
+        # GET fallback and mixdrop all settled); the host is the row's
+        # probe-target host, which is the row's final-URL host in the
+        # common case. Only "dead" and "parked" count — an "expired"
+        # (5xx/WAF) answer is a sick intermediary, not a moved site,
+        # and "active" is no signal at all.
+        if (site_hosts is not None
+                and verdict in (link_state.STATUS_DEAD, link_state.STATUS_PARKED)
+                and host in site_hosts):
+            site = site_hosts[host]
+            signals = stats["site_signals"]
+            signals[site] = signals.get(site, 0) + len(group["row_ids"])
         item = {"row_ids": group["row_ids"], "status": verdict,
                 "http_status": int(status or 0),
                 "probe_error": error, "checked_at": checked_at}
@@ -1383,7 +1438,8 @@ def _merge_stats(stats_list: list[dict]) -> dict:
     merged: dict = {"hosts": 0, "probed": 0, "verdicts": 0, "by_status": {},
                     "no_verdict": 0, "blocked": 0, "reconnects": 0,
                     "redirects_seen": 0, "moves_applied": 0, "get_fallbacks": 0,
-                    "html_observations": 0, "stopped": False}
+                    "html_observations": 0, "site_signals": {},
+                    "stopped": False}
     for stats in stats_list:
         merged["hosts"] += 1
         merged["probed"] += stats["probed"]
@@ -1395,10 +1451,39 @@ def _merge_stats(stats_list: list[dict]) -> dict:
         merged["moves_applied"] += stats.get("moves_applied", 0)
         merged["get_fallbacks"] += stats.get("get_fallbacks", 0)
         merged["html_observations"] += stats.get("html_observations", 0)
+        for site, count in (stats.get("site_signals") or {}).items():
+            merged["site_signals"][site] = merged["site_signals"].get(site, 0) + count
         merged["stopped"] = merged["stopped"] or bool(stats.get("stopped"))
         for status, count in stats["by_status"].items():
             merged["by_status"][status] = merged["by_status"].get(status, 0) + count
     return merged
+
+
+def queue_site_rechecks(site_signals: dict, queue_path,
+                        registry_path=None) -> list:
+    """Queue every site whose batch dead/parked row count crossed the
+    threshold (self-healing Branch 4, design §1a step 1).
+
+    ``site_signals`` is the merged per-site row count from one batch
+    (``_merge_stats``). Each site at or above
+    ``domain_resolver.SITE_ROT_THRESHOLD`` is appended to the recheck
+    queue with reason ``"batch-dead-rows:<n>"``; sites below it are
+    left alone. Returns the list of sites queued, in signal order.
+    A queue failure never raises — the sweep batch must not fail
+    because the queue is unavailable; the caller logs the outcome.
+    """
+    queued = []
+    if domain_resolver is None or recheck_queue is None or not site_signals:
+        return queued
+    for site, count in sorted(site_signals.items(), key=lambda kv: (-kv[1], kv[0])):
+        try:
+            if domain_resolver.maybe_queue_site_recheck(
+                    site, int(count), f"batch-dead-rows:{int(count)}",
+                    queue_path, registry_path=registry_path):
+                queued.append(site)
+        except Exception:
+            continue
+    return queued
 
 
 # ── engines ──────────────────────────────────────────────────────────────────
@@ -1408,7 +1493,8 @@ def run_pilot(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
               timeout: float = DEFAULT_TIMEOUT,
               spacing_s: float | None = None,
               session_factory=None, progress=None,
-              stop_event=None, stop_file=None) -> dict:
+              stop_event=None, stop_file=None,
+              registry_path=None) -> dict:
     """Apply mode: probe ``max_rows`` fresh unchecked distinct URLs, write verdicts.
 
     ``conn`` is the read-only selection connection (closed by the caller);
@@ -1435,6 +1521,15 @@ def run_pilot(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
         # Stop asked before the pool started: probe nothing, keep the
         # summary shape (writer zeros, selection counts, stopped True).
         selection["hosts"] = []
+    # Self-healing Branch 4: the active-base host -> site map for the
+    # per-site rotation signal. A registry failure means no counting,
+    # never a failed batch.
+    site_hosts = None
+    if domain_resolver is not None:
+        try:
+            site_hosts = domain_resolver.site_hosts_map(registry_path)
+        except Exception:
+            site_hosts = None
     headers = probe_headers()
     # H4 R8: the apply sweep reads the shared clearance store (and
     # invalidates a host the moment it challenges again). An absent
@@ -1465,7 +1560,8 @@ def run_pilot(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
                                    timeout=timeout, spacing_s=spacing_s,
                                    headers=headers, out_queue=writer.queue,
                                    clearance=clearance,
-                                   stop_event=event, stop_file=stop_path)
+                                   stop_event=event, stop_file=stop_path,
+                                   site_hosts=site_hosts)
                        for host, groups in selection["hosts"]]
             for future in concurrent.futures.as_completed(futures):
                 stats = future.result()
@@ -1478,6 +1574,19 @@ def run_pilot(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
         writer_conn.close()
     merged = _merge_stats(stats_list)
     merged["stopped"] = merged["stopped"] or _should_stop(event, stop_path)
+    # Self-healing Branch 4: queue the sites whose batch dead/parked
+    # row count crossed the threshold. Best-effort — a queue failure
+    # must never fail the batch; the summary records what was queued.
+    queued_sites: list = []
+    if merged.get("site_signals") and recheck_queue is not None:
+        try:
+            queued_sites = queue_site_rechecks(
+                merged["site_signals"],
+                recheck_queue.queue_path_for_db(db_path),
+                registry_path=registry_path)
+        except Exception as exc:  # noqa: BLE001 - queue is best-effort
+            print(f"[!] site recheck queue failed: {exc}", file=sys.stderr)
+    merged["site_rechecks_queued"] = queued_sites
     merged.update({
         "mode": "apply",
         "distinct_urls": selection["distinct_urls"],

@@ -67,6 +67,14 @@ try:
 except Exception:  # pragma: no cover - panel_feed is always importable in-repo
     panel_feed = None
 
+try:
+    from Fast_Fetch import recheck_queue
+except ImportError:  # pragma: no cover - namespace-package import
+    try:
+        import recheck_queue  # type: ignore
+    except ImportError:  # pragma: no cover - sibling module missing
+        recheck_queue = None  # type: ignore
+
 BASE_DIR = Path(__file__).resolve().parent
 REGISTRY_PATH = BASE_DIR / "domain_registry.json"
 
@@ -111,6 +119,23 @@ MAX_NUMERIC_PROBES = 24   # 24 covers filmyzilla 70..81 bare+www (live: 80) and 
 MAX_SEARCH_PROBES = 3
 MAX_SISTER_PROBES = 5
 KNOWN_MIRRORS_CAP = 8
+
+#: A sweep batch that sees this many dead/parked rows on one site's
+#: active base queues that site for a discovery-chain recheck
+#: (self-healing Branch 4). One batch is 5,000 rows, so 10 is a real
+#: signal, not a stray 404 — and a single dead link never queues a site.
+SITE_ROT_THRESHOLD = 10
+
+#: A failed recheck attempt suppresses the next one for this long
+#: (recheck_queue.DEFAULT_COOLDOWN_SECONDS); the post-batch hook drains
+#: after every sweep batch, so without a cooldown a down site would
+#: earn a full discovery chain every few minutes.
+RECHECK_COOLDOWN_SECONDS = 6 * 3600
+
+#: The daily periodic re-validation re-probes a site whose last_verified
+#: is older than this (self-healing Branch 4, design §1a step 3).
+STALE_RECHECK_DAYS = 7
+STALE_RECHECK_SECONDS = STALE_RECHECK_DAYS * 86400
 
 GENERIC_TLDS = ["com", "net", "org", "xyz", "top", "click", "lol", "buzz",
                 "vip", "one", "im", "io"]
@@ -293,6 +318,46 @@ def get_active_base_url(site_name: str, fallback_default: str | None = None,
         if site_info.get("active_base_url"):
             return site_info["active_base_url"]
     return fallback_default or ""
+
+
+# ── recheck queue (self-healing Branch 4, design §1a) ──────────────────────
+
+def site_hosts_map(registry_path: str | Path | None = None) -> dict:
+    """Map of active-base host -> site name for every registry site.
+
+    The sweep counts dead/parked rows per probe-target host; a host in
+    this map is a catalog site's own base (not a file host), so its dead
+    rows are a site-rotation signal. Only the active base counts — a
+    dead row on a mirror host does not mean the active base moved.
+    """
+    reg = load_registry(registry_path)
+    out = {}
+    for name, entry in (reg.get("sites") or {}).items():
+        host = _host_of(str(entry.get("active_base_url") or ""))
+        if host:
+            out.setdefault(host, name)
+    return out
+
+
+def maybe_queue_site_recheck(site_name: str, dead_rows: int, reason: str,
+                             queue_path, registry_path: str | Path | None = None) -> bool:
+    """Queue ``site_name`` for a discovery-chain recheck when its batch
+    dead-row count crosses :data:`SITE_ROT_THRESHOLD`.
+
+    Returns True when the site was queued, False when the count is below
+    the threshold, the site is not a known registry site (a file host is
+    never a site), or no queue path was given. The queue itself lives in
+    recheck_queue (a sidecar SQLite table next to the catalog DB).
+    """
+    if recheck_queue is None or queue_path is None:
+        return False
+    if int(dead_rows) < SITE_ROT_THRESHOLD:
+        return False
+    reg = load_registry(registry_path)
+    if site_name not in (reg.get("sites") or {}):
+        return False
+    recheck_queue.enqueue(queue_path, site_name, int(dead_rows), reason)
+    return True
 
 
 # ── fetch ───────────────────────────────────────────────────────────────────
@@ -655,8 +720,30 @@ def _numeric_candidates(entry: dict) -> list:
     return cands[:MAX_NUMERIC_PROBES]
 
 
+def _old_domain_status(reason: str) -> str | None:
+    """What a failed cached-base probe proves about the old domain.
+
+    ``parked`` when the old base answered with a parking page,
+    ``dead`` on any other hard failure (404, no response, a content
+    check that failed on the old host), and None when the old base was
+    only blocked or Cloudflare-challenged — a WAF refusal proves
+    nothing about the domain, so the rotation history leaves its
+    status out rather than guessing. Used by :func:`resolve_site` to
+    close the old domain in ``rotation_history`` (Branch 4).
+    """
+    if not reason:
+        return None
+    if reason.startswith("parked-marker:"):
+        return "parked"
+    if reason.startswith(("cloudflare-challenge", "blocked")):
+        return None
+    return "dead"
+
+
 def _record_verified(reg: dict, site_name: str, entry: dict, hit: dict,
-                     registry_path) -> str:
+                     registry_path, *, old_status: str | None = None,
+                     old_reason: str | None = None,
+                     discovered_by: str | None = None) -> str:
     """Write a verified domain back to the registry entry and save.
 
     Reloads under the registry lock: resolve_site() loads its snapshot
@@ -665,6 +752,17 @@ def _record_verified(reg: dict, site_name: str, entry: dict, hit: dict,
     snapshot (kept for signature compatibility); the write goes to the
     freshly loaded record, so the rotation history reflects the actual
     transition, not the snapshot's.
+
+    Rotation history (Branch 4, design §1a step 4): when the base
+    changes, the old domain is closed with ``seen_until`` plus the
+    status the probe proved (``parked`` when the old base answered with
+    a parking page, ``dead`` on a hard failure, omitted when the old
+    base was only blocked/Cloudflare-challenged — unproven, never
+    guessed) and the reason; the new domain opens with ``seen_from``,
+    ``discovered_by`` (the chain step that found it: mirror, tld-probe,
+    search-ddg, ...) and the verification reason. No promotion happens
+    without a ``verify_candidate`` pass — this is the only write path
+    a verified domain ever takes.
     """
     new_base = hit["live"]
     with _registry_lock(registry_path):
@@ -684,10 +782,20 @@ def _record_verified(reg: dict, site_name: str, entry: dict, hit: dict,
         del mirrors[KNOWN_MIRRORS_CAP:]
         if old_base and old_base != new_base:
             history = fresh_entry.setdefault("rotation_history", [])
-            history.append({"domain": old_base,
-                            "seen_until": fresh_entry["last_verified"]})
-            history.append({"domain": new_base,
-                            "seen_from": fresh_entry["last_verified"]})
+            old_entry = {"domain": old_base,
+                         "seen_until": fresh_entry["last_verified"]}
+            if old_status:
+                old_entry["status"] = old_status
+            if old_reason:
+                old_entry["reason"] = old_reason
+            history.append(old_entry)
+            new_entry = {"domain": new_base,
+                         "seen_from": fresh_entry["last_verified"]}
+            if discovered_by:
+                new_entry["discovered_by"] = discovered_by
+            if hit.get("reason"):
+                new_entry["reason"] = hit["reason"]
+            history.append(new_entry)
         save_registry(fresh, registry_path)
     return new_base
 
@@ -745,8 +853,25 @@ def resolve_site(site_name: str, registry_path: str | Path | None = None,
 
     # 1. cached active base (redirect-following is inside the probe).
     hit = try_probe(entry.get("active_base_url", ""), "cached")
+    # Branch 4: remember what the cached base's failure proved about
+    # the old domain, so a later promotion can close it in
+    # rotation_history with the right status (parked/dead) instead of a
+    # bare seen_until. A success here leaves both None (no rotation).
+    cached_status = None
+    cached_reason = None
+    if hit and not hit["ok"]:
+        cached_status = _old_domain_status(hit.get("reason", ""))
+        cached_reason = hit.get("reason", "")
+
+    def _verified(found: dict) -> str:
+        """Record a verified hit, closing the old domain with the status
+        its own failure proved. The only promotion path in the chain."""
+        return _record_verified(reg, site_name, entry, found, registry_path,
+                                old_status=cached_status,
+                                old_reason=cached_reason,
+                                discovered_by=found.get("method", ""))
     if hit and hit["ok"]:
-        return _record_verified(reg, site_name, entry, hit, registry_path)
+        return _verified(hit)
     if hit:
         cf_only = cf_only and hit["reason"].startswith(("cloudflare-challenge", "blocked"))
 
@@ -754,7 +879,7 @@ def resolve_site(site_name: str, registry_path: str | Path | None = None,
     for mirror in list(entry.get("known_mirrors") or []):
         hit = try_probe(mirror, "mirror")
         if hit and hit["ok"]:
-            return _record_verified(reg, site_name, entry, hit, registry_path)
+            return _verified(hit)
         if hit:
             cf_only = cf_only and hit["reason"].startswith(("cloudflare-challenge", "blocked"))
 
@@ -770,7 +895,7 @@ def resolve_site(site_name: str, registry_path: str | Path | None = None,
                 base = f"{urllib.parse.urlparse(final_url).scheme}://{final_host}"
                 hit = try_probe(base, "bookmark-follow")
                 if hit and hit["ok"]:
-                    return _record_verified(reg, site_name, entry, hit, registry_path)
+                    return _verified(hit)
                 if hit:
                     cf_only = cf_only and hit["reason"].startswith(("cloudflare-challenge", "blocked"))
 
@@ -794,7 +919,7 @@ def resolve_site(site_name: str, registry_path: str | Path | None = None,
                 hit_url = "https://" + str(hit_url)
             hit = try_probe(str(hit_url), f"github-{list_name}")
             if hit and hit["ok"]:
-                return _record_verified(reg, site_name, entry, hit, registry_path)
+                return _verified(hit)
             if hit:
                 cf_only = cf_only and hit["reason"].startswith(("cloudflare-challenge", "blocked"))
 
@@ -802,13 +927,13 @@ def resolve_site(site_name: str, registry_path: str | Path | None = None,
     for cand in _tld_candidates(entry):
         hit = try_probe(cand, "tld-probe")
         if hit and hit["ok"]:
-            return _record_verified(reg, site_name, entry, hit, registry_path)
+            return _verified(hit)
         if hit:
             cf_only = cf_only and hit["reason"].startswith(("cloudflare-challenge", "blocked"))
     for cand in _numeric_candidates(entry):
         hit = try_probe(cand, "numeric-probe")
         if hit and hit["ok"]:
-            return _record_verified(reg, site_name, entry, hit, registry_path)
+            return _verified(hit)
         if hit:
             cf_only = cf_only and hit["reason"].startswith(("cloudflare-challenge", "blocked"))
 
@@ -822,7 +947,7 @@ def resolve_site(site_name: str, registry_path: str | Path | None = None,
     for host in harvest_sister_hosts(entry, seen_pages)[:MAX_SISTER_PROBES]:
         hit = try_probe(f"https://{host}", "sister")
         if hit and hit["ok"]:
-            return _record_verified(reg, site_name, entry, hit, registry_path)
+            return _verified(hit)
         if hit:
             cf_only = cf_only and hit["reason"].startswith(("cloudflare-challenge", "blocked"))
 
@@ -833,7 +958,7 @@ def resolve_site(site_name: str, registry_path: str | Path | None = None,
     for host in hosts[:MAX_SEARCH_PROBES]:
         hit = try_probe(f"https://{host}", "search-ddg")
         if hit and hit["ok"]:
-            return _record_verified(reg, site_name, entry, hit, registry_path)
+            return _verified(hit)
         if hit:
             cf_only = cf_only and hit["reason"].startswith(("cloudflare-challenge", "blocked"))
 
@@ -844,7 +969,7 @@ def resolve_site(site_name: str, registry_path: str | Path | None = None,
     for host in found:
         hit = try_probe(f"https://{host}", "telegram")
         if hit and hit["ok"]:
-            return _record_verified(reg, site_name, entry, hit, registry_path)
+            return _verified(hit)
         if hit:
             cf_only = cf_only and hit["reason"].startswith(("cloudflare-challenge", "blocked"))
 
@@ -973,7 +1098,8 @@ def probe_site(site_name: str, auto_update: bool = True,
 
 def probe_all_sites(only_stale: bool = False,
                      registry_path: str | Path | None = None,
-                     fetcher=None) -> list[dict]:
+                     fetcher=None,
+                     stale_after_seconds: float | None = None) -> list[dict]:
     """Probes all configured sites and returns audit summary.
 
     With only_stale=True (the §6 sweep rule) a site whose status is active
@@ -981,6 +1107,12 @@ def probe_all_sites(only_stale: bool = False,
     — a sweep that finds nothing new still updates last_checked for the
     sites it did probe. The TTL is the operator's `domain_check_interval_min`
     knob. When the operator paused domain checks, nothing is probed at all.
+
+    ``stale_after_seconds`` (Branch 4) overrides the skip threshold for
+    the daily periodic re-validation: a site is stale only when its
+    last_verified is older than this many seconds
+    (``STALE_RECHECK_SECONDS`` = 7 days for the daily job). None keeps
+    the TTL behaviour above.
     """
     if _domain_checks_paused():
         return [{"site": site_name, "status": "paused",
@@ -990,6 +1122,7 @@ def probe_all_sites(only_stale: bool = False,
     reg = load_registry(registry_path)
     results = []
     ttl = _verify_ttl_seconds()
+    threshold = float(stale_after_seconds) if stale_after_seconds is not None else ttl
     for site_name in sorted(reg.get("sites", {}).keys()):
         if only_stale:
             entry = reg["sites"][site_name]
@@ -998,10 +1131,13 @@ def probe_all_sites(only_stale: bool = False,
                 try:
                     age = time.time() - time.mktime(time.strptime(last, "%Y-%m-%dT%H:%M:%SZ"))
                 except Exception:
-                    age = ttl + 1
-                if age < ttl:
+                    age = threshold + 1
+                if age < threshold:
                     results.append({"site": site_name, "status": "active",
-                                    "skipped": True, "reason": "verified within TTL"})
+                                    "skipped": True,
+                                    "reason": "verified within TTL"
+                                    if stale_after_seconds is None
+                                    else "verified within stale window"})
                     continue
         results.append(probe_site(site_name, auto_update=True,
                                   registry_path=registry_path, fetcher=fetcher))

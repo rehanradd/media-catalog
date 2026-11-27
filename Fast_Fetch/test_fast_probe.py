@@ -924,6 +924,139 @@ class ParkedFallbackTests(unittest.TestCase):
         self.assertEqual(merged["by_status"], {"parked": 1, "active": 1})
 
 
+# ── site recheck signals (self-healing Branch 4) ─────────────────────────────
+
+class SiteRecheckSignalTests(unittest.TestCase):
+    """Dead/parked verdicts on a catalog site's own base count rotation
+    signals (in rows — every row sharing the dead URL); anything else
+    does not. A file host can never queue a site, and an "expired"
+    (5xx/WAF) answer is a sick intermediary, not a moved site."""
+
+    SITE_HOSTS = {"new1.ssrmovies.page": "ssrmovies"}
+
+    def _run(self, host, groups, mapping, site_hosts=None):
+        log = []
+        factory = _make_factory(_status_map(mapping), log)
+        registry = unittest.mock.Mock()
+        registry.record_redirect.return_value = {"count": 0, "applied": False}
+        registry.record_html_observation.return_value = {
+            "count": 1, "threshold_reached": False, "applied": False,
+            "moved_to": None, "parked_candidate": False}
+        with unittest.mock.patch.object(fast_probe, "host_registry", registry):
+            stats = fast_probe._probe_host(
+                host, groups, session_factory=factory, timeout=5.0,
+                spacing_s=0.0, headers=fast_probe.probe_headers(),
+                out_queue=None, site_hosts=site_hosts)
+        return stats
+
+    def _group(self, url, row_ids):
+        return [{"url": url, "row_ids": row_ids, "stored": None}]
+
+    @_public_dns
+    def test_dead_rows_on_a_site_base_count(self):
+        mapping = {("new1.ssrmovies.page", "/post/1", "HEAD"): (404, {}, False)}
+        stats = self._run("new1.ssrmovies.page",
+                          self._group("https://new1.ssrmovies.page/post/1", [1, 2, 3]),
+                          mapping, site_hosts=self.SITE_HOSTS)
+        self.assertEqual(stats["by_status"], {"dead": 1})
+        self.assertEqual(stats["site_signals"], {"ssrmovies": 3})
+
+    @_public_dns
+    def test_parked_rows_on_a_site_base_count(self):
+        mapping = {
+            ("new1.ssrmovies.page", "/post/1", "HEAD"): (405, {}, False),
+            ("new1.ssrmovies.page", "/post/1", "GET"): (
+                200, {}, False, ParkedFallbackTests.PARKED_BODY),
+        }
+        stats = self._run("new1.ssrmovies.page",
+                          self._group("https://new1.ssrmovies.page/post/1", [1, 2]),
+                          mapping, site_hosts=self.SITE_HOSTS)
+        self.assertEqual(stats["by_status"], {"parked": 1})
+        self.assertEqual(stats["site_signals"], {"ssrmovies": 2})
+
+    @_public_dns
+    def test_active_rows_on_a_site_base_do_not_count(self):
+        mapping = {("new1.ssrmovies.page", "/post/1", "HEAD"): (200, {}, False)}
+        stats = self._run("new1.ssrmovies.page",
+                          self._group("https://new1.ssrmovies.page/post/1", [1, 2, 3]),
+                          mapping, site_hosts=self.SITE_HOSTS)
+        self.assertEqual(stats["by_status"], {"active": 1})
+        self.assertEqual(stats["site_signals"], {})
+
+    @_public_dns
+    def test_expired_rows_on_a_site_base_do_not_count(self):
+        # A 403 on HEAD falls through to the GET fallback (an intermediary
+        # refusal is not a verdict about the link); a 403 there too is
+        # "expired" — a WAF refusal, not a moved site.
+        mapping = {
+            ("new1.ssrmovies.page", "/post/1", "HEAD"): (403, {}, False),
+            ("new1.ssrmovies.page", "/post/1", "GET"): (403, {}, False),
+        }
+        stats = self._run("new1.ssrmovies.page",
+                          self._group("https://new1.ssrmovies.page/post/1", [1, 2]),
+                          mapping, site_hosts=self.SITE_HOSTS)
+        self.assertEqual(stats["by_status"], {"expired": 1})
+        self.assertEqual(stats["site_signals"], {})
+
+    @_public_dns
+    def test_dead_rows_on_a_file_host_do_not_count(self):
+        mapping = {("files.example", "/drive/abc", "HEAD"): (404, {}, False)}
+        stats = self._run("files.example",
+                          self._group("https://files.example/drive/abc", [1, 2, 3]),
+                          mapping, site_hosts=self.SITE_HOSTS)
+        self.assertEqual(stats["by_status"], {"dead": 1})
+        self.assertEqual(stats["site_signals"], {})
+
+    @_public_dns
+    def test_no_site_hosts_map_means_no_counting(self):
+        # site_hosts=None (the default) disables the signal entirely.
+        mapping = {("new1.ssrmovies.page", "/post/1", "HEAD"): (404, {}, False)}
+        stats = self._run("new1.ssrmovies.page",
+                          self._group("https://new1.ssrmovies.page/post/1", [1]),
+                          mapping, site_hosts=None)
+        self.assertEqual(stats["site_signals"], {})
+
+    def test_merge_adds_site_signals(self):
+        merged = fast_probe._merge_stats([
+            {"probed": 1, "verdicts": 1, "no_verdict": 0, "blocked": 0,
+             "reconnects": 0, "redirects_seen": 0, "moves_applied": 0,
+             "get_fallbacks": 0, "html_observations": 0,
+             "site_signals": {"ssrmovies": 7}, "by_status": {"dead": 1}},
+            {"probed": 1, "verdicts": 1, "no_verdict": 0, "blocked": 0,
+             "reconnects": 0, "redirects_seen": 0, "moves_applied": 0,
+             "get_fallbacks": 0, "html_observations": 0,
+             "site_signals": {"ssrmovies": 5}, "by_status": {"parked": 1}},
+        ])
+        self.assertEqual(merged["site_signals"], {"ssrmovies": 12})
+
+    def test_queue_site_rechecks_applies_threshold_and_registry(self):
+        import domain_resolver as dr
+        import recheck_queue as rq
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            reg_path = Path(tmp.name) / "domain_registry.json"
+            reg_path.write_text(json.dumps({"version": "2.0", "sites": {
+                "ssrmovies": {"site_name": "ssrmovies",
+                              "slug_variants": ["ssrmovies"],
+                              "api_type": "wp_rest_api",
+                              "active_base_url": "https://new1.ssrmovies.page",
+                              "status": "active"}}}), encoding="utf-8")
+            qpath = Path(tmp.name) / "domain_recheck_queue.db"
+            queued = fast_probe.queue_site_rechecks(
+                {"ssrmovies": 12, "nosuchsite": 50}, qpath,
+                registry_path=reg_path)
+            self.assertEqual(queued, ["ssrmovies"])
+            entry = rq.get_entry(qpath, "ssrmovies")
+            self.assertEqual(entry["dead_rows"], 12)
+            self.assertEqual(entry["status"], "pending")
+            self.assertIsNone(rq.get_entry(qpath, "nosuchsite"))
+            queued = fast_probe.queue_site_rechecks(
+                {"ssrmovies": 9}, qpath, registry_path=reg_path)
+            self.assertEqual(queued, [])
+        finally:
+            tmp.cleanup()
+
+
 # ── mixdrop resolver fallback ────────────────────────────────────────────────
 
 class MixdropResolverFallbackTests(unittest.TestCase):

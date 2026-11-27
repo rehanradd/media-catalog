@@ -1531,6 +1531,16 @@ jobs:
       - name: 🧪 test_domain_resolver.py
         run: python3 -S Fast_Fetch/test_domain_resolver.py
 
+      # Self-healing Branch 4 (site recheck wiring): the recheck queue
+      # (SQLite sidecar next to the catalog), the domain_recheck drain +
+      # stale-probe job, and the sweep batch's per-site dead/parked row
+      # signal that queues a site. Offline — stub fetcher / fake
+      # connection; the live end-to-end proof is the Branch 4 gate.
+      - name: 🧪 test_recheck_queue.py
+        run: python3 -S Fast_Fetch/test_recheck_queue.py
+      - name: 🧪 test_domain_recheck.py
+        run: python3 -S Fast_Fetch/test_domain_recheck.py
+
       # Docs drift is a code property, not a prose one. Root `AGENTS.md` cited `viewer.py` line
       # numbers and four of them pointed at unrelated code on trunk `37ae67b` (measured 2026-11-05)
       # while every suite stayed green, because `WorkflowSuiteCoverageTests`' RUN regex matches

@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily domain-registry probe: verify every site base, record moves (registry §2)
+Description=Daily domain recheck: drain the recheck queue, probe stale sites, heal moves (self-healing Branch 4)
 After=network-online.target
 Wants=network-online.target
 
@@ -16,16 +16,21 @@ WorkingDirectory=/opt/radd-stream
 Environment=RADD_ADMIN_V2_DB=/home/ubuntu/admin-v2-workspace-20261105/data-live/admin_v2.db
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
-# No-arg CLI runs probe_all_sites() (domain_resolver.py:1022): cheap and
-# content-verified — cached base + known mirrors per site, 8s per probe.
-# That is the whole point of this timer: it keeps the registry current.
-# `resolve-all` runs the expensive full discovery chain instead and must
-# never be put on a timer. probe_all_sites writes the registry itself
-# (atomic temp-file + fsync + os.replace in save_registry), so this unit
-# owns the live registry file while it runs; it never touches the DB.
-# 33 sites at a few probes each finishes in minutes; the 30-minute start
-# timeout is headroom for slow hosts, not an expectation.
-ExecStart=/usr/bin/python3 -S /opt/radd-stream/Fast_Fetch/domain_resolver.py
+# domain_recheck.py --probe-stale (self-healing Branch 4) does three
+# things, in order, and logs one JSON line per site:
+#   1. drain the domain recheck queue — the sites the sweep's dead/parked
+#      rows queued for a discovery-chain recheck (one resolve_site each);
+#   2. probe_all_sites(only_stale=True) with the 7-day staleness window
+#      (a site is stale when its last_verified is older than 7 days);
+#   3. run the full discovery chain for every site the probe finds down.
+# Blocked / unverifiable sites are left alone (a WAF refusal is not a
+# death and never triggers the chain), and resolve-all is never run —
+# the chain runs only for queued or down sites, never for all 33 at once.
+# The queue sidecar (domain_recheck_queue.db) sits next to the catalog
+# DB given by --db. 33 sites at a few probes each finishes in minutes;
+# the 30-minute start timeout is headroom for slow hosts, not an
+# expectation.
+ExecStart=/usr/bin/python3 -S /opt/radd-stream/Fast_Fetch/domain_recheck.py --db /home/ubuntu/radd-stream-data/merged_catalog_20261025.db --probe-stale
 Nice=19
 IOSchedulingClass=idle
 TimeoutStartSec=1800

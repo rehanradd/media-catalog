@@ -41,6 +41,11 @@
 #   --stop-file), so even a child orphaned by a SIGKILLed wrapper exits
 #   on its own when the gate touches STOP. These two layers are independent:
 #   either one alone closes the stuck-child hole.
+#   4. (Self-healing Branch 4, 2026-11-27) After each successful batch
+#      the loop drains the domain recheck queue (domain_recheck.py
+#      --limit 5): the sites this batch's dead/parked rows queued for a
+#      discovery-chain recheck. Best-effort — a hook failure is logged
+#      and the loop continues — and it never runs when a STOP is present.
 DB=/home/ubuntu/radd-stream-data/merged_catalog_20261025.db
 STOP=/tmp/fast-probe-sweep.stop
 LOG=/tmp/fast-probe-sweep.log
@@ -72,6 +77,14 @@ while true; do
     continue
   fi
   FAIL=0
+  # Self-healing Branch 4: drain the domain recheck queue — the sites
+  # this batch's dead/parked rows queued for a discovery-chain recheck.
+  # Capped at 5 sites per hook run (the daily timer does the full drain);
+  # best-effort, it must never break the loop, and it never runs when a
+  # STOP is present (the loop is exiting anyway).
+  if [ ! -f "$STOP" ]; then
+    python3 -S Fast_Fetch/domain_recheck.py --db "$DB" --limit 5 >> "$LOG" 2>&1 || echo "$(date -u +%FT%TZ) domain recheck hook failed (continuing)" >> "$LOG"
+  fi
   if tail -20 "$LOG" | grep -q '"probed": 0'; then
     echo "$(date -u +%FT%TZ) batch probed 0 rows — sweep complete" >> "$LOG"
     break
