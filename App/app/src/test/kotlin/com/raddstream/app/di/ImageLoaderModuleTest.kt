@@ -55,9 +55,10 @@ class ImageLoaderModuleTest {
     fun `disk cache policy is enabled so second launch is instant`() {
         // Video audit issue 5 (Nov 2026): the 250 MB disk cache is only
         // worth anything when the loader actually reads it — a disabled
-        // policy would re-fetch every poster on every launch.
+        // policy would re-fetch every poster on every launch. The policy
+        // lives on the loader's request defaults, not on the loader itself.
         val loader = ImageLoaderModule.buildImageLoader(context)
-        assertEquals(CachePolicy.ENABLED, loader.diskCachePolicy)
+        assertEquals(CachePolicy.ENABLED, loader.defaults.diskCachePolicy)
     }
 
     @Test

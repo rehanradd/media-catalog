@@ -379,10 +379,10 @@ fun CatalogImage(
         // clickable there swallowed the parent card's tap, so a tap on a
         // failed-image tile belongs to the parent card; see
         // [CatalogImageErrorSlot]). Video audit issue 22: the slot DOES
-        // carry a small corner retry button (48dp is the card's own tap
-        // zone; the button is 40dp in the corner, so a centre tap still
-        // reaches the parent) — except on logo plates, which are too
-        // small for it; those get the delayed retry only.
+        // carry a small corner retry button (40dp, TopEnd, in a surface
+        // disc like the Live TV star), not a full-size clickable — so a
+        // centre tap still reaches the parent. Logo plates are too small
+        // for it; those get the delayed retry only.
         error = {
             CatalogImageErrorSlot(
                 fallbackLabel = fallbackLabel,
