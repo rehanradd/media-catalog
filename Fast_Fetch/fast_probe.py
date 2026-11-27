@@ -38,6 +38,20 @@ What this module changes (and what it deliberately does NOT change)
   observation is recorded IN ADDITION to the verdict — the verdict
   policy, the writer and the locking are untouched, and a registry
   failure never breaks a probe.
+* **Parked verdict + HTML observations (self-healing Branch 3).** The
+  ranged-GET fallback is the only place the sweep ever sees a body, so
+  it is the only place a parking page can be proved: a 200 answer whose
+  body carries a parking marker (``link_state.is_parked_body``) earns a
+  ``parked`` verdict — never dead, never active — and a 200 HTML answer
+  is one HTML-instead-of-media observation for the host
+  (``host_registry.record_html_observation``); at 20, discovery runs
+  (redirect target, registry history, sibling TLDs, DDG search) and the
+  first candidate ``validate_host_move`` passes is applied with evidence
+  ``parked-sweep``. Blocked (403/429/Cloudflare) and transport answers
+  never record an observation, so a WAF refusal can never count toward
+  the threshold. A parked domain that answers HEAD 200 cleanly is still
+  missed — the sweep's HEAD chain cannot see a body, and a HEAD 200
+  short-circuits before any GET — a known, honest limitation.
 * **Dedup.** Rows are grouped by probe-target URL; each distinct URL is
   probed ONCE and the verdict is applied to every row sharing it (-17%).
 * **Keep-alive.** One ``http.client`` connection per host for the whole run
@@ -542,6 +556,12 @@ class HostSession:
         self._timeout = float(timeout)
         self._conns: dict[tuple[str, int, bool], object] = {}
         self.reconnects = 0
+        #: Body bytes read by the most recent :meth:`get` call (at most
+        #: ``GET_READ_CAP``), or ``b""`` when the last call failed before
+        #: reading. The ranged-GET fallback reads a body the caller may
+        #: need to inspect (parking markers, HTML-instead-of-media) without
+        #: paying for a second request; ``get_chain`` leaves it at the final
+        #: hop's body. Reset at the start of every :meth:`get` call.
 
     def _conn_for(self, host: str, port: int, https: bool):
         key = (host, port, https)
@@ -633,6 +653,7 @@ class HostSession:
         Error codes mirror :meth:`head` exactly, so a GET transport
         failure earns no verdict just like a HEAD one.
         """
+        self.last_get_body = b""
         parts = urllib.parse.urlsplit(url)
         host = parts.hostname or ""
         try:
@@ -656,9 +677,9 @@ class HostSession:
                 header_ms = int((time.monotonic() - t0) * 1000)
                 raw = [(k.lower(), v) for k, v in resp.getheaders()]
                 try:
-                    resp.read(GET_READ_CAP)
+                    self.last_get_body = resp.read(GET_READ_CAP) or b""
                 except Exception:
-                    pass
+                    self.last_get_body = b""
                 self._drop(host, port, https)
                 return resp.status, dict(raw), "", header_ms
             except (http.client.RemoteDisconnected, ConnectionResetError,
@@ -934,6 +955,64 @@ def _record_move(url: str, final_url: str, stats: dict) -> None:
         pass
 
 
+#: Body heads that prove a fetched body is an HTML page (not the media the
+#: ledger expects). Same markers Branch 1's ``verify_media_bytes`` uses for
+#: the HTML test, minus the content-type arm — the sweep's GET fallback
+#: reads the body, not the header. A Cloudflare-challenge page IS HTML by
+#: this test, so the caller must only record observations for a real 200
+#: answer (a 403/429 never reaches here), never for a blocked one.
+_HTML_BODY_HEADS = (b"<!doctype html", b"<html", b"<head", b"<body")
+
+
+def _is_html_body(body) -> bool:
+    """True when ``body`` (bytes) is an HTML page, not media.
+
+    Pure: no network, no clock. The head is stripped of leading whitespace
+    and checked against the HTML openers; a ``<title>`` in the first 512
+    bytes also counts (a parking page's title is its marker). An empty or
+    binary body is not HTML.
+    """
+    if not body:
+        return False
+    if isinstance(body, str):
+        body = body.encode("utf-8", "ignore")
+    head = bytes(body).lstrip()[:512].lower()
+    if head.startswith(_HTML_BODY_HEADS):
+        return True
+    return b"<title>" in head
+
+
+def _record_html(url: str, host: str, final_url: str, stats: dict) -> None:
+    """One HTML-instead-of-media observation for the self-healing registry.
+
+    Called only for a real 200 HTML answer from the ranged-GET fallback —
+    never for a blocked (403/429/Cloudflare) or transport answer, so a WAF
+    refusal can never count toward the parked threshold. Recorded IN
+    ADDITION to the verdict, like :func:`_record_move`; a registry failure
+    never breaks a probe. The redirect target (when the GET chain landed
+    on a different host) rides along so the threshold action can validate
+    it as the move candidate.
+    """
+    if host_registry is None or not url:
+        return
+    try:
+        target = None
+        try:
+            target = urllib.parse.urlsplit(final_url or "").hostname or None
+        except ValueError:
+            target = None
+        if target and target.lower() == (host or "").lower():
+            target = None
+        obs = host_registry.record_html_observation(
+            host, url, redirect_target=target)
+        if obs.get("count"):
+            stats["html_observations"] = stats.get("html_observations", 0) + 1
+        if obs.get("applied"):
+            stats["moves_applied"] = stats.get("moves_applied", 0) + 1
+    except Exception:
+        pass
+
+
 def probe_headers() -> dict:
     """Request headers for every HEAD hop: the sweep's UA, keep-alive."""
     return {
@@ -1197,8 +1276,8 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
     stats: dict = {"host": host, "probed": 0, "verdicts": 0, "by_status": {},
                    "no_verdict": 0, "blocked": 0, "reconnects": 0,
                    "redirects_seen": 0, "moves_applied": 0,
-                   "get_fallbacks": 0, "stopped": False,
-                   "results": {} if out_queue is None else None}
+                   "get_fallbacks": 0, "html_observations": 0,
+                   "stopped": False, "results": {} if out_queue is None else None}
     # H4 R8: one stored clearance per host, read once per host (not once
     # per URL — the store is the same for the whole serial walk).
     hop_headers = dict(headers)
@@ -1242,7 +1321,21 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
             g_status, g_error, g_final = get_chain(
                 url, session, base_headers=hop_headers, timeout=timeout,
                 spacing_s=spacing_s)
+            g_body = getattr(session, "last_get_body", b"") or b""
             g_verdict = chain_verdict(g_status, g_error, checked_at)
+            if not g_error and 200 <= int(g_status or 0) < 300:
+                # Self-healing Branch 3: the GET fallback is the only place
+                # the sweep ever sees a body, so it is the only place a
+                # parking page can be proved. A 200 HTML answer is one
+                # HTML-instead-of-media observation for the host (never for
+                # a blocked/transport answer — a WAF refusal must never
+                # count toward the parked threshold); a body carrying a
+                # parking marker is a parked verdict, not active.
+                if _is_html_body(g_body):
+                    _record_html(url, host, g_final, stats)
+                if link_state.is_parked_body(g_body):
+                    g_verdict = link_state.STATUS_PARKED
+                    g_error = "parked"
             if g_verdict is not None:
                 status, error, _final = g_status, g_error, g_final
                 verdict = g_verdict
@@ -1290,7 +1383,7 @@ def _merge_stats(stats_list: list[dict]) -> dict:
     merged: dict = {"hosts": 0, "probed": 0, "verdicts": 0, "by_status": {},
                     "no_verdict": 0, "blocked": 0, "reconnects": 0,
                     "redirects_seen": 0, "moves_applied": 0, "get_fallbacks": 0,
-                    "stopped": False}
+                    "html_observations": 0, "stopped": False}
     for stats in stats_list:
         merged["hosts"] += 1
         merged["probed"] += stats["probed"]
@@ -1301,6 +1394,7 @@ def _merge_stats(stats_list: list[dict]) -> dict:
         merged["redirects_seen"] += stats.get("redirects_seen", 0)
         merged["moves_applied"] += stats.get("moves_applied", 0)
         merged["get_fallbacks"] += stats.get("get_fallbacks", 0)
+        merged["html_observations"] += stats.get("html_observations", 0)
         merged["stopped"] = merged["stopped"] or bool(stats.get("stopped"))
         for status, count in stats["by_status"].items():
             merged["by_status"][status] = merged["by_status"].get(status, 0) + count

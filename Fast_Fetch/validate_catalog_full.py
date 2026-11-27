@@ -51,7 +51,7 @@ PLAYABILITY = {"stream", "download", "both", "webview", "resolve_required", "non
 # a source nobody probed. Admitting 'unverified' to the projection let the audit grade a
 # fifth-state leak as passing, which is the defect this split exists to catch.
 PROJECTION_STATES = {"active", "dead", "expired", "unknown", "unchecked"}
-LEDGER_STATUSES = PROJECTION_STATES | {"unverified"}
+LEDGER_STATUSES = PROJECTION_STATES | {"unverified", "parked"}
 STATES = PROJECTION_STATES
 SOURCE_TAGS = set(release_descriptor.SOURCE_TAG_WEIGHTS)
 RESOLUTIONS = {"2160p", "1080p", "720p", "480p", "480p_or_lower", "unknown"}
@@ -132,9 +132,13 @@ def validate(conn) -> int:
                       .format(",".join("?" * len(STATES))), tuple(sorted(STATES)))
     check("link state is a legal enum value", bad_state == 0, f"{bad_state} rows")
     # The leak this audit used to bless: a ledger word reaching the projection.
-    leaked = _count(conn, "SELECT COUNT(*) FROM cat_links WHERE state = 'unverified'")
+    # ``parked`` is ledger-only too — the projection folds it to ``unchecked``
+    # (``link_state.state_for``), so a parked row is never a verified winner
+    # and never counted as dead; ``state = 'parked'`` in the projection is
+    # a fold that did not happen, not a status.
+    leaked = _count(conn, "SELECT COUNT(*) FROM cat_links WHERE state IN ('unverified', 'parked')")
     check("no ledger-only status leaked into the projection", leaked == 0,
-          f"{leaked} rows — _link_state_of() must fold 'unverified' to 'unchecked'")
+          f"{leaked} rows — _link_state_of() must fold 'unverified' and 'parked' to 'unchecked'")
     bad_ledger = _count(conn, "SELECT COUNT(*) FROM download_sources"
                          " WHERE COALESCE(status, '') NOT IN ({})"
                          .format(",".join("?" * len(LEDGER_STATUSES))),

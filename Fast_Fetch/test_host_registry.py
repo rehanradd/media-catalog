@@ -354,6 +354,210 @@ class TestRecordRedirect(unittest.TestCase):
         self.assertEqual(entry["evidence"], "manual")  # untouched
 
 
+def _blocked_search(url, timeout=10):
+    """A DDG fetcher that is always blocked — keeps the HTML-observation
+    tests offline and deterministic (no candidate from search)."""
+    return 0, url, "", "blocked"
+
+
+class TestRecordHtmlObservation(unittest.TestCase):
+    """Self-healing Branch 3: HTML-instead-of-media observations.
+
+    A parked file host answers HTTP 200 with a parking page and no
+    redirect, so ``record_redirect`` never fires for it — that is the
+    vCloud case (vcloud.lol parked, same codes live on vcloud.my, proven
+    2026-11-24). The sweep's ranged-GET fallback records one observation
+    per 200 HTML answer here; at ``REDIRECT_MOVE_THRESHOLD`` the host is
+    a parked-candidate and discovery runs. Blocked (403/429) never reaches
+    this function — the caller only records real 200 HTML answers — so a
+    WAF refusal can never count toward the threshold.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="host-reg-html-test-")
+        self.reg_path = os.path.join(self.tmpdir, "host_registry.json")
+        self.obs_path = os.path.join(self.tmpdir, "obs.json")
+        with open(self.reg_path, "w", encoding="utf-8") as fh:
+            json.dump({"version": "2.0", "hosts": {}}, fh)
+
+    def tearDown(self):
+        for p in (self.reg_path, self.obs_path, self.reg_path + ".lock",
+                  self.obs_path + ".lock"):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        try:
+            os.rmdir(self.tmpdir)
+        except OSError:
+            pass
+
+    def _record(self, host, sample_url, n=1, **kwargs):
+        kwargs.setdefault("search_fetcher", _blocked_search)
+        out = None
+        for _ in range(n):
+            out = hr.record_html_observation(
+                host, sample_url, registry_path=self.reg_path,
+                observations_path=self.obs_path, **kwargs)
+        return out
+
+    def test_counts_below_threshold_and_nineteen_is_not_twenty(self):
+        out = self._record("a.old", "https://a.old/drive/1", n=19)
+        self.assertEqual(out["count"], 19)
+        self.assertFalse(out["threshold_reached"])
+        self.assertFalse(out["applied"])
+        self.assertFalse(out["parked_candidate"])
+
+    def test_threshold_without_candidate_marks_parked_candidate_once(self):
+        out = self._record("x.old", "https://x.old/drive/1",
+                           n=hr.REDIRECT_MOVE_THRESHOLD)
+        self.assertTrue(out["threshold_reached"])
+        self.assertFalse(out["applied"])
+        self.assertIsNone(out["moved_to"])
+        self.assertTrue(out["parked_candidate"])
+        entry = hr.load_registry(self.reg_path)["hosts"]["x.old"]
+        self.assertTrue(entry.get("parked_candidate"))
+        self.assertNotIn("parked", entry, "a candidate is not a parked host")
+        self.assertTrue(entry.get("parked_at"))
+        self.assertIn("no candidate validated", entry.get("parked_reason", ""))
+        self.assertNotIn("current_domain", entry, "no move was applied")
+        # Evaluated once: a 21st observation counts but never re-evaluates.
+        out2 = self._record("x.old", "https://x.old/drive/2")
+        self.assertEqual(out2["count"], hr.REDIRECT_MOVE_THRESHOLD + 1)
+        self.assertFalse(out2["threshold_reached"])
+        self.assertFalse(out2["parked_candidate"])
+
+    def test_redirect_target_validates_and_applies(self):
+        fetch = _fake_fetch({"https://b.old/": (302, "https://b.new/")})
+        out = self._record("b.old", "https://b.old/drive/1",
+                           n=hr.REDIRECT_MOVE_THRESHOLD,
+                           redirect_target="b.new", fetcher=fetch)
+        self.assertTrue(out["threshold_reached"])
+        self.assertTrue(out["applied"])
+        self.assertEqual(out["moved_to"], "b.new")
+        self.assertFalse(out["parked_candidate"])
+        self.assertEqual(hr.current_domain_for("b.old", registry_path=self.reg_path),
+                         "b.new")
+        entry = hr.load_registry(self.reg_path)["hosts"]["b.old"]
+        self.assertEqual(entry["evidence"], "parked-sweep")
+        self.assertTrue(entry.get("parked"), "the old host is parked after the move")
+        self.assertTrue(entry.get("parked_at"))
+        self.assertIn("b.new", entry.get("parked_reason", ""))
+
+    def test_history_candidate_validates_and_applies(self):
+        reg = hr.load_registry(self.reg_path)
+        reg["hosts"]["h.old"] = {
+            "current_domain": "h.old", "evidence": "manual", "status": "active",
+            "known_mirrors": ["https://h.new"],
+            "rotation_history": [
+                {"domain": "h.old", "seen_until": "2026-11-20T19:36:00Z"},
+                {"domain": "h.new", "seen_from": "2026-11-20T19:36:00Z"}],
+        }
+        hr.save_registry(reg, self.reg_path)
+        fetch = _fake_fetch({
+            "https://h.old/": (200, "https://h.old/"),
+            "https://h.new/drive/1": (200, "https://h.new/drive/1"),
+        })
+        out = self._record("h.old", "https://h.old/drive/1",
+                           n=hr.REDIRECT_MOVE_THRESHOLD, fetcher=fetch)
+        self.assertTrue(out["applied"])
+        self.assertEqual(out["moved_to"], "h.new")
+        self.assertEqual(hr.current_domain_for("h.old", registry_path=self.reg_path),
+                         "h.new")
+
+    def test_candidate_failing_validation_is_not_applied(self):
+        fetch = _fake_fetch({
+            "https://c.old/": (404, "https://c.old/"),
+            "https://c.new/drive/1": (404, "https://c.new/drive/1"),
+            "https://c.new/": (404, "https://c.new/"),
+        })
+        out = self._record("c.old", "https://c.old/drive/1",
+                           n=hr.REDIRECT_MOVE_THRESHOLD,
+                           redirect_target="c.new", fetcher=fetch)
+        self.assertTrue(out["threshold_reached"])
+        self.assertFalse(out["applied"])
+        self.assertIsNone(out["moved_to"])
+        self.assertTrue(out["parked_candidate"])
+        entry = hr.load_registry(self.reg_path)["hosts"]["c.old"]
+        self.assertTrue(entry.get("parked_candidate"))
+        self.assertEqual(hr.current_domain_for("c.old", registry_path=self.reg_path),
+                         "", "a failed candidate must not move the host")
+
+    def test_vcloud_fixture(self):
+        """The real case (proven 2026-11-24): vcloud.lol parked, the same
+        codes live on vcloud.my, and the registry already knows
+        vcloud.beer -> vcloud.my. The parked sibling must find .my through
+        its sibling TLD and move — never be marked dead."""
+        reg = hr.load_registry(self.reg_path)
+        reg["hosts"]["vcloud.beer"] = {
+            "current_domain": "vcloud.my", "evidence": "prober",
+            "status": "active", "last_verified": "2026-11-20T19:36:00Z",
+            "verified_by": "domain-doctor-20261121", "rows_affected": 237014,
+            "known_mirrors": ["https://vcloud.my"],
+            "rotation_history": [
+                {"domain": "vcloud.beer", "seen_until": "2026-11-20T19:36:00Z"},
+                {"domain": "vcloud.my", "seen_from": "2026-11-20T19:36:00Z"}],
+        }
+        hr.save_registry(reg, self.reg_path)
+        fetch = _fake_fetch({
+            "https://vcloud.lol/": (200, "https://vcloud.lol/"),
+            "https://vcloud.my/drive/abc123": (200, "https://vcloud.my/drive/abc123"),
+        })
+        out = self._record("vcloud.lol", "https://vcloud.lol/drive/abc123",
+                           n=hr.REDIRECT_MOVE_THRESHOLD, fetcher=fetch)
+        self.assertTrue(out["threshold_reached"])
+        self.assertTrue(out["applied"])
+        self.assertEqual(out["moved_to"], "vcloud.my")
+        self.assertFalse(out["parked_candidate"])
+        self.assertEqual(hr.current_domain_for("vcloud.lol", registry_path=self.reg_path),
+                         "vcloud.my")
+        lol = hr.load_registry(self.reg_path)["hosts"]["vcloud.lol"]
+        self.assertTrue(lol.get("parked"))
+        self.assertTrue(lol.get("parked_at"))
+        self.assertIn("vcloud.my", lol.get("parked_reason", ""))
+        # The sibling that named the new domain is untouched.
+        beer = hr.load_registry(self.reg_path)["hosts"]["vcloud.beer"]
+        self.assertEqual(beer["current_domain"], "vcloud.my")
+        self.assertEqual(beer["evidence"], "prober")
+
+    def test_ddg_candidate_validates_and_applies(self):
+        page = ('<a href="https://duckduckgo.com/l/?uddg='
+                'https%3A%2F%2Fzsite.my%2Fdrive%2F1">zsite.my</a>')
+
+        def search(url, timeout=10):
+            return 200, url, page, None
+
+        fetch = _fake_fetch({
+            "https://zsite.lol/": (200, "https://zsite.lol/"),
+            "https://zsite.my/drive/1": (200, "https://zsite.my/drive/1"),
+        })
+        out = self._record("zsite.lol", "https://zsite.lol/drive/1",
+                           n=hr.REDIRECT_MOVE_THRESHOLD,
+                           fetcher=fetch, search_fetcher=search)
+        self.assertTrue(out["applied"])
+        self.assertEqual(out["moved_to"], "zsite.my")
+
+    def test_ip_host_does_not_count(self):
+        out = self._record("93.184.216.34", "https://93.184.216.34/drive/1")
+        self.assertEqual(out["count"], 0)
+        self.assertFalse(out["threshold_reached"])
+
+    def test_html_and_redirect_counts_are_separate(self):
+        """The two signals share a file, not a counter: 19 + 19 must not
+        reach either threshold."""
+        html = self._record("s.old", "https://s.old/drive/1", n=19)
+        redir = None
+        for _ in range(19):
+            redir = hr.record_redirect("https://s.old/drive/1",
+                                       "https://s.new/drive/1",
+                                       registry_path=self.reg_path,
+                                       observations_path=self.obs_path)
+        self.assertEqual(html["count"], 19)
+        self.assertFalse(html["threshold_reached"])
+        self.assertEqual(redir["count"], 19)
+        self.assertFalse(redir["threshold_reached"])
+
+
 class TestValidate(unittest.TestCase):
     def test_root_redirect_passes(self):
         fetch = _fake_fetch({

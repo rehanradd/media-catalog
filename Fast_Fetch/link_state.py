@@ -22,9 +22,11 @@ construction, i.e. meaningless.
 
 What this module adds
 ---------------------
-1. **Four honest ledger statuses.** ``active`` / ``dead`` / ``expired`` (the
+1. **Five honest ledger statuses.** ``active`` / ``dead`` / ``expired`` (the
    vocabulary ``fast_fetch`` already uses) plus ``unverified`` for "nobody has
-   ever knocked on this endpoint". ``classify()`` maps a ``ProbeResult`` to one of
+   ever knocked on this endpoint" and ``parked`` for "the endpoint answered
+   with a domain-parking page" (self-healing Branch 3: a parked domain is a
+   migration, never a death). ``classify()`` maps a ``ProbeResult`` to one of
    them with a published table (below). A row that was never probed is *not*
    active, and this module is the only thing that says so.
 2. **A batched, resumable, interrupt-safe sweep.** Keyed by an id cursor in
@@ -76,6 +78,9 @@ Status mapping (``classify()``, pure and network-free)
     empty_body                            -> dead      (we could not get bytes)
     2xx that answers but is not media
     (not_media, html_page, embed)         -> active    + probe_error recorded
+    200 + parking markers in the fetched body
+    (parked)                              -> parked    (never dead; re-probeable,
+                                           excluded from dead-link deletion)
     blocked_target / blocklisted /
     invalid_url                           -> unverified (we never looked; not a verdict)
 
@@ -86,6 +91,15 @@ into ``dead`` would delete 90% of a working catalog on the first sweep, and
 marking them ``active`` without a ``probe_error`` would be the same lie we are
 removing. Both facts are recorded; ``tiers.score()`` reads ``status`` and the
 projection's ``rank_score`` reads ``playability``.
+
+A body that IS a parking page is the one exception to ``not_media`` -> active:
+it classifies ``parked``, not ``active`` — the endpoint did not answer with the
+file's host at all, it answered with a squatter's page, so calling it active
+would be the same lie. ``parked`` is never ``dead``: a parked domain is a
+migration (vCloud .lol -> .my, proven 2026-11-24), and the row stays eligible
+for re-probe. The projection folds ``parked`` to ``unchecked`` (see
+:func:`state_for`): the projection's vocabulary is closed and has no parked
+state, and a parked link is not a verified-playable one.
 
 Standard library only. Never imports ``config`` (that would compute, and maybe
 create, ``DB_PATH`` while live crawlers hold the catalog).
@@ -111,7 +125,8 @@ except ImportError:  # running from inside Fast_Fetch/ (the documented way)
 
 __all__ = [
     "STATUS_ACTIVE", "STATUS_DEAD", "STATUS_EXPIRED", "STATUS_UNVERIFIED",
-    "PROJECTED_UNCHECKED",
+    "STATUS_PARKED", "PROJECTED_UNCHECKED",
+    "PARKED_BODY_MARKERS", "is_parked_body",
     "ensure_schema", "ensure_projection_schema", "connect",
     "classify", "is_verified", "effective_status", "should_probe",
     "propagate", "mark_unverified", "iter_pending",
@@ -124,8 +139,53 @@ STATUS_ACTIVE = "active"
 STATUS_DEAD = "dead"
 STATUS_EXPIRED = "expired"
 STATUS_UNVERIFIED = "unverified"
+#: The endpoint answered with a domain-parking page (HTTP 200 + parking
+#: markers in the fetched body). Never ``dead``: a parked domain is a
+#: migration, and the row stays eligible for re-probe.
+STATUS_PARKED = "parked"
 #: Every status this module will ever write into ``download_sources.status``.
-LEDGER_STATUSES = (STATUS_UNVERIFIED, STATUS_ACTIVE, STATUS_DEAD, STATUS_EXPIRED)
+LEDGER_STATUSES = (STATUS_UNVERIFIED, STATUS_ACTIVE, STATUS_DEAD, STATUS_EXPIRED,
+                   STATUS_PARKED)
+#: Markers that prove a fetched body is a domain-parking page (self-healing
+#: Branch 3). A strict subset of ``domain_resolver.PARKED_MARKERS``: the
+#: Cloudflare-challenge markers ("just a moment", "attention required",
+#: "verify you are human") are deliberately EXCLUDED — a challenge is
+#: "blocked", never "parked" (design principle 4, Blocked != dead).
+#: Kept in sync by hand; ``test_link_state`` pins that every marker here
+#: is also in ``domain_resolver.PARKED_MARKERS``.
+PARKED_BODY_MARKERS = (
+    "domain for sale", "buy this domain", "this domain is parked",
+    "parked domain", "sedo", "afternic", "dan.com", "hugedomains",
+    "bodis", "parkingcrew", "is for sale", "domain parking",
+    "this domain has expired", "domain expired",
+)
+
+
+def is_parked_body(body) -> str | None:
+    """The parking marker in ``body`` (bytes or str), or None.
+
+    Pure: no clock, no network. Only the first 4096 bytes are read — the
+    sweep's ranged-GET fallback caps at 1 KiB, and a parking page carries
+    its marker in the ``<title>`` up front. Returns the same
+    ``"parked-marker:<marker>"`` reason ``domain_resolver._parked_reason``
+    returns, so the two surfaces agree on what a parking page looks like.
+    A Cloudflare-challenge page is NOT parked (its markers are not in
+    :data:`PARKED_BODY_MARKERS`); a generic HTML page is not parked either.
+    """
+    if body is None:
+        return None
+    if isinstance(body, (bytes, bytearray)):
+        try:
+            text = bytes(body[:4096]).decode("utf-8", "ignore")
+        except Exception:
+            return None
+    else:
+        text = str(body)[:4096]
+    low = text.lower()
+    for marker in PARKED_BODY_MARKERS:
+        if marker in low:
+            return "parked-marker:%s" % marker
+    return None
 #: A never-checked ledger row projects as ``unchecked``, which is already a legal
 #: v2 value (api_v2.py:456) and already scores 0 in the rank ladder
 #: (catalog_v2.py). ``unverified`` is the *ledger* word; ``unchecked`` is the
@@ -301,6 +361,14 @@ def classify(payload) -> str:
     if bool(_field(payload, "ok", False)):
         return STATUS_ACTIVE
     error = str(_field(payload, "error", "") or "")
+    if error == "parked":
+        # The probe proved the endpoint is a parking page (HTTP 200 +
+        # parking markers in the fetched body). Never dead: a parked
+        # domain is a migration, and the row stays eligible for re-probe.
+        # Checked before the status branches: a parking page answers 200,
+        # so it would otherwise fall through to the not_media -> active
+        # branch below, which is exactly the lie this status removes.
+        return STATUS_PARKED
     status = int(_field(payload, "http_status", 0) or 0)
     if error in _NO_VERDICT_ERRORS:
         return STATUS_UNVERIFIED
@@ -358,9 +426,12 @@ def effective_status(row) -> str:
 
 
 def projected_state(row) -> str:
-    """The projection's word for ``effective_status()``."""
-    status = effective_status(row)
-    return PROJECTED_UNCHECKED if status == STATUS_UNVERIFIED else status
+    """The projection's word for ``effective_status()``.
+
+    Delegates to :func:`state_for`, so a ledger-only status (``parked``)
+    folds to ``unchecked`` exactly as the sync path does — the projection's
+    vocabulary is closed, and a parked row is never a verified winner."""
+    return state_for(effective_status(row))
 
 
 def should_probe(row) -> bool:
@@ -757,8 +828,18 @@ def _sync_updates(conn, updates: list, *, evidence: bool = True) -> None:
 
 
 def state_for(status: str) -> str:
-    """Ledger status -> projected ``cat_links.state``."""
+    """Ledger status -> projected ``cat_links.state``.
+
+    ``parked`` folds to ``unchecked``: the projection's vocabulary is closed
+    (``unchecked|active|dead|expired|unknown`` — ``validate_catalog_full``
+    enforces it, and ``catalog_v2._link_state_of`` folds an out-of-vocabulary
+    ledger status the same way), and a parked link is not a verified-playable
+    one. The ledger keeps the truth (``parked``); the projection only ever
+    claims what it can score. A parked row is therefore never served as a
+    verified winner, and never counted as dead."""
     if not status or status == STATUS_UNVERIFIED:
+        return PROJECTED_UNCHECKED
+    if status == STATUS_PARKED:
         return PROJECTED_UNCHECKED
     if status in (STATUS_ACTIVE, STATUS_DEAD, STATUS_EXPIRED):
         return status

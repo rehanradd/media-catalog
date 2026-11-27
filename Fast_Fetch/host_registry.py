@@ -119,6 +119,7 @@ __all__ = [
     "live_domains",
     "apply_move",
     "record_redirect",
+    "record_html_observation",
     "validate_host_move",
     "check_host_root",
 ]
@@ -393,15 +394,17 @@ _obs_lock = threading.Lock()
 def _load_observations(observations_path: str | Path | None = None) -> dict:
     path = Path(observations_path) if observations_path else OBSERVATIONS_PATH
     if not path.exists():
-        return {"version": 1, "observations": {}}
+        return {"version": 1, "observations": {}, "html_observations": {}}
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
         if not isinstance(data, dict) or not isinstance(data.get("observations"), dict):
-            return {"version": 1, "observations": {}}
+            return {"version": 1, "observations": {}, "html_observations": {}}
+        if not isinstance(data.get("html_observations"), dict):
+            data["html_observations"] = {}
         return data
     except Exception:
-        return {"version": 1, "observations": {}}
+        return {"version": 1, "observations": {}, "html_observations": {}}
 
 
 def _save_observations(data: dict,
@@ -497,6 +500,242 @@ def record_redirect(old_url: str, new_url: str,
     except Exception:
         return {"old_host": _host_of(old_url), "new_host": _host_of(new_url),
                 "count": 0, "threshold_reached": False, "applied": False}
+
+
+# ── HTML-instead-of-media observations (the parked-domain channel) ──────────
+#
+# A parked file host answers HTTP 200 with a parking page and no redirect,
+# so ``record_redirect`` never fires for it — that is exactly the vCloud
+# case (vcloud.lol parked, same codes live on vcloud.my, proven 2026-11-24
+# by hand). The sweep's ranged-GET fallback already fetches the body, so
+# when it returns HTML where the ledger expects media, one observation is
+# recorded here per host. At ``REDIRECT_MOVE_THRESHOLD`` (one constant for
+# both signals — a parking page is at least as strong as a redirect) the
+# host is a parked-candidate: discovery runs and the first candidate
+# ``validate_host_move`` passes is applied with evidence ``parked-sweep``;
+# when nothing validates, the host is marked a parked-candidate in the
+# registry instead — never dead, never a guess.
+
+def _service_label(host: str) -> str:
+    """The service label of ``host`` (``vcloud`` in ``vcloud.lol``).
+
+    The second-to-last label, so ``sub.vcloud.lol`` still names the
+    ``vcloud`` service. Used for sibling-TLD discovery and the DDG slug.
+    """
+    host = (host or "").lower().strip()
+    if host.startswith("www."):
+        host = host[4:]
+    labels = [part for part in host.split(".") if part]
+    if len(labels) >= 2:
+        return labels[-2]
+    return labels[0] if labels else ""
+
+
+def _mark_host_parked(host: str, reason: str, *,
+                      registry_path: str | Path | None = None,
+                      candidate: bool = False) -> dict:
+    """Record that ``host`` is parked (or a parked-candidate) in the registry.
+
+    Additive only: sets ``parked`` (or ``parked_candidate``) + ``parked_at``
+    + ``parked_reason`` on the host's entry, creating a minimal entry when
+    the host was never in the registry. Never changes ``status`` or
+    ``current_domain`` — a parked host is not dead, and a parked-candidate
+    is not a move. Never raises.
+    """
+    host = (host or "").lower().strip()
+    if not host:
+        return {}
+    now = _now_iso()
+    try:
+        with _registry_lock(registry_path):
+            reg = load_registry(registry_path)
+            hosts = reg.setdefault("hosts", {})
+            entry = hosts.setdefault(host, {})
+            if candidate:
+                entry["parked_candidate"] = True
+            else:
+                entry["parked"] = True
+            entry["parked_at"] = now
+            entry["parked_reason"] = reason
+            save_registry(reg, registry_path)
+            _drop_cache(registry_path)
+            return dict(entry)
+    except Exception:
+        return {}
+
+
+def _discover_move_candidates(host: str, *,
+                              registry_path: str | Path | None = None,
+                              observations_path: str | Path | None = None,
+                              redirect_target: str | None = None,
+                              search_fetcher=None) -> list:
+    """Ordered candidate new-domains for a parked ``host``.
+
+    1. An observed redirect target (the probe chain saw this host land
+       elsewhere), passed in or read from the redirect observations for
+       this host (highest count first).
+    2. The host's own registry entry: ``rotation_history`` domains +
+       ``known_mirrors`` hosts.
+    3. Sibling entries: other registry hosts sharing the same service
+       label (``vcloud`` in ``vcloud.lol``) — their ``current_domain`` +
+       rotation history + mirrors. A service that already moved once
+       (vcloud.beer -> vcloud.my) names the live domain for its parked
+       sibling TLD.
+    4. DuckDuckGo search (``domain_resolver.ddg_search``) limited to the
+       host's slug — best-effort, never raises, skipped when the search
+       is unavailable (datacenter egress blocks it) or returns nothing.
+    Deduped, in order, never the parked host itself, never an IP literal.
+    Returns a list of hostnames (possibly empty).
+    """
+    host = (host or "").lower().strip()
+    out: list = []
+
+    def _add(name):
+        name = (name or "").lower().strip()
+        if not name or name == host or _is_ip_literal(name):
+            return
+        if name.startswith("http://") or name.startswith("https://"):
+            name = _host_of(name)
+            if not name or name == host or _is_ip_literal(name):
+                return
+        if name not in out:
+            out.append(name)
+
+    # 1. Redirect target: explicit first, then the best observed pair.
+    if redirect_target:
+        _add(redirect_target)
+    try:
+        data = _load_observations(observations_path)
+        pairs = []
+        for key, rec in (data.get("observations") or {}).items():
+            if not isinstance(key, str) or "|" not in key:
+                continue
+            old, new = key.split("|", 1)
+            if old == host and isinstance(rec, dict):
+                pairs.append((int(rec.get("count") or 0), new))
+        for _count, new in sorted(pairs, reverse=True):
+            _add(new)
+    except Exception:
+        pass
+
+    # 2 + 3. The host's own entry, then sibling entries by service label.
+    try:
+        hosts = get_registry(registry_path).get("hosts") or {}
+        label = _service_label(host)
+        own = hosts.get(host) if isinstance(hosts.get(host), dict) else {}
+        for entry in [own] + [e for h, e in hosts.items()
+                              if h != host and isinstance(e, dict)
+                              and _service_label(h) == label]:
+            for item in (entry.get("rotation_history") or []):
+                if isinstance(item, dict):
+                    _add(item.get("domain"))
+            for mirror in (entry.get("known_mirrors") or []):
+                _add(mirror)
+            _add(entry.get("current_domain"))
+    except Exception:
+        pass
+
+    # 4. DDG search, slug-limited (best-effort).
+    try:
+        try:
+            from Fast_Fetch import domain_resolver
+        except ImportError:
+            import domain_resolver  # type: ignore
+        found, _note = domain_resolver.ddg_search(
+            _service_label(host), fetcher=search_fetcher)
+        for name in (found or []):
+            _add(name)
+    except Exception:
+        pass
+    return out
+
+
+def record_html_observation(host: str, sample_url: str, *,
+                            registry_path: str | Path | None = None,
+                            observations_path: str | Path | None = None,
+                            redirect_target: str | None = None,
+                            fetcher=None, search_fetcher=None) -> dict:
+    """Record one HTML-instead-of-media observation for ``host``.
+
+    Called by the sweep's ranged-GET fallback when it fetches an HTML page
+    where the ledger expects media. Counts persist in the observations
+    sidecar across runs (same file as ``record_redirect``, distinct key),
+    so a small host reaches the threshold over several batches. When the
+    count reaches ``REDIRECT_MOVE_THRESHOLD`` and the host has not been
+    evaluated yet, the host is a parked-candidate: discovery runs
+    (redirect target, registry history, sibling TLDs, DDG search) and the
+    first candidate ``validate_host_move`` passes is applied with evidence
+    ``parked-sweep``; when nothing validates, the host is marked a
+    parked-candidate in the registry instead — never dead, never a guess.
+
+    Blocked (403/429/Cloudflare) never reaches this function: the caller
+    only records observations for a real 200 HTML answer, so a WAF
+    refusal can never count toward the threshold.
+
+    Returns ``{"host", "count", "threshold_reached", "applied",
+    "moved_to", "parked_candidate"}``. Never raises — a registry failure
+    must never break a probe; the observation is then simply lost.
+    """
+    try:
+        host = (host or "").lower().strip()
+        result = {"host": host, "count": 0, "threshold_reached": False,
+                  "applied": False, "moved_to": None, "parked_candidate": False}
+        if not host or _is_ip_literal(host):
+            return result
+        with _obs_lock:
+            data = _load_observations(observations_path)
+            obs = data.setdefault("html_observations", {})
+            rec = obs.setdefault(host, {"count": 0, "first_seen": _now_iso(),
+                                        "last_seen": _now_iso(),
+                                        "sample_urls": [], "evaluated_at": None})
+            rec["count"] = int(rec.get("count") or 0) + 1
+            rec["last_seen"] = _now_iso()
+            samples = rec.setdefault("sample_urls", [])
+            if sample_url and sample_url not in samples \
+                    and len(samples) < OBSERVATION_SAMPLE_URLS:
+                samples.append(sample_url)
+            result["count"] = rec["count"]
+            if rec["count"] >= REDIRECT_MOVE_THRESHOLD and not rec.get("evaluated_at"):
+                result["threshold_reached"] = True
+                rec["evaluated_at"] = _now_iso()
+                # Discovery + validation (network, bounded: once per host).
+                candidates = _discover_move_candidates(
+                    host, registry_path=registry_path,
+                    observations_path=observations_path,
+                    redirect_target=redirect_target,
+                    search_fetcher=search_fetcher)
+                try:
+                    sample_path = urllib.parse.urlsplit(
+                        sample_url or "/").path or "/"
+                except ValueError:
+                    sample_path = "/"
+                moved_to = None
+                for cand in candidates:
+                    check = validate_host_move(host, cand, sample_path=sample_path,
+                                               fetcher=fetcher)
+                    if check.get("ok"):
+                        apply_move(host, cand, "parked-sweep",
+                                   registry_path=registry_path)
+                        moved_to = cand
+                        break
+                if moved_to:
+                    result["applied"] = True
+                    result["moved_to"] = moved_to
+                    _mark_host_parked(
+                        host, "parked-sweep move to %s" % moved_to,
+                        registry_path=registry_path)
+                else:
+                    result["parked_candidate"] = True
+                    _mark_host_parked(
+                        host, "html-instead-of-media x%d, no candidate validated"
+                              % rec["count"],
+                        registry_path=registry_path, candidate=True)
+            _save_observations(data, observations_path)
+        return result
+    except Exception:
+        return {"host": (host or "").lower().strip(), "count": 0,
+                "threshold_reached": False, "applied": False, "moved_to": None,
+                "parked_candidate": False}
 
 
 # ── validation (the audit's standard, reusable by the panel) ────────────────

@@ -188,8 +188,11 @@ class TestSampleSupportsAClaim(unittest.TestCase):
 
 class TestVerdictVocabulary(unittest.TestCase):
     def test_the_sweeps_own_states_are_the_closed_set_the_projection_accepts(self):
+        # Self-healing Branch 3: ``parked`` joins the ledger vocabulary —
+        # it is a ledger-only word (the projection folds it to
+        # ``unchecked``), never a projected state.
         self.assertEqual(sorted(link_state.LEDGER_STATUSES),
-                         ["active", "dead", "expired", "unverified"])
+                         ["active", "dead", "expired", "parked", "unverified"])
         self.assertEqual(link_state.PROJECTED_UNCHECKED, "unchecked")
 
     def test_no_verdict_is_not_dead_and_a_measured_404_is(self):

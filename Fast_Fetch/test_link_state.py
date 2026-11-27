@@ -296,6 +296,108 @@ class ClassifyTests(unittest.TestCase):
                                                                error="http_404")))
 
 
+class ParkedTests(LedgerTestCase):
+    """Self-healing Branch 3: a parked domain is a migration, not a death.
+
+    The vCloud case (proven 2026-11-24, caught by the user): vcloud.lol
+    answers HTTP 200 with a parking page while the same codes are live on
+    vcloud.my. Before this branch the sweep classified that 200 as ACTIVE
+    forever — the parking page was never proved, because the HEAD chain
+    never sees a body. The parked verdict is earned only by the ranged-GET
+    fallback (see ``test_fast_probe``), so these tests pin the ledger side:
+    the verdict, the fold, and the projection.
+    """
+
+    PARKED_URL = "https://vcloud.lol/drive/abc123"
+    PARKED_BODY = (b"<!doctype html><html><head><title>Buy this domain</title>"
+                   b"</head><body><h1>This domain is for sale</h1></body></html>")
+
+    def parked_payload(self):
+        return link_health.ProbeResult(
+            url=self.PARKED_URL, ok=False, http_status=200, protocol="html_page",
+            content_type="text/html", error="parked", checked_at=1_730_000_000.0)
+
+    def test_parked_verdict_beats_the_200_active_branch(self):
+        self.assertEqual(link_state.classify(self.parked_payload()), "parked")
+        self.assertEqual(
+            link_state.classify({"ok": False, "error": "parked", "http_status": 200}),
+            "parked")
+        # Generic HTML is NOT parked — the honest scope (design Q6): only a
+        # true parking marker earns the verdict; a bridge page stays active.
+        self.assertEqual(link_state.classify(answered_but_not_media("https://a")),
+                         "active")
+        # A Cloudflare-challenge page is blocked, never parked.
+        self.assertEqual(link_state.classify(
+            {"ok": False, "error": "http_403", "http_status": 403}), "expired")
+
+    def test_is_parked_body_fires_on_every_marker_and_nothing_else(self):
+        for marker in link_state.PARKED_BODY_MARKERS:
+            body = b"<html><head><title>" + marker.encode() + b"</title></head></html>"
+            self.assertEqual(link_state.is_parked_body(body),
+                             "parked-marker:" + marker,
+                             "marker %r must be detected" % marker)
+        self.assertIsNone(link_state.is_parked_body(b""))
+        self.assertIsNone(link_state.is_parked_body(b"\x00\x00\x00\x18ftypmp42"))
+        self.assertIsNone(link_state.is_parked_body(
+            b"<html><head><title>Just a moment...</title></head></html>"),
+            "a Cloudflare challenge is blocked, not parked")
+        self.assertIsNone(link_state.is_parked_body(
+            b"<html><head><title>Welcome to the movie page</title></head></html>"))
+        late = b"<html>" + b"x" * 5000 + b"this domain is for sale</html>"
+        self.assertIsNone(link_state.is_parked_body(late),
+                          "only the first 4096 bytes are scanned — a marker "
+                          "deeper than that is not proved by this body")
+
+    def test_every_parked_marker_is_also_in_domain_resolver(self):
+        """One vocabulary for parking: a marker the sweep trusts must be one
+        the domain resolver already treats as parked."""
+        import domain_resolver
+
+        missing = [m for m in link_state.PARKED_BODY_MARKERS
+                   if m not in domain_resolver.PARKED_MARKERS]
+        self.assertEqual(missing, [],
+                         "parked markers unknown to domain_resolver: %r" % missing)
+        for banned in ("just a moment", "attention required", "verify you are human"):
+            self.assertNotIn(banned, link_state.PARKED_BODY_MARKERS,
+                             "a challenge phrase must never be a parking marker")
+
+    def test_state_for_folds_parked_to_unchecked_and_the_ledger_keeps_the_truth(self):
+        self.assertEqual(link_state.state_for("parked"), "unchecked")
+        self.assertEqual(link_state.state_for("active"), "active")
+        self.assertEqual(link_state.effective_status({"status": "parked"}), "parked")
+        parked_row = {"status": "parked", "checked_at": 1.0}
+        self.assertEqual(link_state.projected_state(parked_row), "unchecked")
+        self.assertEqual(link_state.verdict_for(
+            {"id": 1, "source_url": self.PARKED_URL, "final_url": self.PARKED_URL},
+            self.parked_payload())["status"], "parked")
+
+    def test_parked_row_propagates_and_projects_unchecked(self):
+        self.conn.execute(
+            "INSERT INTO download_sources (release_id, source_name, service, resource_id,"
+            " source_url, final_url, playback_type, is_temporary, status)"
+            " VALUES (?, 'Parked', 'vcloud', 'res-parked', ?, ?, 'direct', 0, 'active')",
+            (self.rows["720p"], self.PARKED_URL, self.PARKED_URL))
+        parked_id = self.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        self.conn.commit()
+        self.run_sweep(prober=self.prober(**{self.PARKED_URL: self.parked_payload()}))
+        row = self.conn.execute(
+            "SELECT status, probe_error, http_status FROM download_sources WHERE id = ?",
+            (parked_id,)).fetchone()
+        self.assertEqual(row["status"], "parked", "the ledger keeps the parked truth")
+        self.assertEqual(row["probe_error"], "parked")
+        self.assertEqual(row["http_status"], 200)
+        catalog_v2.project(self.conn, verbose=False)
+        projected = self.conn.execute(
+            "SELECT state FROM cat_links WHERE ledger_link_id = ?", (parked_id,)).fetchone()
+        self.assertEqual(projected["state"], "unchecked",
+                         "the projection folds parked to unchecked — never a "
+                         "verified winner, never counted as dead")
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM cat_links WHERE state = 'parked'").fetchone()[0],
+            0, "no projected link may ever carry the ledger-only word")
+
+
 class PropagationTests(LedgerTestCase):
     def test_verdicts_land_on_the_right_rows_and_nothing_is_deleted(self):
         before = self.snapshot()

@@ -77,16 +77,23 @@ def _public_dns(test):
 # ── fake connections ─────────────────────────────────────────────────────────
 
 class _FakeResponse:
-    def __init__(self, status, headers=None, will_close=False):
+    def __init__(self, status, headers=None, will_close=False, body=b""):
         self.status = status
         self._headers = dict(headers or {})
         self.will_close = will_close
+        self._body = body or b""
+        self._read = False
 
     def getheaders(self):
         return list(self._headers.items())
 
     def read(self, *args):
-        return b""
+        # A real stream empties: the first read returns the body, later
+        # reads return b"" (HostSession.get reads exactly once).
+        if self._read:
+            return b""
+        self._read = True
+        return self._body
 
 
 class _FakeConnection:
@@ -114,7 +121,12 @@ class _FakeConnection:
         self._pending = self._behaviour(self.host, target, self._calls, method)
 
     def getresponse(self):
-        status, headers, will_close = self._pending
+        pending = self._pending
+        if len(pending) == 4:
+            # (status, headers, will_close, body): the body a GET reads.
+            status, headers, will_close, body = pending
+            return _FakeResponse(status, headers, will_close, body)
+        status, headers, will_close = pending
         return _FakeResponse(status, headers, will_close)
 
     def close(self):
@@ -741,6 +753,175 @@ class GetFallbackTests(unittest.TestCase):
               "get_fallbacks": 0, "by_status": {"dead": 1}}])
         self.assertEqual(merged["get_fallbacks"], 1)
         self.assertEqual(merged["by_status"], {"active": 1, "dead": 1})
+
+
+# ── parked verdict + HTML observations (self-healing Branch 3) ───────────────
+
+class ParkedFallbackTests(unittest.TestCase):
+    """The vCloud case (proven 2026-11-24): a parked domain answers HTTP 200
+    with a parking page. The sweep's HEAD chain never sees a body, so the
+    parked verdict can only be earned by the ranged-GET fallback — and only
+    there. A parking marker earns ``parked`` (never dead, never active); a
+    generic HTML page earns an HTML observation and stays active (the
+    honest scope, design Q6); a blocked answer earns neither."""
+
+    PARKED_BODY = (b"<!doctype html><html><head><title>Buy this domain</title>"
+                   b"</head><body><h1>This domain is for sale</h1></body></html>")
+    GENERIC_HTML = (b"<html><head><title>Movie download page</title></head>"
+                    b"<body>Download links here</body></html>")
+    VIDEO_BODY = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00"
+
+    def _run(self, host, groups, mapping, registry=None):
+        log = []
+        factory = _make_factory(_status_map(mapping), log)
+        if registry is None:
+            registry = self._registry()
+        with unittest.mock.patch.object(fast_probe, "host_registry", registry):
+            stats = fast_probe._probe_host(
+                host, groups, session_factory=factory, timeout=5.0,
+                spacing_s=0.0, headers=fast_probe.probe_headers(),
+                out_queue=None)
+        return stats, log, registry
+
+    def _registry(self):
+        registry = unittest.mock.Mock()
+        registry.record_redirect.return_value = {"count": 0, "applied": False}
+        registry.record_html_observation.return_value = {
+            "count": 1, "threshold_reached": False, "applied": False,
+            "moved_to": None, "parked_candidate": False}
+        return registry
+
+    def _one(self, url):
+        return [{"url": url, "row_ids": [1], "stored": None}]
+
+    @_public_dns
+    def test_get_reads_body_into_last_get_body_and_keeps_the_4_tuple(self):
+        log = []
+        factory = _make_factory(_status_map({
+            ("big.example", "/f.mp4", "GET"): (200, {}, False, self.PARKED_BODY),
+        }), log)
+        session = fast_probe.HostSession(connection_factory=factory, timeout=5.0)
+        status, _h, error, _ms = session.get(
+            "http://big.example/f.mp4", fast_probe.probe_headers())
+        self.assertEqual((status, error), (200, ""))
+        self.assertEqual(session.last_get_body, self.PARKED_BODY)
+        # A body-less answer resets it: the next read is not stale.
+        session.get("http://big.example/g.mp4", fast_probe.probe_headers())
+        self.assertEqual(session.last_get_body, b"")
+
+    @_public_dns
+    def test_parked_page_via_get_fallback_is_parked_not_active(self):
+        # The vCloud shape: HEAD lies (403 on a liar host), the ranged GET
+        # answers 200 with a parking page.
+        mapping = {
+            ("vcloud.beer", "/drive/abc", "HEAD"): (403, {}, False),
+            ("vcloud.beer", "/drive/abc", "GET"): (200, {}, False, self.PARKED_BODY),
+        }
+        registry = self._registry()
+        stats, _log, _reg = self._run(
+            "vcloud.beer", self._one("https://vcloud.beer/drive/abc"),
+            mapping, registry=registry)
+        self.assertEqual(stats["by_status"], {"parked": 1})
+        self.assertEqual(stats["get_fallbacks"], 1)
+        self.assertEqual(stats["results"]["https://vcloud.beer/drive/abc"],
+                         ("parked", 200, "parked"))
+        self.assertEqual(stats["html_observations"], 1)
+        registry.record_html_observation.assert_called_once_with(
+            "vcloud.beer", "https://vcloud.beer/drive/abc",
+            redirect_target=None)
+        # A parked verdict is not a move: no redirect observation is
+        # recorded for a chain that landed on a parking page.
+        registry.record_redirect.assert_not_called()
+
+    @_public_dns
+    def test_parked_page_on_a_plain_host_needs_only_the_fallback_trigger(self):
+        # Any host whose HEAD earns no verdict (405 here) is judged by GET,
+        # and a parking body there is parked too — the verdict comes from
+        # the fallback path, not from the liar list.
+        mapping = {
+            ("plain.example", "/f.mp4", "HEAD"): (405, {}, False),
+            ("plain.example", "/f.mp4", "GET"): (200, {}, False, self.PARKED_BODY),
+        }
+        stats, _log, _reg = self._run(
+            "plain.example", self._one("http://plain.example/f.mp4"), mapping)
+        self.assertEqual(stats["by_status"], {"parked": 1})
+        self.assertEqual(stats["results"]["http://plain.example/f.mp4"],
+                         ("parked", 200, "parked"))
+
+    @_public_dns
+    def test_html_without_parking_marker_stays_active_and_records_observation(self):
+        mapping = {
+            ("plain.example", "/f.mp4", "HEAD"): (405, {}, False),
+            ("plain.example", "/f.mp4", "GET"): (200, {}, False, self.GENERIC_HTML),
+        }
+        registry = self._registry()
+        stats, _log, _reg = self._run(
+            "plain.example", self._one("http://plain.example/f.mp4"),
+            mapping, registry=registry)
+        self.assertEqual(stats["by_status"], {"active": 1})
+        self.assertEqual(stats["results"]["http://plain.example/f.mp4"],
+                         ("active", 200, ""))
+        self.assertEqual(stats["html_observations"], 1)
+        registry.record_html_observation.assert_called_once()
+
+    @_public_dns
+    def test_403_get_records_no_observation(self):
+        # A blocked GET answer is blocked, never HTML-instead-of-media: a
+        # WAF refusal must never count toward the parked threshold.
+        mapping = {
+            ("plain.example", "/f.mp4", "HEAD"): (405, {}, False),
+            ("plain.example", "/f.mp4", "GET"): (403, {}, False, self.PARKED_BODY),
+        }
+        registry = self._registry()
+        stats, _log, _reg = self._run(
+            "plain.example", self._one("http://plain.example/f.mp4"),
+            mapping, registry=registry)
+        self.assertEqual(stats["by_status"], {"expired": 1})
+        self.assertEqual(stats["html_observations"], 0)
+        registry.record_html_observation.assert_not_called()
+
+    @_public_dns
+    def test_video_body_records_no_observation(self):
+        mapping = {
+            ("plain.example", "/f.mp4", "HEAD"): (405, {}, False),
+            ("plain.example", "/f.mp4", "GET"): (200, {}, False, self.VIDEO_BODY),
+        }
+        registry = self._registry()
+        stats, _log, _reg = self._run(
+            "plain.example", self._one("http://plain.example/f.mp4"),
+            mapping, registry=registry)
+        self.assertEqual(stats["by_status"], {"active": 1})
+        self.assertEqual(stats["html_observations"], 0)
+        registry.record_html_observation.assert_not_called()
+
+    @_public_dns
+    def test_head_200_never_sees_the_body(self):
+        # The known, honest limitation: a parked domain that answers HEAD
+        # 200 cleanly short-circuits before any GET, so the sweep never
+        # sees its parking page and the row stays active. Pinned so a
+        # future "fix" that GETs every HEAD 200 has to reckon with the cost.
+        mapping = {("vcloud.beer", "/x", "HEAD"): (200, {}, False)}
+        registry = self._registry()
+        stats, log, _reg = self._run(
+            "vcloud.beer", self._one("https://vcloud.beer/x"),
+            mapping, registry=registry)
+        self.assertEqual(stats["by_status"], {"active": 1})
+        self.assertEqual(stats["get_fallbacks"], 0)
+        self.assertEqual(stats["html_observations"], 0)
+        registry.record_html_observation.assert_not_called()
+
+    def test_merge_counts_html_observations(self):
+        merged = fast_probe._merge_stats(
+            [{"probed": 1, "verdicts": 1, "no_verdict": 0, "blocked": 0,
+              "reconnects": 0, "redirects_seen": 0, "moves_applied": 0,
+              "get_fallbacks": 1, "html_observations": 2,
+              "by_status": {"parked": 1}},
+             {"probed": 1, "verdicts": 1, "no_verdict": 0, "blocked": 0,
+              "reconnects": 0, "redirects_seen": 0, "moves_applied": 0,
+              "get_fallbacks": 0, "html_observations": 0,
+              "by_status": {"active": 1}}])
+        self.assertEqual(merged["html_observations"], 2)
+        self.assertEqual(merged["by_status"], {"parked": 1, "active": 1})
 
 
 # ── mixdrop resolver fallback ────────────────────────────────────────────────
