@@ -12265,64 +12265,6 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
         except Exception:
             pass
 
-    # Stage-2 general failover: the same-release-then-cross-release
-    # ladder, for every backend, not just Stage-1 ones. Each sibling is
-    # resolved through this same function with failover disabled, so it
-    # gets the full strict gate and can never loop back here. Same
-    # release first; then other releases of the same post, same quality
-    # first, capped so one request cannot stall on a long tail.
-    if _failover and not fresh_url:
-        try:
-            with get_db() as _conn:
-                _same_release = [r[0] for r in _conn.execute(
-                    "SELECT id FROM download_sources "
-                    "WHERE release_id = ? AND id != ? ORDER BY id LIMIT 10",
-                    (src["release_id"], src["id"])).fetchall()]
-                _post_row = _conn.execute(
-                    "SELECT post_id, quality FROM releases WHERE id = ?",
-                    (src["release_id"],)).fetchone()
-                _cross_release = []
-                if _post_row is not None:
-                    _cross_release = [r[0] for r in _conn.execute(
-                        "SELECT s.id FROM download_sources s "
-                        "JOIN releases r ON r.id = s.release_id "
-                        "WHERE r.post_id = ? AND r.id != ? "
-                        "ORDER BY CASE WHEN r.quality = ? THEN 0 ELSE 1 END, "
-                        "s.id LIMIT 10",
-                        (_post_row[0], src["release_id"],
-                         _post_row[1])).fetchall()]
-            for _sid in list(_same_release) + list(_cross_release):
-                try:
-                    _alt = resolve_live_source(
-                        int(_sid), v2=v2, want=want, _failover=False)
-                except Exception:
-                    continue
-                # A stale-flagged sibling is NOT a failover win: it means
-                # that sibling could not be re-resolved either, and serving
-                # its last-known URL here would strip the stale flag the
-                # public route relies on to refuse it. Skip it and try the
-                # next copy; the caller's own stale answer is decided by
-                # the fall-through below, never laundered through failover.
-                if _alt.get("success") and _alt.get("url") and not _alt.get("stale"):
-                    return {
-                        "success": True,
-                        "id": src["id"],
-                        "url": _alt["url"],
-                        "cached": False,
-                        "refreshed": True,
-                        "failover": True,
-                        "failover_row_id": int(_sid),
-                        "service": src["service"],
-                        "is_temporary": bool(_alt.get("is_temporary")),
-                        "is_resumable": bool(_alt.get("is_resumable")),
-                        "source_name": src["source_name"],
-                        "mime_type": _alt.get("mime_type"),
-                        "file_size_bytes": _alt.get("file_size_bytes"),
-                        **_expiry_fields(src),
-                    }
-        except Exception:
-            pass
-
     # Nothing could be re-resolved. The legacy (v1) contract keeps handing back the
     # last known URL so the shipped app's behaviour is frozen, but the answer is now
     # flagged honestly (`stale: True`) and the ledger is marked so the projection can
