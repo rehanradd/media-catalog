@@ -55,6 +55,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.R
 import com.raddstream.app.network.models.LiveTvChannel
 import com.raddstream.app.network.models.WireText
+import com.raddstream.app.ui.components.CatalogGridColumns
 import com.raddstream.app.ui.components.CatalogImage
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.ErrorState
@@ -464,6 +465,7 @@ internal fun LiveTvChannelGrid(
             // the card, not the column count: two-line names at 12sp read
             // "Al Jazeera" / "English" where one line cut to "Al Jazeer…",
             // and the meta is one short line ("News · Urdu").
+            columns = CatalogGridColumns,
             state = gridState,
             modifier = Modifier.fillMaxSize().testTag("liveTv_grid"),
             contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp, start = 16.dp, end = 16.dp),
