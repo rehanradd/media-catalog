@@ -512,11 +512,18 @@ internal fun LiveTvCategoryRow(
 ) {
     val searchActive = query.isNotBlank()
     // A4-F3: rides ScrollingChipRow now — the fade and the row are the
-    // shared component, not a hand-rolled copy. The outer padding stays on
-    // the modifier; the row's own contentPadding is end-only, as before.
+    // shared component, not a hand-rolled copy. The row is full-width
+    // with the default horizontal-Gutter content padding, so the first
+    // chip still starts 16dp in (the same start the old outer padding
+    // gave it) — but the clip and the fade now sit at the screen edge.
+    // Re-rate 10 residual defect: the old outer horizontal padding
+    // clipped the row 16dp early, so the next chip's glyph landed
+    // exactly on the clip edge and only its container showed through
+    // the fade (+4, invisible to the eye). With the clip at the edge
+    // the glyph peeks through like Home's KPOP (+13). RowEndFade
+    // itself is untouched — the 92% cap and the pinned 48dp stay.
     ScrollingChipRow(
-        modifier = modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-        contentPadding = PaddingValues(end = 16.dp),
+        modifier = modifier.padding(vertical = 4.dp),
     ) {
         if (searchActive) {
             item {
