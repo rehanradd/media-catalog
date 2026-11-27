@@ -91,6 +91,14 @@ class HomeHeaderTest {
     // missing node still fails loudly at the assert that follows). A
     // controlled drag, not a swipeUp fling: a fast fling can overshoot the
     // target and dispose it before the check runs.
+    // First-run (video audit #11): the search runs BOTH ways — down, then
+    // back up. A chip tap re-filters the feed in place while the list
+    // keeps its scroll offset, so the target rail can end up ABOVE the
+    // viewport (the tap hid the rails below it); a down-only search then
+    // walks away from it for all 12 drags and the assert fails on a rail
+    // that is on screen. The Pick 3 card made this real: it now composes
+    // in this test's brand-new-viewer state and shifts where the offset
+    // lands after a filter change.
     private fun scrollToText(text: String) {
         repeat(12) {
             if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
@@ -98,6 +106,17 @@ class HomeHeaderTest {
                 swipe(
                     start = Offset(center.x, center.y * 1.6f),
                     end = Offset(center.x, center.y * 0.6f),
+                    durationMillis = 400,
+                )
+            }
+            compose.waitForIdle()
+        }
+        repeat(12) {
+            if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
+            compose.onRoot().performTouchInput {
+                swipe(
+                    start = Offset(center.x, center.y * 0.6f),
+                    end = Offset(center.x, center.y * 1.6f),
                     durationMillis = 400,
                 )
             }
