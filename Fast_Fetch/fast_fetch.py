@@ -9481,7 +9481,8 @@ def _expiry_fields(src: dict, *, now: float | None = None) -> dict:
     return {"expires_at": stamp, "expires_in": max(0.0, round(remaining, 3))}
 
 
-def _derive_resolve_expiry(fresh_url: str) -> dict | None:
+def _derive_resolve_expiry(fresh_url: str, *, now: float | None = None
+                           ) -> dict | None:
     """Expiry to bank for a freshly minted URL, or None (API-03).
 
     `expiry_bank.derive_expiry` reads the signed lifetime off the URL
@@ -9492,9 +9493,45 @@ def _derive_resolve_expiry(fresh_url: str) -> dict | None:
     because an expiry could not be read.
     """
     try:
-        return expiry_bank.derive_expiry(fresh_url)
+        return expiry_bank.derive_expiry(fresh_url, now=now)
     except Exception:
         return None
+
+
+def _winner_expiry(fresh_url: str, *, now: float | None = None) -> dict:
+    """The freshness pair + ledger action for a failover-winner URL (Branch 5).
+
+    A Stage-1 sibling failover winner is a freshly minted URL, but the
+    answer it returns used to carry the ORIGINAL row's expiry (via
+    ``_expiry_fields(src)``) and its ledger row got a new final_url
+    with no expiry at all — the winner's own lifetime was never read.
+    Derive it off the winner URL itself (same reader as
+    ``_derive_resolve_expiry``):
+    * ``bank`` — a future derived expiry: bank it on the winner row
+      and carry it in the answer.
+    * ``clear_stale`` — the derived expiry is already past: the winner
+      just proved it plays NOW, so a past instant is a stale parse,
+      not a dead token (same rule as the main path's bank defect (b));
+      drop the winner row's old measurement instead of banking it.
+    * ``clear_no_directive`` — the URL carries no lifetime (a
+      permanent host): the fresh URL declares nothing, so drop any
+      older measurement that belongs to the previous URL.
+    Returns {"expires_at", "expires_in", "observed_via", "action"} in
+    the ``_expiry_fields`` shape (both None unless action is "bank").
+    Never raises.
+    """
+    ref = time.time() if now is None else float(now)
+    derived = _derive_resolve_expiry(fresh_url, now=ref)
+    if derived is None:
+        return {"expires_at": None, "expires_in": None,
+                "observed_via": None, "action": "clear_no_directive"}
+    if float(derived["expires_at"]) <= ref:
+        return {"expires_at": None, "expires_in": None,
+                "observed_via": None, "action": "clear_stale"}
+    expires_at = float(derived["expires_at"])
+    return {"expires_at": expires_at,
+            "expires_in": max(0.0, round(expires_at - ref, 3)),
+            "observed_via": derived["observed_via"], "action": "bank"}
 
 
 _RESOLVERS = None
@@ -12101,6 +12138,14 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 deadline=_sibling_deadline)
             _winner = _rel.get("watch_winner")
             if _winner and _winner.get("url"):
+                # Branch 5: the winner URL is freshly minted — its
+                # expiry is derived off the winner URL itself, never
+                # inherited from the original row (whose expiry belongs
+                # to a different URL). The answer carries the winner's
+                # freshness pair, and a press banks it on the winner
+                # row (or clears the row's old measurement when the
+                # winner declares no lifetime / a stale one).
+                _wexp = _winner_expiry(_winner["url"])
                 # A background warm never rewrites a ledger row either:
                 # it returns the winner URL for resolved_cache only.
                 # Only a press banks the failover winner into the row.
@@ -12123,6 +12168,19 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                              206 if (_winner.get("resumable")
                                      and _winner.get("kind") == "file") else 200,
                              _winner.get("row_id")))
+                    if _wexp["action"] == "bank":
+                        record_link_expiry(
+                            _winner["row_id"],
+                            expires_at=_wexp["expires_at"],
+                            observed_via=_wexp["observed_via"])
+                    elif _wexp["action"] == "clear_stale":
+                        record_link_expiry(
+                            _winner["row_id"], clear=True,
+                            observed_via="stale_expiry")
+                    else:
+                        record_link_expiry(
+                            _winner["row_id"], clear=True,
+                            observed_via="no_directive")
                 return {
                     "success": True,
                     "id": src["id"],
@@ -12137,7 +12195,8 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                     "source_name": src["source_name"],
                     "mime_type": _winner.get("mime"),
                     "file_size_bytes": _winner.get("size"),
-                    **_expiry_fields(src),
+                    "expires_at": _wexp["expires_at"],
+                    "expires_in": _wexp["expires_in"],
                 }
             if _siblings:
                 # Same-release Stage-1 copies were tried and all failed:

@@ -326,5 +326,47 @@ class TestStage2MediaBytesGate(unittest.TestCase):
         self.assertEqual(got["kind"], "file")
 
 
+class TestWinnerExpiry(unittest.TestCase):
+    """``_winner_expiry`` (self-healing Branch 5): a Stage-1 sibling
+    failover winner's freshness is derived off the winner URL itself —
+    never inherited from the original row. A future derived expiry
+    banks; a stillborn one clears as stale; a URL with no lifetime
+    clears as no-directive."""
+
+    NOW = 1795780800  # 2026-11-27T12:00:00Z
+    R2_URL = ("https://pub-5703108c07374cf4bf82a6a6e2041364.r2.dev/abc123"
+              "?X-Amz-Date=20261127T120000Z&X-Amz-Expires=28800")
+    GOOGLE_URL = "https://video-downloads.googleusercontent.com/abc123"
+    PERMANENT_URL = "https://pixeldrain.com/api/file/s2yMcLkb"
+
+    def test_r2_winner_banks(self):
+        out = ff._winner_expiry(self.R2_URL, now=self.NOW)
+        self.assertEqual(out["action"], "bank")
+        self.assertEqual(out["expires_at"], self.NOW + 28800)
+        self.assertEqual(out["expires_in"], 28800.0)
+        self.assertEqual(out["observed_via"], "signed_params")
+
+    def test_google_winner_banks_measured_window(self):
+        out = ff._winner_expiry(self.GOOGLE_URL, now=self.NOW)
+        self.assertEqual(out["action"], "bank")
+        self.assertEqual(out["expires_at"], self.NOW + 900)
+        self.assertEqual(out["expires_in"], 900.0)
+        self.assertEqual(out["observed_via"], "measured_window")
+
+    def test_permanent_winner_clears_no_directive(self):
+        out = ff._winner_expiry(self.PERMANENT_URL, now=self.NOW)
+        self.assertEqual(out["action"], "clear_no_directive")
+        self.assertIsNone(out["expires_at"])
+        self.assertIsNone(out["expires_in"])
+
+    def test_stillborn_winner_clears_stale(self):
+        stale = ("https://pub-5703108c07374cf4bf82a6a6e2041364.r2.dev/abc123"
+                 "?X-Amz-Date=20261127T000000Z&X-Amz-Expires=3600")
+        out = ff._winner_expiry(stale, now=self.NOW)
+        self.assertEqual(out["action"], "clear_stale")
+        self.assertIsNone(out["expires_at"])
+        self.assertIsNone(out["expires_in"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

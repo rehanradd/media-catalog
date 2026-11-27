@@ -76,6 +76,7 @@ __all__ = [
     "note_serve_outcome",
     "serve_share",
     "prune_resolved_cache",
+    "clear_host_negative_cache",
     "REVERIFY_MARGIN_SECONDS",
     "MAX_FAIL_COUNT",
 ]
@@ -458,6 +459,86 @@ def _media_probe(url):
     return probe_media_bytes(url, timeout=10)
 
 
+def _derive_expiry_from_url(url: str, *, now: float | None = None
+                            ) -> dict | None:
+    """Expiry derived off a banked URL, or None (self-healing Branch 5).
+
+    ``expiry_bank.derive_expiry`` reads the signed lifetime off the URL
+    itself (R2 SigV4, s+e, absolute e/exp) or banks the measured window
+    for a token-bound origin with no parsable expiry (Google usercontent,
+    900 s). Permanent hosts and hosts with no measured death derive
+    nothing — None, never a made-up number. Imported lazily, as
+    elsewhere in this module; expiry_bank is stdlib-only and never
+    raises on a malformed URL, and this wrapper never raises either.
+    """
+    try:
+        import expiry_bank
+        return expiry_bank.derive_expiry(url, now=now)
+    except Exception:
+        return None
+
+
+def _host_of(url) -> str:
+    """Lowercased hostname of a URL, or "" when it has none."""
+    try:
+        return (urllib.parse.urlsplit(str(url or "")).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def clear_host_negative_cache(conn: sqlite3.Connection,
+                              old_host: str) -> dict:
+    """Clear the failure circuits for one moved host (Branch 5, §3 row 5).
+
+    When a host move is applied, the new domain deserves a fresh verdict:
+    the old domain's failures are not the new domain's. Clears, for rows
+    whose stored URL lives on ``old_host``:
+    * the ledger negative cache (``download_sources.last_failed_at`` /
+      ``failure_class`` / ``failure_resolver_v`` — the Session 101
+      12 h refusal), and
+    * the resolved-cache circuit (``resolved_cache.fail_count`` → 0).
+    Scoped to the moved host only — every other host's records are
+    untouched. A row matches on either its banked ``final_url`` (a file
+    host that died) or its source ``url`` (a page host that moved), and
+    only rows that actually carry a failure record are touched, so the
+    scan stays small. Returns {"ledger": n, "cache": m}. Never raises
+    and does NOT commit — the caller's transaction owns that, matching
+    ``record_resolved_cache`` / ``note_failure``.
+    """
+    host = (old_host or "").lower().strip()
+    cleared = {"ledger": 0, "cache": 0}
+    if not host:
+        return cleared
+    try:
+        _ensure_schema(conn)
+        for row in conn.execute(
+                "SELECT link_id, url FROM resolved_cache "
+                "WHERE fail_count > 0").fetchall():
+            if _host_of(row[1]) == host:
+                conn.execute(
+                    "UPDATE resolved_cache SET fail_count = 0 "
+                    "WHERE link_id = ?", (row[0],))
+                cleared["cache"] += 1
+    except Exception:
+        pass
+    try:
+        rows = conn.execute(
+            "SELECT id, url, final_url FROM download_sources "
+            "WHERE last_failed_at IS NOT NULL").fetchall()
+        for row_id, url, final_url in rows:
+            if _host_of(final_url) == host or _host_of(url) == host:
+                conn.execute(
+                    "UPDATE download_sources SET last_failed_at = NULL, "
+                    "failure_class = NULL, failure_resolver_v = NULL "
+                    "WHERE id = ?", (row_id,))
+                cleared["ledger"] += 1
+    except Exception:
+        # No download_sources table (a cache-only test DB) — the
+        # resolved_cache half above is still the clearing that counts.
+        pass
+    return cleared
+
+
 def record_resolved_cache(conn: sqlite3.Connection, link_id: int,
                           data: dict, *, source: str = "jit",
                           now: float | None = None) -> dict | bool | None:
@@ -522,6 +603,20 @@ def record_resolved_cache(conn: sqlite3.Connection, link_id: int,
         remaining = _epoch(data.get("expires_in"))
         if remaining is not None:
             expires_at = resolved_at + max(0.0, remaining)
+    if expires_at is None:
+        # Branch 5 (self-healing): a resolve answer that carries no
+        # expiry still banks a URL whose signed lifetime (or measured
+        # origin window) is readable off the URL itself — derive it
+        # here, the one bank seam every caller shares (pool, JIT,
+        # press, serve re-bank), so a signed URL never banks NULL.
+        # A stillborn derived expiry is dropped (the bank-time media
+        # probe just proved the URL plays NOW — a past instant is a
+        # stale parse, same rule as fast_fetch's bank defect (b));
+        # a URL with no lifetime derives nothing. Never raises.
+        _ref = now if now is not None else time.time()
+        _derived = _derive_expiry_from_url(url, now=_ref)
+        if _derived is not None and _derived["expires_at"] > _ref:
+            expires_at = float(_derived["expires_at"])
     kind = _derive_kind(data, url)
     category = _derive_category(data, url)
     is_temporary = bool(data.get("is_temporary"))

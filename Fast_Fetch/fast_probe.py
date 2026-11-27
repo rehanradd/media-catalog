@@ -982,6 +982,14 @@ def _record_move(url: str, final_url: str, stats: dict) -> None:
             stats["redirects_seen"] = stats.get("redirects_seen", 0) + 1
         if obs.get("applied"):
             stats["moves_applied"] = stats.get("moves_applied", 0) + 1
+            # Branch 5 (§3 row 5): the batch driver clears the moved
+            # host's negative-cache records after the batch — the pair
+            # rides in stats so the DB-free prober never touches the
+            # catalog itself.
+            hosts = stats.setdefault("moves_applied_hosts", [])
+            pair = (obs.get("old_host"), obs.get("new_host"))
+            if pair[0] and pair[1] and pair not in hosts:
+                hosts.append(pair)
     except Exception:
         pass
 
@@ -1040,6 +1048,12 @@ def _record_html(url: str, host: str, final_url: str, stats: dict) -> None:
             stats["html_observations"] = stats.get("html_observations", 0) + 1
         if obs.get("applied"):
             stats["moves_applied"] = stats.get("moves_applied", 0) + 1
+            # Branch 5 (§3 row 5): same pair-riding as _record_move —
+            # record_html_observation names the pair as host/moved_to.
+            hosts = stats.setdefault("moves_applied_hosts", [])
+            pair = (obs.get("host"), obs.get("moved_to"))
+            if pair[0] and pair[1] and pair not in hosts:
+                hosts.append(pair)
     except Exception:
         pass
 
@@ -1439,6 +1453,7 @@ def _merge_stats(stats_list: list[dict]) -> dict:
                     "no_verdict": 0, "blocked": 0, "reconnects": 0,
                     "redirects_seen": 0, "moves_applied": 0, "get_fallbacks": 0,
                     "html_observations": 0, "site_signals": {},
+                    "moves_applied_hosts": [],
                     "stopped": False}
     for stats in stats_list:
         merged["hosts"] += 1
@@ -1451,6 +1466,9 @@ def _merge_stats(stats_list: list[dict]) -> dict:
         merged["moves_applied"] += stats.get("moves_applied", 0)
         merged["get_fallbacks"] += stats.get("get_fallbacks", 0)
         merged["html_observations"] += stats.get("html_observations", 0)
+        for pair in stats.get("moves_applied_hosts") or []:
+            if pair not in merged["moves_applied_hosts"]:
+                merged["moves_applied_hosts"].append(pair)
         for site, count in (stats.get("site_signals") or {}).items():
             merged["site_signals"][site] = merged["site_signals"].get(site, 0) + count
         merged["stopped"] = merged["stopped"] or bool(stats.get("stopped"))
@@ -1587,6 +1605,36 @@ def run_pilot(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
         except Exception as exc:  # noqa: BLE001 - queue is best-effort
             print(f"[!] site recheck queue failed: {exc}", file=sys.stderr)
     merged["site_rechecks_queued"] = queued_sites
+    # Self-healing Branch 5 (§3 row 5): a host move applied by this
+    # batch earns the moved host a fresh verdict — clear its
+    # negative-cache records (ledger last_failed_at + resolved_cache
+    # fail_count) so the new domain is not refused for the old
+    # domain's failures. Best-effort, on its own short-lived
+    # connection (the writer is already closed): a clearing failure
+    # must never fail the batch; the summary records what was cleared.
+    cleared: dict = {}
+    if merged.get("moves_applied_hosts"):
+        try:
+            try:
+                from Fast_Fetch import resolved_cache
+            except ImportError:
+                import resolved_cache  # type: ignore
+            _clear_conn = sqlite3.connect(
+                db_path, timeout=WRITER_BUSY_TIMEOUT_MS / 1000.0)
+            try:
+                for _old_host, _new_host in merged["moves_applied_hosts"]:
+                    try:
+                        cleared[_old_host] = (
+                            resolved_cache.clear_host_negative_cache(
+                                _clear_conn, _old_host))
+                    except Exception:
+                        continue
+                _clear_conn.commit()
+            finally:
+                _clear_conn.close()
+        except Exception as exc:  # noqa: BLE001 - clearing is best-effort
+            print(f"[!] negative-cache clear failed: {exc}", file=sys.stderr)
+    merged["negative_cache_cleared"] = cleared
     merged.update({
         "mode": "apply",
         "distinct_urls": selection["distinct_urls"],

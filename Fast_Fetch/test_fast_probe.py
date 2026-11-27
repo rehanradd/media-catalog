@@ -1859,5 +1859,72 @@ class GracefulStopTests(unittest.TestCase):
             fast_probe._STOP_SIGNAL_COUNT[0] = 0
 
 
+class MovesAppliedHostsTests(unittest.TestCase):
+    """Applied host moves ride to the batch driver in stats (Branch 5,
+    §3 row 5): ``_record_move`` / ``_record_html`` record the (old, new)
+    pair when the observation says applied, ``_merge_stats`` merges
+    them deduplicated, and a non-applied observation records nothing —
+    so the driver clears exactly the hosts this batch moved."""
+
+    def _registry(self, applied=True):
+        registry = unittest.mock.Mock()
+        registry.record_redirect.return_value = {
+            "old_host": "vcloud.lol", "new_host": "vcloud.my",
+            "count": 20, "threshold_reached": True, "applied": applied}
+        registry.record_html_observation.return_value = {
+            "host": "vcloud.lol", "count": 20, "threshold_reached": True,
+            "applied": applied, "moved_to": "vcloud.my" if applied else None,
+            "parked_candidate": False}
+        return registry
+
+    def test_record_move_stores_pair_when_applied(self):
+        stats: dict = {}
+        with unittest.mock.patch.object(
+                fast_probe, "host_registry", self._registry(applied=True)):
+            fast_probe._record_move(
+                "https://vcloud.lol/f/1", "https://vcloud.my/f/1", stats)
+        self.assertEqual(stats["moves_applied"], 1)
+        self.assertEqual(stats["moves_applied_hosts"],
+                         [("vcloud.lol", "vcloud.my")])
+
+    def test_record_move_stores_nothing_when_not_applied(self):
+        stats: dict = {}
+        with unittest.mock.patch.object(
+                fast_probe, "host_registry", self._registry(applied=False)):
+            fast_probe._record_move(
+                "https://vcloud.lol/f/1", "https://vcloud.my/f/1", stats)
+        self.assertEqual(stats.get("moves_applied", 0), 0)
+        self.assertNotIn("moves_applied_hosts", stats)
+
+    def test_record_html_stores_pair_when_applied(self):
+        stats: dict = {}
+        with unittest.mock.patch.object(
+                fast_probe, "host_registry", self._registry(applied=True)):
+            fast_probe._record_html(
+                "https://vcloud.lol/f/1", "vcloud.lol",
+                "https://vcloud.my/f/1", stats)
+        self.assertEqual(stats["moves_applied"], 1)
+        self.assertEqual(stats["moves_applied_hosts"],
+                         [("vcloud.lol", "vcloud.my")])
+
+    def test_merge_deduplicates_pairs(self):
+        merged = fast_probe._merge_stats(
+            [{"probed": 1, "verdicts": 1, "no_verdict": 0, "blocked": 0,
+              "reconnects": 0, "redirects_seen": 1, "moves_applied": 1,
+              "get_fallbacks": 0, "html_observations": 0,
+              "moves_applied_hosts": [("vcloud.lol", "vcloud.my")],
+              "by_status": {"active": 1}},
+             {"probed": 1, "verdicts": 1, "no_verdict": 0, "blocked": 0,
+              "reconnects": 0, "redirects_seen": 1, "moves_applied": 1,
+              "get_fallbacks": 0, "html_observations": 1,
+              "moves_applied_hosts": [("vcloud.lol", "vcloud.my"),
+                                     ("dropgalaxy.in", "dropgalaxy.io")],
+              "by_status": {"parked": 1}}])
+        self.assertEqual(merged["moves_applied"], 2)
+        self.assertEqual(merged["moves_applied_hosts"],
+                         [("vcloud.lol", "vcloud.my"),
+                          ("dropgalaxy.in", "dropgalaxy.io")])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2055,5 +2055,162 @@ class TestR2Bucket(unittest.TestCase):
                          "5703108c07374cf4bf82a6a6e2041364")
 
 
+# ── expiry derivation at the bank seam (self-healing Branch 5, §3 row 1) ──
+
+class TestBankDerivesExpiry(unittest.TestCase):
+    """``record_resolved_cache`` derives the expiry off the banked URL
+    when the resolve answer carries none — the one bank seam every
+    caller shares (pool, JIT, press, serve re-bank), so a signed URL
+    never banks NULL. A banked R2 URL carries a real ``expires_at``; a
+    Google usercontent URL carries the 900 s window; an unparsable URL
+    banks NULL, never a made-up number; an explicit expiry in the
+    answer always wins; a stillborn derived expiry is dropped."""
+
+    # 2026-11-27T12:00:00Z, fixed so the R2 parse is deterministic.
+    NOW = 1795780800  # calendar.timegm((2026, 11, 27, 12, 0, 0))
+
+    R2_URL = ("https://pub-5703108c07374cf4bf82a6a6e2041364.r2.dev/abc123"
+              "?X-Amz-Date=20261127T120000Z&X-Amz-Expires=28800")
+    GOOGLE_URL = "https://video-downloads.googleusercontent.com/abc123"
+    PERMANENT_URL = "https://pixeldrain.com/api/file/s2yMcLkb"
+
+    def test_r2_url_banks_parsed_expiry(self):
+        conn = fresh_conn()
+        stored = resolved_cache.record_resolved_cache(
+            conn, 77, file_resolve(url=self.R2_URL), now=self.NOW)
+        self.assertEqual(stored["expires_at"], self.NOW + 28800)
+
+    def test_google_url_banks_measured_window(self):
+        conn = fresh_conn()
+        stored = resolved_cache.record_resolved_cache(
+            conn, 77, file_resolve(url=self.GOOGLE_URL, is_temporary=True),
+            now=self.NOW)
+        self.assertEqual(stored["expires_at"], self.NOW + 900)
+        # The measured expiry feeds the reverify horizon: ~15 min, not
+        # the 6 h temporary ceiling the row would get with NULL.
+        self.assertLessEqual(stored["reverify_after"], self.NOW + 900)
+        self.assertGreater(stored["reverify_after"], self.NOW)
+
+    def test_permanent_url_banks_null(self):
+        conn = fresh_conn()
+        stored = resolved_cache.record_resolved_cache(
+            conn, 77, file_resolve(url=self.PERMANENT_URL), now=self.NOW)
+        self.assertIsNone(stored["expires_at"])
+
+    def test_explicit_expiry_in_answer_wins(self):
+        conn = fresh_conn()
+        stored = resolved_cache.record_resolved_cache(
+            conn, 77, file_resolve(url=self.R2_URL, expires_at=self.NOW + 1111),
+            now=self.NOW)
+        self.assertEqual(stored["expires_at"], self.NOW + 1111)
+
+    def test_stillborn_derived_expiry_is_dropped(self):
+        conn = fresh_conn()
+        stale = ("https://pub-5703108c07374cf4bf82a6a6e2041364.r2.dev/abc123"
+                 "?X-Amz-Date=20261127T000000Z&X-Amz-Expires=3600")
+        stored = resolved_cache.record_resolved_cache(
+            conn, 77, file_resolve(url=stale), now=self.NOW)
+        self.assertIsNone(stored["expires_at"])
+
+
+# ── negative-cache clearing on host move (Branch 5, §3 row 5) ─────────────
+
+class TestClearHostNegativeCache(unittest.TestCase):
+    """``clear_host_negative_cache`` clears the moved host's failure
+    circuits and nothing else: the ledger negative cache
+    (``last_failed_at`` / ``failure_class`` / ``failure_resolver_v``)
+    and the resolved-cache circuit (``fail_count`` → 0), scoped to rows
+    whose stored URL lives on the old host. Other hosts' records are
+    untouched."""
+
+    OLD = "vcloud.lol"
+    NEW = "vcloud.my"
+    OTHER = "pixeldrain.com"
+
+    def _conn(self):
+        conn = fresh_conn()
+        conn.execute(
+            "CREATE TABLE download_sources (id INTEGER PRIMARY KEY,"
+            " url TEXT, final_url TEXT, last_failed_at REAL,"
+            " failure_class TEXT, failure_resolver_v INTEGER)")
+        return conn
+
+    def _seed(self, conn):
+        # Ledger: old host via final_url; old host via source url only;
+        # other host (must survive); a never-failed old-host row.
+        conn.execute(
+            "INSERT INTO download_sources VALUES (1,"
+            " 'https://vcloud.lol/file/1', 'https://vcloud.lol/dl/1',"
+            " 1795000000.0, 'http_404', 17)")
+        conn.execute(
+            "INSERT INTO download_sources VALUES (2,"
+            " 'https://vcloud.lol/file/2', NULL,"
+            " 1795000000.0, 'transport', 17)")
+        conn.execute(
+            "INSERT INTO download_sources VALUES (3,"
+            " 'https://pixeldrain.com/api/file/x',"
+            " 'https://pixeldrain.com/api/file/x',"
+            " 1795000000.0, 'http_404', 17)")
+        conn.execute(
+            "INSERT INTO download_sources VALUES (4,"
+            " 'https://vcloud.lol/file/4', 'https://vcloud.lol/dl/4',"
+            " NULL, NULL, NULL)")
+        # Cache: old host with an open circuit; other host likewise.
+        conn.execute(
+            "INSERT INTO resolved_cache (link_id, url, category, kind,"
+            " resolved_at, reverify_after, fail_count) VALUES"
+            " (11, 'https://vcloud.lol/dl/1', 'B', 'file',"
+            " 1795000000.0, 1795003600.0, 2)")
+        conn.execute(
+            "INSERT INTO resolved_cache (link_id, url, category, kind,"
+            " resolved_at, reverify_after, fail_count) VALUES"
+            " (12, 'https://pixeldrain.com/api/file/x', 'A', 'file',"
+            " 1795000000.0, 1795003600.0, 2)")
+        conn.commit()
+
+    def test_clears_moved_host_only(self):
+        conn = self._conn()
+        self._seed(conn)
+        cleared = resolved_cache.clear_host_negative_cache(conn, self.OLD)
+        self.assertEqual(cleared, {"ledger": 2, "cache": 1})
+        rows = {r[0]: r for r in conn.execute(
+            "SELECT id, last_failed_at, failure_class, failure_resolver_v"
+            " FROM download_sources").fetchall()}
+        self.assertIsNone(rows[1][1])
+        self.assertIsNone(rows[1][2])
+        self.assertIsNone(rows[1][3])
+        self.assertIsNone(rows[2][1])
+        self.assertIsNotNone(rows[3][1])
+        self.assertEqual(rows[3][2], "http_404")
+        self.assertIsNone(rows[4][1])
+        cache = {r[0]: r[1] for r in conn.execute(
+            "SELECT link_id, fail_count FROM resolved_cache").fetchall()}
+        self.assertEqual(cache[11], 0)
+        self.assertEqual(cache[12], 2)
+
+    def test_empty_host_clears_nothing(self):
+        conn = self._conn()
+        self._seed(conn)
+        self.assertEqual(resolved_cache.clear_host_negative_cache(conn, ""),
+                         {"ledger": 0, "cache": 0})
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM download_sources"
+                         " WHERE last_failed_at IS NOT NULL").fetchone()[0], 3)
+
+    def test_missing_ledger_table_still_clears_cache(self):
+        conn = fresh_conn()  # resolved_cache only, no download_sources
+        conn.execute(
+            "INSERT INTO resolved_cache (link_id, url, category, kind,"
+            " resolved_at, reverify_after, fail_count) VALUES"
+            " (11, 'https://vcloud.lol/dl/1', 'B', 'file',"
+            " 1795000000.0, 1795003600.0, 2)")
+        conn.commit()
+        cleared = resolved_cache.clear_host_negative_cache(conn, self.OLD)
+        self.assertEqual(cleared, {"ledger": 0, "cache": 1})
+        self.assertEqual(
+            conn.execute("SELECT fail_count FROM resolved_cache"
+                         " WHERE link_id = 11").fetchone()[0], 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
