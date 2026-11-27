@@ -68,6 +68,39 @@ try:
 except Exception:  # pragma: no cover - panel_feed is always importable in-repo
     panel_feed = None
 
+
+def _self_healing_log():
+    """The Branch 6 audit log module, or None when it cannot be
+    imported. Lazy: the log module imports this module's siblings
+    lazily, and a top-level import here would close a loop for
+    package-style imports. Never raises."""
+    try:
+        import self_healing_log
+        return self_healing_log
+    except ImportError:
+        try:
+            from Fast_Fetch import self_healing_log as _shl
+            return _shl
+        except ImportError:
+            return None
+
+
+def _log_bank_event(kind, url, *, source, old="", new="", reason="",
+                    verified_by=""):
+    """One audit-log line for a bank-time event (Branch 6, design
+    §4.1). The channel is the bank source: the pool is warmed by the
+    sweep, a JIT bank is a recheck. Never raises — a log failure
+    must never break a bank."""
+    try:
+        _shl = _self_healing_log()
+        if _shl is not None:
+            _shl.log_event(
+                kind, host=_host_of(url), old=old, new=new,
+                discovered_by="sweep" if source == "pool" else "recheck",
+                reason=reason, verified_by=verified_by)
+    except Exception:
+        pass
+
 __all__ = [
     "init_resolved_cache",
     "lookup_cache",
@@ -593,6 +626,12 @@ def record_resolved_cache(conn: sqlite3.Connection, link_id: int,
     if not _media_ok:
         print(f"resolved_cache: refusing to bank non-media url "
               f"{url} for link {link_id}", file=sys.stderr)
+        # Branch 6 (design §4.1): every refused bank writes exactly
+        # one audit-log line — the refusal is the auto-change.
+        _log_bank_event("cache-refusal", url, source=source, old=url,
+                        new="",
+                        reason="non-media url refused by media-bytes check",
+                        verified_by="verify_media_bytes")
         return False
     _ensure_schema(conn)
     if source not in ("pool", "jit"):
@@ -617,6 +656,15 @@ def record_resolved_cache(conn: sqlite3.Connection, link_id: int,
         _derived = _derive_expiry_from_url(url, now=_ref)
         if _derived is not None and _derived["expires_at"] > _ref:
             expires_at = float(_derived["expires_at"])
+            # Branch 6 (design §4.1): a measured expiry derived off
+            # the URL and banked writes exactly one audit-log line.
+            # (An explicit expiry carried by the resolve answer is
+            # the resolver's own data, not a derivation — it is not
+            # logged here.)
+            _log_bank_event("expiry-banked", url, source=source, old=url,
+                            new=str(expires_at),
+                            reason="derived expiry banked from url",
+                            verified_by="expiry_bank.derive_expiry")
     kind = _derive_kind(data, url)
     category = _derive_category(data, url)
     is_temporary = bool(data.get("is_temporary"))

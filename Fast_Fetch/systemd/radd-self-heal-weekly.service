@@ -1,0 +1,38 @@
+[Unit]
+Description=Weekly self-healing maintenance: prune stale host observations, rotate the audit log (Branch 6, design §4)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/radd-stream
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+# self_heal_weekly.py (Branch 6) does two chores, both cheap when there
+# is nothing to do, and logs one JSON summary line:
+#   1. prune the host-registry observations sidecar
+#      (host_redirect_observations.json): redirect / HTML observations
+#      older than 90 days that never fired are dropped, so a stale
+#      count from a dead pair can never combine with a fresh
+#      observation to resurrect it. Applied (applied_at) and evaluated
+#      (evaluated_at) records are kept — they are the spent markers
+#      that stop the same pair re-applying;
+#   2. rotate the self-healing audit log (self_healing.log in the data
+#      dir) to a week-suffixed file when its last write is from an
+#      earlier ISO week than now.
+# The observations sidecar lives next to host_registry.py
+# (/opt/radd-stream/Fast_Fetch/host_redirect_observations.json); the
+# log lives in the data dir (/home/ubuntu/radd-stream-data). Both
+# defaults resolve from the code, so the job takes no arguments.
+# A per-chore failure is reported in the summary, never fatal.
+ExecStart=/usr/bin/python3 -S /opt/radd-stream/Fast_Fetch/self_heal_weekly.py
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=600
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

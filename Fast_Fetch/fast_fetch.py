@@ -65,6 +65,22 @@ except ImportError:
         # degrades to the stored URL. The registry is never load-bearing.
         host_registry = None
 
+try:
+    import self_healing_log  # self-healing audit log (Branch 6, design §4)
+except ImportError:
+    try:
+        from Fast_Fetch import self_healing_log  # package-style import
+    except ImportError:
+        self_healing_log = None
+
+try:
+    import recheck_queue  # domain recheck queue (Branch 4, design §1a)
+except ImportError:
+    try:
+        from Fast_Fetch import recheck_queue  # package-style import
+    except ImportError:
+        recheck_queue = None
+
 
 def _rewrite_host(url: str) -> str:
     """Serve-time host rewrite through the host registry (no-op when the
@@ -75,6 +91,40 @@ def _rewrite_host(url: str) -> str:
         return host_registry.rewrite_url(url)
     except Exception:
         return url
+
+
+#: Registry-disagreement memo (Branch 6, design §4): a site whose
+#: active-base host the host registry marks dead/moved is checked at
+#: most once per hour per process — the log line + recheck-queue entry
+#: are once-per-hour signals, not once-per-press noise. The memo is
+#: stamped even when the check finds no disagreement (a clean site
+#: stays clean for the hour) and even when the check fails (a failed
+#: check retries in an hour, not on the next press).
+_SITE_HOST_RECONCILE_TTL = 3600.0
+_site_host_reconciled: dict = {}
+
+
+def _maybe_reconcile_site_host(site_name) -> None:
+    """The §4 merge rule, once per site per hour: when the site's
+    active-base host is dead/moved in ``host_registry``, log the
+    disagreement and queue the site for ``resolve_site`` (a
+    site-migration signal). The host registry already wins the
+    rewrite at resolve time (``_rewrite_host`` above); this is the
+    signal that the SITE record needs a discovery chain. Best-effort
+    and never raises — a reconcile failure must never fail a press."""
+    if not site_name or self_healing_log is None or recheck_queue is None:
+        return
+    site = str(site_name)
+    now = time.time()
+    last = _site_host_reconciled.get(site)
+    if last is not None and now - last < _SITE_HOST_RECONCILE_TTL:
+        return
+    _site_host_reconciled[site] = now
+    try:
+        self_healing_log.reconcile_site_host(
+            site, queue_path=recheck_queue.queue_path_for_db(DB_PATH))
+    except Exception:
+        pass
 
 
 def _host_base(old_host: str, fallback: str) -> str:
@@ -10378,15 +10428,22 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
     # again, and a challenge invalidates it at once. None means "no store".
     _clearance = _clearance_store()
     not_found = {"success": False, "error": "not_found", "code": "not_found"}
+    # Branch 6 (design §4): the site this link came from, for the
+    # registry merge-rule check below. releases.source_site is the
+    # per-release scrape provenance — the same vocabulary the domain
+    # registry keys its sites by.
+    site = None
     with get_db() as conn:
         row = conn.execute("SELECT * FROM download_sources WHERE id = ?", (source_id,)).fetchone()
         if row:
             adult = conn.execute(
-                "SELECT p.is_18_plus FROM download_sources s "
+                "SELECT p.is_18_plus, r.source_site FROM download_sources s "
                 "JOIN releases r ON r.id = s.release_id "
                 "JOIN posts p ON p.id = r.post_id WHERE s.id = ?",
                 (source_id,),
             ).fetchone()
+            if adult and len(adult) > 1:
+                site = adult[1]
             if adult and adult[0]:
                 if v2:
                     # Identical to a missing id: never say why.
@@ -10407,6 +10464,13 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
 
     src = dict(row)
     now_ts = time.time()
+
+    # Branch 6 (design §4 merge rule): when this link's site has an
+    # active-base host the host registry marks dead/moved, the host
+    # registry already wins the rewrite (_rewrite_host below) — this
+    # logs the disagreement and queues the site for resolve_site, at
+    # most once per site per hour per process. Never raises.
+    _maybe_reconcile_site_host(site)
 
     # Negative cache (Session 101): a copy that failed recently is
     # not re-proved on every play press. Only failures are recorded

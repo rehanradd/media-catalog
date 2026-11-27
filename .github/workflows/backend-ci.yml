@@ -1541,6 +1541,9 @@ jobs:
       - name: 🧪 test_domain_recheck.py
         run: python3 -S Fast_Fetch/test_domain_recheck.py
 
+      - name: 🧪 test_self_healing_log.py
+        run: python3 -S Fast_Fetch/test_self_healing_log.py
+
       # Docs drift is a code property, not a prose one. Root `AGENTS.md` cited `viewer.py` line
       # numbers and four of them pointed at unrelated code on trunk `37ae67b` (measured 2026-11-05)
       # while every suite stayed green, because `WorkflowSuiteCoverageTests`' RUN regex matches

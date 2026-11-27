@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 174 session files (171 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 175 session files (172 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -71,15 +71,7 @@
 ## Rotated session history
 
 The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete index.
-- **2026-11-24 — DOC-05 pre-peak fill: CLOSED, already live.** On main + installed; ran 23 Nov. F-3 used the wrong path. Note: `20261124-doc05-prefetch-fill-closure.md`.
-- **2026-11-24 — PNL-02/03:** 480p default; coins surface removed from panel; v6 migration; branch `muse/phase4-pnl02-03-quality-coins-20261124`.
-- **2026-11-24 - INF-05 sweep stuck-child fix:** graceful stop in `fast_probe.py`; loop trap in `fast-probe-sweep-loop.sh`. Note: `20261124-inf05-sweep-stuck-child.md`.
-- **2026-11-24 — API-03 expiry banked at resolve time (checkup P0):** branch `muse/phase4-api03-expiry-bank-20261124`. New `expiry_bank.py` (stdlib-only, pure): signed R2/s+e/absolute-epoch parse + 900 s Google usercontent window; wired into `resolve_live_source` + `_bank_hubcloud_siblings`. Tests: `test_expiry_bank.py` 36/36. Full note: `checkpoints/20261124-api03-expiry-bank.md`.
-- **2026-11-24 — API-14 retry/timeout caps:** muse/phase4-api14-retry-caps-20261124; test_retry_caps.py 36/36 + CI step.
-- **2026-11-23 — rotated out:** catalog pipeline fixes — verbatim in
-  `checkpoints/20261126-wave6-continuity-rotation.md`.
-- **2026-11-21 — rotated out:** 1fichier resolver wiring, One Piece identity
-  cluster, Registry §2 — verbatim in `checkpoints/20261126-wave6-continuity-rotation.md`.
+- **2026-11-24 → 2026-11-21 — rotated out:** seven session-history bullets (DOC-05, PNL-02/03, INF-05, API-03, API-14, catalog pipeline fixes, 1fichier wiring) — verbatim in `checkpoints/20261127-selfheal-b6-durability.md` (Rotated out section).
 ## Moved out (reference prose, verbatim)
 
 - ✍️ Incoming Agent Checklist → `../docs/SPEC_INCOMING_AGENT_CHECKLIST.md` (294 lines) — the onboarding procedure, unchanged
@@ -90,3 +82,6 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 
 ## 2026-11-27 - Self-healing Branch 5: expiry everywhere + negative-cache clear on host move
 - `record_resolved_cache` derives expiry off the banked URL when the answer carries none (R2 signed, Google 900 s; stillborn dropped, permanent NULL); failover winner in `resolve_live_source` banks its own derived expiry on the winner row. `resolved_cache.clear_host_negative_cache` clears the moved host's ledger negative-cache + fail_count; sweep driver clears after a batch with applied moves. Tests: test_resolved_cache +8, test_fast_fetch +4 (_winner_expiry), test_fast_probe +4 (moves_applied_hosts). Branch selfheal-b5-expiry-everywhere, base 6e383b76.
+
+## 2026-11-27 - Self-healing Branch 6: durability (log + reconciliation + weekly prune)
+- New `self_healing_log.py` (stdlib-only): append-only JSON-lines audit log (`self_healing.log` in the data dir, `RADD_SELF_HEALING_LOG` override, weekly rotation); every auto-change writes exactly one line — site-move via `_record_verified`, host-move via `apply_move`, parked-flag via `_mark_host_parked`, cache-refusal + derived-expiry-banked via `record_resolved_cache`. Merge rule: `reconcile_site_host` logs a registry disagreement + queues the site for `resolve_site`; wired into `resolve_live_source` (memoised once per site per hour). `host_registry.prune_observations` (90-day retention, spent markers kept) + new `self_heal_weekly.py` CLI + `radd-self-heal-weekly.service/.timer` (Sun 07:00). Tests: new `test_self_healing_log.py` 29/29 + CI step. Full note: `checkpoints/20261127-selfheal-b6-durability.md`. Branch selfheal-b6-durability, base cbcc000c.

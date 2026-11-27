@@ -65,6 +65,7 @@ Standard library only. No network at import time.
 
 from __future__ import annotations
 
+import calendar
 import contextlib
 import fcntl
 import http.client
@@ -102,6 +103,14 @@ REDIRECT_MOVE_THRESHOLD = 20
 OBSERVATION_SAMPLE_URLS = 3
 #: Per-probe socket budget for the validator / root check.
 VALIDATE_TIMEOUT = 10
+#: Observation retention for the weekly prune (Branch 6, design §4.3):
+#: a redirect / HTML observation older than this stops counting toward
+#: a move. Ninety days is long enough for a small host to accumulate
+#: its threshold over several batches, and short enough that a stale
+#: count from a dead pair can never combine with a fresh observation
+#: to resurrect it.
+OBSERVATION_RETENTION_DAYS = 90
+
 #: A rewrite only ever applies to these evidence-independent gates.
 _APPLY_STATUSES = ("active",)
 
@@ -110,6 +119,7 @@ USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 __all__ = [
     "REDIRECT_MOVE_THRESHOLD",
+    "OBSERVATION_RETENTION_DAYS",
     "load_registry",
     "save_registry",
     "get_registry",
@@ -120,9 +130,26 @@ __all__ = [
     "apply_move",
     "record_redirect",
     "record_html_observation",
+    "prune_observations",
     "validate_host_move",
     "check_host_root",
 ]
+
+
+def _self_healing_log():
+    """The Branch 6 audit log module, or None when it cannot be
+    imported. Lazy: the log module imports this module's siblings
+    lazily, and a top-level import here would close a loop for
+    package-style imports. Never raises."""
+    try:
+        import self_healing_log
+        return self_healing_log
+    except ImportError:
+        try:
+            from Fast_Fetch import self_healing_log as _shl
+            return _shl
+        except ImportError:
+            return None
 
 
 def _now_iso() -> str:
@@ -383,6 +410,22 @@ def apply_move(old_host: str, new_host: str, evidence: str,
                 {"domain": new_host, "seen_from": now}]
         save_registry(reg, registry_path)
         _drop_cache(registry_path)
+        # Branch 6 (design §4.1): every applied host move writes
+        # exactly one audit-log line. The log never breaks the move:
+        # log_event never raises, and this call is belt-and-braces.
+        try:
+            _shl = _self_healing_log()
+            if _shl is not None:
+                _shl.log_event(
+                    "host-move", host=old_host, old=old_host,
+                    new=new_host,
+                    discovered_by=_shl.discovered_by_for_host_evidence(
+                        evidence),
+                    reason="host move applied: %s -> %s (%s)"
+                           % (old_host, new_host, evidence),
+                    verified_by=verified_by or evidence)
+        except Exception:
+            pass
         return dict(entry)
 
 
@@ -426,6 +469,77 @@ def _save_observations(data: dict,
             with contextlib.suppress(OSError):
                 tmp.unlink()
         raise
+
+
+def _parse_iso(value) -> float | None:
+    """Epoch seconds for an ``_now_iso`` (UTC, ``Z``-suffixed)
+    timestamp, or None when it does not parse. Never raises."""
+    try:
+        return float(calendar.timegm(
+            time.strptime(str(value), "%Y-%m-%dT%H:%M:%SZ")))
+    except Exception:
+        return None
+
+
+def prune_observations(observations_path: str | Path | None = None, *,
+                       retention_days: float = OBSERVATION_RETENTION_DAYS,
+                       now: float | None = None,
+                       dry_run: bool = False) -> dict:
+    """Drop stale observations from the sidecar (Branch 6, design §4.3;
+    called by the weekly job).
+
+    A record is pruned when its ``last_seen`` (falling back to
+    ``first_seen``) is older than ``retention_days`` AND it never
+    fired: records carrying ``applied_at`` (a redirect pair whose
+    move was applied) or ``evaluated_at`` (an HTML host already
+    evaluated as a parked-candidate) are KEPT — they are the spent
+    markers that stop the same pair re-applying, and pruning them
+    would let a dead pair re-accumulate from zero. A record with no
+    parsable timestamp is kept (unprovable staleness is not a
+    deletion reason). With ``dry_run`` the counts are measured but
+    the file is not rewritten. Returns ``{"observations_pruned",
+    "html_pruned", "observations_kept", "html_kept"}``. Never raises;
+    a load failure returns zeros, and the file is rewritten only
+    when something was actually pruned.
+    """
+    out = {"observations_pruned": 0, "html_pruned": 0,
+           "observations_kept": 0, "html_kept": 0}
+    try:
+        with _obs_lock:
+            data = _load_observations(observations_path)
+            cutoff = (now if now is not None else time.time()) \
+                - float(retention_days) * 86400.0
+            changed = False
+            for section, pruned_key, kept_key in (
+                    ("observations", "observations_pruned",
+                     "observations_kept"),
+                    ("html_observations", "html_pruned", "html_kept")):
+                obs = data.get(section)
+                if not isinstance(obs, dict):
+                    continue
+                for key in list(obs.keys()):
+                    rec = obs.get(key)
+                    if not isinstance(rec, dict):
+                        continue
+                    if rec.get("applied_at") or rec.get("evaluated_at"):
+                        out[kept_key] += 1
+                        continue
+                    seen = _parse_iso(rec.get("last_seen")) \
+                        if rec.get("last_seen") is not None else None
+                    if seen is None:
+                        seen = _parse_iso(rec.get("first_seen")) \
+                            if rec.get("first_seen") is not None else None
+                    if seen is None or seen >= cutoff:
+                        out[kept_key] += 1
+                        continue
+                    del obs[key]
+                    out[pruned_key] += 1
+                    changed = True
+            if changed and not dry_run:
+                _save_observations(data, observations_path)
+        return out
+    except Exception:
+        return out
 
 
 def _same_path_query(old_url: str, new_url: str) -> bool:
@@ -551,6 +665,8 @@ def _mark_host_parked(host: str, reason: str, *,
             reg = load_registry(registry_path)
             hosts = reg.setdefault("hosts", {})
             entry = hosts.setdefault(host, {})
+            flag = "parked_candidate" if candidate else "parked"
+            was_flagged = bool(entry.get(flag))
             if candidate:
                 entry["parked_candidate"] = True
             else:
@@ -559,6 +675,21 @@ def _mark_host_parked(host: str, reason: str, *,
             entry["parked_reason"] = reason
             save_registry(reg, registry_path)
             _drop_cache(registry_path)
+            # Branch 6 (design §4.1): every parked flag writes exactly
+            # one audit-log line — the flag is the auto-change, and the
+            # sweep's HTML observation is the channel that found it.
+            # The log never breaks the flag: log_event never raises,
+            # and this call is belt-and-braces.
+            try:
+                _shl = _self_healing_log()
+                if _shl is not None:
+                    _shl.log_event(
+                        "parked-flag", host=host,
+                        old=flag if was_flagged else "", new=flag,
+                        discovered_by="sweep", reason=reason,
+                        verified_by="sweep")
+            except Exception:
+                pass
             return dict(entry)
     except Exception:
         return {}

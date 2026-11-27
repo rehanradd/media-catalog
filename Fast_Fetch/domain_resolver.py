@@ -75,6 +75,22 @@ except ImportError:  # pragma: no cover - namespace-package import
     except ImportError:  # pragma: no cover - sibling module missing
         recheck_queue = None  # type: ignore
 
+def _self_healing_log():
+    """The Branch 6 audit log module, or None when it cannot be
+    imported. Lazy: the log module imports this module lazily, and a
+    top-level import here would close a loop for package-style
+    imports. Never raises."""
+    try:
+        import self_healing_log
+        return self_healing_log
+    except ImportError:
+        try:
+            from Fast_Fetch import self_healing_log as _shl
+            return _shl
+        except ImportError:
+            return None
+
+
 BASE_DIR = Path(__file__).resolve().parent
 REGISTRY_PATH = BASE_DIR / "domain_registry.json"
 
@@ -797,6 +813,24 @@ def _record_verified(reg: dict, site_name: str, entry: dict, hit: dict,
                 new_entry["reason"] = hit["reason"]
             history.append(new_entry)
         save_registry(fresh, registry_path)
+    if old_base and old_base != new_base:
+        # Branch 6 (design §4.1): a site move writes exactly one
+        # audit-log line. Logged after the lock is released — a file
+        # append must never hold the registry lock. The log never
+        # breaks the promotion: log_event never raises, and this
+        # call is belt-and-braces.
+        try:
+            _shl = _self_healing_log()
+            if _shl is not None:
+                _shl.log_event(
+                    "site-move", site=site_name, old=old_base,
+                    new=new_base,
+                    discovered_by=_shl.discovered_by_for_site_method(
+                        discovered_by),
+                    reason=hit.get("reason", ""),
+                    verified_by=hit.get("verified_by", ""))
+        except Exception:
+            pass
     return new_base
 
 
