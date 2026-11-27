@@ -245,7 +245,7 @@ class ResolveCoalescingTests(unittest.TestCase):
     def test_two_concurrent_resolves_run_the_upstream_once(self):
         calls = []
 
-        def slow_resolve(source_id, *, v2=False, want="either", _failover=True):
+        def slow_resolve(source_id, *, v2=False, want="either", _failover=True, background=False):
             calls.append((source_id, v2, want))
             time.sleep(0.2)
             return {"success": True, "url": "https://cdn.example/film.mp4"}
@@ -270,7 +270,7 @@ class ResolveCoalescingTests(unittest.TestCase):
         download must never inherit a watch-shaped answer or vice versa."""
         calls = []
 
-        def instant_resolve(source_id, *, v2=False, want="either", _failover=True):
+        def instant_resolve(source_id, *, v2=False, want="either", _failover=True, background=False):
             calls.append((source_id, v2, want))
             return {"success": True, "url": "https://cdn.example/film.mp4"}
 
@@ -289,7 +289,7 @@ class ResolveCoalescingTests(unittest.TestCase):
     def test_a_waiter_whose_leader_fails_resolves_on_its_own(self):
         calls = []
 
-        def fail_once(source_id, *, v2=False, want="either", _failover=True):
+        def fail_once(source_id, *, v2=False, want="either", _failover=True, background=False):
             calls.append((source_id, v2, want))
             if len(calls) == 1:
                 raise RuntimeError("upstream blew up")
@@ -316,7 +316,7 @@ class ResolveCoalescingTests(unittest.TestCase):
         the waiter falls back to the old behaviour — its own resolve."""
         calls = []
 
-        def slow_resolve(source_id, *, v2=False, want="either", _failover=True):
+        def slow_resolve(source_id, *, v2=False, want="either", _failover=True, background=False):
             calls.append((source_id, v2, want))
             time.sleep(0.5)
             return {"success": True, "url": "https://cdn.example/film.mp4"}
