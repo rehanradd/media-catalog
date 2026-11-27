@@ -435,7 +435,7 @@ class ScreenSnapshotTest {
     }
 
     @Test
-    fun heroMetaLine() {
+    fun heroIsCleanArtworkWithDots() {
         val post = Post(
             id = 104,
             title = "Jawan",
@@ -446,31 +446,37 @@ class ScreenSnapshotTest {
             genres = "Action",
             language = "Hindi + English + Unknown",
         )
+        val second = post.copy(id = 105, title = "Pathaan", cleanTitle = "Pathaan")
         shot {
             Box(Modifier.fillMaxWidth()) {
                 HeroCarousel(
-                    posts = listOf(post),
+                    posts = listOf(post, second),
                     onPostClick = {},
                     autoplay = false,
                 )
             }
         }
-        // Home review (Nov 2026): the badge pills are gone — the hero shows
-        // one meta line ("2023 · Action": the year first, then the first
-        // genre capitalised, joined with " · ") and the languages survive
-        // only in the slide's spoken sentence. The poster URL never loads
-        // under Robolectric (no network), but the title and the meta line
-        // render regardless of the load state.
-        compose.onNodeWithText("2023 · Action").assertIsDisplayed()
+        // Clean hero (user direction, 21:51 PKT 27 Nov 2026): the hero is
+        // artwork + a dot indicator, nothing else — no title text, no meta
+        // line, no buttons. The poster URL never loads under Robolectric
+        // (no network), but the words would render regardless of the load
+        // state, so their absence here is the assertion, not the network.
+        compose.onNodeWithText("Jawan").assertDoesNotExist()
+        compose.onNodeWithText("2023 · Action").assertDoesNotExist()
+        compose.onNodeWithText("Watch now").assertDoesNotExist()
+        compose.onNodeWithText("My list").assertDoesNotExist()
+        // The dots are the hero's only visible chrome: two slides, so the
+        // indicator renders, and the first dot names its slide.
+        compose.onNodeWithContentDescription("Slide 1 of 2, Jawan").assertExists()
         // F2: the server's "Unknown" is a missing value, not a language — it
         // must never reach a visible node, while the real languages do (in
-        // the spoken sentence).
+        // the slide's spoken sentence).
         assertTrue(
             "the hero still paints an \"Unknown\" pill",
             compose.onAllNodes(hasText("Unknown")).fetchSemanticsNodes().isEmpty(),
         )
         compose.onNode(hasContentDescription("languages Hindi, English", substring = true)).assertExists()
-        capture("08_hero_meta_line")
+        capture("08_hero_clean")
     }
 
     // ── A4-F1: image fallback never blank ────────────────────────────────────

@@ -1,10 +1,7 @@
 package com.raddstream.app.ui
 
 import com.raddstream.app.network.models.Post
-import com.raddstream.app.ui.components.HERO_BUTTON_HEIGHT_DP
 import com.raddstream.app.ui.components.clampHeroPage
-import com.raddstream.app.ui.components.heroMetaLine
-import com.raddstream.app.ui.components.heroSeasonsLabel
 import com.raddstream.app.ui.components.heroTitle
 import com.raddstream.app.ui.components.isKnownLanguage
 import com.raddstream.app.ui.components.nextHeroPage
@@ -12,13 +9,21 @@ import com.raddstream.app.ui.components.shouldAdvanceHero
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The hero banner's pure logic, testable without a pager: the one meta line
- * under the title, the page step, and the auto-advance timing.
+ * The hero banner's pure logic, testable without a pager: the page step,
+ * the auto-advance timing, and the clean-hero contract.
+ *
+ * The hero is CLEAN (user direction, 21:51 PKT 27 Nov 2026): artwork + a
+ * simple animated dot indicator, nothing else. The title, meta line and
+ * buttons are gone with the words — the meta-line tests, the seasons
+ * label, the button-height / button-share tests and the #8 art-text
+ * test went with them (there is no hero text left to mismatch, and no
+ * button left to squeeze). The title survives only in the slide's spoken
+ * sentence ([heroTitle]), and the languages survive only there too,
+ * filtered by [isKnownLanguage].
  *
  * The language pills used to be tested here too (heroLanguagePills: split,
  * cap, dedupe, drop Unknown/N/A). They are gone with the pills — the hero
@@ -46,78 +51,6 @@ class HeroCarouselTest {
         imdbRating = imdbRating,
     )
 
-    // Home review (Nov 2026): one meta line — "2026 · Season 1–2 ·
-    // Reality" — under the title, not four separate pills. The seasons are
-    // normalised to a range, the genre reads capitalised, and the parts
-    // join with " · " — never a raw list like "[1, 2] | reality | 2026".
-    @Test
-    fun metaLineJoinsSeasonsGenreAndYear() {
-        assertEquals("2026 · Season 1–2 · Reality", heroMetaLine(post(seasons = "S1-S2", genres = "Reality", year = 2026)))
-    }
-
-    @Test
-    fun metaLineSkipsMissingParts() {
-        assertEquals("2023 · Action", heroMetaLine(post(genres = "Action", year = 2023)))
-        assertEquals("2024", heroMetaLine(post(year = 2024)))
-        assertEquals("Season 1–3", heroMetaLine(post(seasons = "S01–S03", year = 0)))
-    }
-
-    @Test
-    fun metaLineDropsAnUnknownFirstGenre() {
-        // The catalog writes the literal word "Unknown" where a work's
-        // genres were never recorded — a missing value, not a genre — so the
-        // hero's meta line skips it and reads the next real genre, or the
-        // year alone when there is none.
-        assertEquals("2026 · Action", heroMetaLine(post(genres = "Unknown, Action", year = 2026)))
-        assertEquals("2026", heroMetaLine(post(genres = "Unknown", year = 2026)))
-        assertEquals("2026", heroMetaLine(post(genres = "N/A", year = 2026)))
-    }
-
-    @Test
-    fun metaLineTakesTheFirstGenreOnly() {
-        assertEquals("2023 · Action", heroMetaLine(post(genres = "Action, Thriller", year = 2023)))
-    }
-
-    // E2 Ratings (Nov 2026): the hero is the one big surface that never
-    // painted a rating. The year leads the meta line (S2 round 2), the
-    // rating rides after it like the rail meta line, and only when the
-    // catalog really has one — a missing,
-    // zero or unparseable value leaves the slot out, never a 0.0.
-    @Test
-    fun metaLineLeadsWithTheYearAndCarriesTheRating() {
-        assertEquals(
-            "2026 · ★ 8.6 · Season 1–2 · Reality",
-            heroMetaLine(post(seasons = "S1-S2", genres = "Reality", year = 2026, imdbRating = "8.6")),
-        )
-        assertEquals("2023 · ★ 7.0 · Action", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "7")))
-    }
-
-    @Test
-    fun metaLineSkipsAnAbsentOrDishonestRating() {
-        assertEquals("2023 · Action", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = null)))
-        assertEquals("2023 · Action", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "")))
-        assertEquals("2023 · Action", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "0")))
-        assertEquals("2023 · Action", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "abc")))
-        assertEquals("2023 · Action", heroMetaLine(post(genres = "Action", year = 2023, imdbRating = "101")))
-    }
-
-    @Test
-    fun metaLineDividesTheOldHundredScale() {
-        assertEquals("2023 · ★ 8.6", heroMetaLine(post(year = 2023, imdbRating = "86")))
-    }
-
-    @Test
-    fun seasonsLabelNormalisesEveryServerShape() {
-        assertEquals("Season 1–2", heroSeasonsLabel("[1, 2]"))
-        assertEquals("Season 1–2", heroSeasonsLabel("2"))
-        assertEquals("Season 1", heroSeasonsLabel("1"))
-        assertEquals("Season 1", heroSeasonsLabel("S1"))
-        assertEquals("Season 1–3", heroSeasonsLabel("S01–S03"))
-        assertNull(heroSeasonsLabel(null))
-        assertNull(heroSeasonsLabel("   "))
-        assertNull(heroSeasonsLabel("unknown"))
-    }
-
     @Test
     fun heroTitleUsesTheCleanTitleOnly() {
         val post = Post(
@@ -129,41 +62,6 @@ class HeroCarouselTest {
             posterUrl = null,
         )
         assertEquals("It's Showtime", heroTitle(post))
-    }
-
-    @Test
-    fun heroTitleMetaAndArtAllBelongToTheSamePost() {
-        // Video-audit #8 (Nov 2026): the video's Ranma slide showed Season 2
-        // art with "Season 1" text — art and text that do not belong to the
-        // same item. A slide reads all three from the one Post it is given
-        // (title, meta line, first backdrop), so a settled slide can never
-        // mix two items' facts; this pins that contract on the Ranma shape
-        // itself (seasons "Season 1 - 3", Animation first genre, one
-        // backdrop). The carousel half is the pager reset in HeroCarousel:
-        // a re-dealt hero list restarts at page 0 instead of holding a
-        // stale page index.
-        val ranma = post(
-            seasons = "Season 1 - 3",
-            genres = "Animation, Action",
-            year = 2024,
-        ).copy(
-            title = "Ranma ½ (2024) S1-S3",
-            cleanTitle = "Ranma ½ (2024) S1-S3",
-            posterUrl = "https://image.tmdb.org/t/p/w500/ranma-poster.jpg",
-            backdropUrls = "[\"https://image.tmdb.org/t/p/original/ranma-s2-backdrop.jpg\"]",
-        )
-        assertEquals("Ranma ½", heroTitle(ranma))
-        assertEquals("2024 · Season 1–3 · Animation", heroMetaLine(ranma))
-        assertEquals(
-            "https://image.tmdb.org/t/p/original/ranma-s2-backdrop.jpg",
-            ranma.heroArtUrl,
-        )
-    }
-
-    @Test
-    fun metaLineIsNullWhenNothingToSay() {
-        assertNull(heroMetaLine(post(year = 0)))
-        assertNull(heroMetaLine(post(genres = "  ", year = 0)))
     }
 
     @Test
@@ -221,65 +119,47 @@ class HeroCarouselTest {
     }
 
     // Samsung RTL (v1.1.2, Issue 3): the banner rotated every 5 s and a manual
-    // swipe or dot tap did not restart the clock, so Watch Now was a moving
-    // target. A full interval must pass since the last change or interaction
-    // before the loop takes the next slide.
+    // swipe or dot tap did not restart the clock, so the slide a viewer had
+    // just chosen could be yanked away a beat later. A full interval must
+    // pass since the last change or interaction before the loop takes the
+    // next slide.
     @Test
     fun advancesAfterAFullIntervalWhenIdle() {
-        assertTrue(shouldAdvanceHero(nowMs = 8_000L, lastChangeMs = 0L, intervalMs = 8_000L, isScrolling = false, watchNowPressed = false))
-        assertTrue(shouldAdvanceHero(nowMs = 9_000L, lastChangeMs = 0L, intervalMs = 8_000L, isScrolling = false, watchNowPressed = false))
+        assertTrue(shouldAdvanceHero(nowMs = 8_000L, lastChangeMs = 0L, intervalMs = 8_000L, isScrolling = false))
+        assertTrue(shouldAdvanceHero(nowMs = 9_000L, lastChangeMs = 0L, intervalMs = 8_000L, isScrolling = false))
     }
 
     @Test
     fun holdsBeforeTheIntervalHasPassed() {
-        assertFalse(shouldAdvanceHero(nowMs = 7_999L, lastChangeMs = 0L, intervalMs = 8_000L, isScrolling = false, watchNowPressed = false))
+        assertFalse(shouldAdvanceHero(nowMs = 7_999L, lastChangeMs = 0L, intervalMs = 8_000L, isScrolling = false))
         // A manual interaction 1 s ago restarts the clock: the slide just
         // chosen is never yanked away a beat later.
-        assertFalse(shouldAdvanceHero(nowMs = 9_000L, lastChangeMs = 8_000L, intervalMs = 8_000L, isScrolling = false, watchNowPressed = false))
+        assertFalse(shouldAdvanceHero(nowMs = 9_000L, lastChangeMs = 8_000L, intervalMs = 8_000L, isScrolling = false))
     }
 
     @Test
-    fun holdsWhileScrollingOrPressingWatchNow() {
-        assertFalse(shouldAdvanceHero(nowMs = 20_000L, lastChangeMs = 0L, intervalMs = 8_000L, isScrolling = true, watchNowPressed = false))
-        assertFalse(shouldAdvanceHero(nowMs = 20_000L, lastChangeMs = 0L, intervalMs = 8_000L, isScrolling = false, watchNowPressed = true))
+    fun holdsWhileScrolling() {
+        assertFalse(shouldAdvanceHero(nowMs = 20_000L, lastChangeMs = 0L, intervalMs = 8_000L, isScrolling = true))
     }
 
     @Test
     fun neverAdvancesOnANonPositiveInterval() {
-        assertFalse(shouldAdvanceHero(nowMs = 20_000L, lastChangeMs = 0L, intervalMs = 0L, isScrolling = false, watchNowPressed = false))
-        assertFalse(shouldAdvanceHero(nowMs = 20_000L, lastChangeMs = 0L, intervalMs = -1L, isScrolling = false, watchNowPressed = false))
+        assertFalse(shouldAdvanceHero(nowMs = 20_000L, lastChangeMs = 0L, intervalMs = 0L, isScrolling = false))
+        assertFalse(shouldAdvanceHero(nowMs = 20_000L, lastChangeMs = 0L, intervalMs = -1L, isScrolling = false))
     }
 
-    // Home fix (Nov 2026): the viewer's pause holds the banner even after a
-    // full interval — the only way to stop a rotating banner was to leave Home.
+    // Clean hero (user direction, 21:51 PKT 27 Nov 2026): the hero is
+    // artwork + a dot indicator, nothing else — no title text, no meta
+    // line, no Watch Now / My List buttons, no scrim, no pause control.
+    // A text scan in the SkeletonParityTest style pins it: the file must
+    // carry no Text() or Button() composable call at all, and the slide
+    // must still be the tap target that opens the title (the whole slide
+    // is clickable — everybody already knows tapping a poster opens it).
     @Test
-    fun holdsWhilePaused() {
-        assertFalse(shouldAdvanceHero(nowMs = 20_000L, lastChangeMs = 0L, intervalMs = 8_000L, isScrolling = false, watchNowPressed = false, paused = true))
-    }
-
-    @Test
-    fun heroButtonsAreTheSmallButtonHeight() {
-        // Video-audit #28 (Nov 2026) + the user's standing direction
-        // (smaller buttons): the hero's Watch now / My list buttons are
-        // M3's 40dp small button, not the 48dp floor the review had set.
-        assertEquals(40f, HERO_BUTTON_HEIGHT_DP)
-    }
-
-    @Test
-    fun heroButtonsShareTheRowEqually() {
-        // Video-audit #28 (Nov 2026): the split used to be 2f/1f —
-        // "Watch now" took two thirds and "My list" was squeezed to one
-        // third, its pill running to the screen edge on a 360dp phone.
-        // Both buttons are 1f now, equal halves. The two weight(1f)
-        // calls in this file are exactly those two buttons (a text scan
-        // in the SkeletonParityTest style — the layout equality itself
-        // is also visible in the Paparazzi home golden).
+    fun cleanHeroPaintsArtworkAndDotsOnly() {
         val source = File("src/main/kotlin/com/raddstream/app/ui/components/HeroCarousel.kt").readText()
-        assertFalse("no hero button may take a 2f share", "weight(2f)" in source)
-        assertEquals(
-            "Watch now and My list must each take weight(1f)",
-            2,
-            "weight(1f)".toRegex().findAll(source).count(),
-        )
+        assertFalse("the clean hero paints no text", Regex("""\bText\(""").containsMatchIn(source))
+        assertFalse("the clean hero paints no button", Regex("""\bButton\(""").containsMatchIn(source))
+        assertTrue("the clean hero slide must still open the title on tap", "clickable(onClick = onClick)" in source)
     }
 }

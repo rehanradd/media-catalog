@@ -14,31 +14,20 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -63,30 +52,22 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.R
-import com.raddstream.app.brand.Brand
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.WireText
-import com.raddstream.app.ui.theme.PressHaptics
-import com.raddstream.app.ui.theme.RaddEmphasized
 import com.raddstream.app.ui.theme.RaddHeroPlaceholderHigh
 import com.raddstream.app.ui.theme.RaddHeroPlaceholderLow
 import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddStreamMark
 import com.raddstream.app.ui.theme.RaddTokens
-import com.raddstream.app.ui.theme.brandSp
-import com.raddstream.app.ui.theme.pressScale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -94,29 +75,32 @@ import kotlinx.coroutines.launch
  * The banner rail on Home: [heroHeight] tall, a full-bleed banner
  * edge-to-edge (P1-5, Nov 2026 — the inset card is gone), one work at a
  * time, advancing on its own. The ambient glow still tints the canvas the
- * scrim fades into at the bottom.
+ * banner blends into at the bottom.
  *
  * Layout of one slide, back to front:
  *  - the ambient glow ([HeroAmbientGlow]): two low-alpha radial blooms tinted from the
  *    theme, drifting to a new hue as the active page changes — light spilling into the
  *    canvas around the banner, which is what gives it depth instead of a pasted-on
  *    rectangle;
- *  - the widest artwork the row carries, cropped to fill;
- *  - a vertical scrim that goes from clear at the top to the page background at the
- *    bottom, so the title and buttons stay readable over any poster;
- *  - the title and one meta line (Season 1–2 · Reality · 2026);
+ *  - the widest artwork the row carries, cropped to fill — and nothing else.
+ *    The hero is CLEAN (user direction, 21:51 PKT 27 Nov 2026): no title
+ *    text, no meta line, no Watch Now / My List buttons, no scrim, no
+ *    pause control. The poster attracts, not text covering the screen —
+ *    everybody already knows tapping a poster opens it, so the whole
+ *    slide is the tap target (it opens the title's details page). The
+ *    title, rating, year, genres and languages survive only in the
+ *    slide's spoken sentence ([heroTitle] + the a11y line), so TalkBack
+ *    still names the work.
  *  - page dots, which double as the manual affordance — tapping a dot jumps to that slide.
- *    They ride ON the art now, top-end in a contrast pill (P1-5): they used to sit
+ *    They ride ON the art, top-end in a contrast pill (P1-5): they used to sit
  *    below the card, centred and bare — and before that the bottom strip, where their 48dp
  *    hit boxes (declared after the pager, so on top in z-order) covered the Watch Now
  *    button's centre on a 6-dot hero — a centred tap hit a dot, which just re-selected
  *    the slide, so Watch Now looked dead while the banner tap (above the strip) worked.
- *    The top end is free art (the title and buttons sit at the bottom, the fallback
- *    mark is centred), so on-art dots can cover no control — the band math is gone
- *    with them.
- *  - a prominent Watch Now button, which starts the title (the slide's own tap target
- *    only opens the details — the button is the part that says "play"); beside it, a
- *    My List toggle, so saving a title does not need a trip to its details page;
+ *    The top end is free art now that nothing else sits on it, so on-art dots can cover
+ *    no control — the band math is gone with them. The dots are the hero's only
+ *    visible chrome: a simple animated indicator (the active dot stretches
+ *    into a bar), which is all the carousel needs.
  *
  * WHAT THE HERO PAINTS (App/AGENTS.md §5): `GET /api/v1/posts` projects a
  * `backdrop_urls` column alongside `poster_url` (`Fast_Fetch/viewer.py` `_art_pair()`),
@@ -130,10 +114,7 @@ import kotlinx.coroutines.launch
  * ([rememberReduceMotion]): with animations off the banner still paginates by hand, it just
  * never moves on its own, and the glow cuts instead of cross-fading. A drag also gets the
  * pager back immediately — the loop waits for `isScrollInProgress` to clear before it takes
- * the page away again. The same guard covers a finger already down on Watch Now: an
- * advance that STARTS mid-press slides the button out from under it, and the tap
- * detector cancels a press whose target moved away — so the loop skips its tick while
- * the button reports pressed (`watchNowPressed`) instead of stealing the tap.
+ * the page away again.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -143,15 +124,11 @@ fun HeroCarousel(
     modifier: Modifier = Modifier,
     backdropFor: (Post) -> String? = { it.heroArtUrl },
     /** M5 (home review, Nov 2026): the hero is manual-swipe unless the
-     *  operator opts into rotation — a rotating banner made Watch Now a
-     *  moving target and pushed the first content row out of reach. False
-     *  pauses the auto-advance; the interval is in ms. */
+     *  operator opts into rotation — a rotating banner yanked the slide
+     *  away under the viewer's finger and pushed the first content row out
+     *  of reach. False pauses the auto-advance; the interval is in ms. */
     autoplay: Boolean = false,
     intervalMs: Long = AUTO_ADVANCE_MS,
-    /** Session 121 (P-26): Watch Now starts the title instead of only opening it. */
-    onWatchNow: (Post) -> Unit = onPostClick,
-    isFavorite: (Post) -> Boolean = { false },
-    onToggleFavorite: (Post) -> Unit = {},
     /**
      * Round 6 (motion): the shared-element scopes, passed down from the
      * NavHost's SharedTransitionLayout by the infra branch. Both null by
@@ -183,25 +160,13 @@ fun HeroCarousel(
         }
     }
     val scrollScope = rememberCoroutineScope()
-    // True while a finger is down on the visible slide's Watch Now button, reported
-    // up by HeroSlide. The advance loop reads it per tick (it is deliberately NOT
-    // a LaunchedEffect key: restarting the effect would cancel an in-flight
-    // animateScrollToPage and strand the pager between pages).
-    var watchNowPressed by remember { mutableStateOf(false) }
-    // Home fix (Nov 2026): the viewer's own pause for auto-advance — a
-    // rotating banner made Watch Now a moving target, and the only way to
-    // stop it was to leave Home. The button shows only while autoplay is
-    // on; pausing also restarts the clock, so resuming gives a full
-    // interval on the slide in view. The loop reads it per tick, so the
-    // toggle takes effect without restarting the effect.
-    var paused by remember { mutableStateOf(false) }
     // Samsung RTL (v1.1.2, Issue 3): the banner rotated every 5 s and a
     // manual swipe or dot tap did not restart the clock, so the slide a
-    // viewer had just chosen could be yanked away a beat later — and
-    // Watch Now was a moving target. The advance loop below reads this
-    // timestamp per tick: any page change (auto or manual), any drag, and
-    // any dot tap restarts the full interval, so a viewer always gets the
-    // whole interval on the slide they are looking at.
+    // viewer had just chosen could be yanked away a beat later. The
+    // advance loop below reads this timestamp per tick: any page change
+    // (auto or manual), any drag, and any dot tap restarts the full
+    // interval, so a viewer always gets the whole interval on the slide
+    // they are looking at.
     var lastChangeMs by remember { mutableLongStateOf(SystemClock.uptimeMillis()) }
     // A drag that snaps back to the same page changes no page, so the
     // page effect below would not see it — the scroll flag is the record
@@ -209,14 +174,7 @@ fun HeroCarousel(
     LaunchedEffect(pagerState.isScrollInProgress) {
         if (pagerState.isScrollInProgress) lastChangeMs = SystemClock.uptimeMillis()
     }
-    // Self-heal for the press flag: if the pressed slide is ever disposed mid-press
-    // (a two-finger drag paging away under the finger), its release callback never
-    // fires and the flag would stick true, parking auto-advance forever. A page
-    // change means the pressed button is gone, so the flag is stale by definition.
-    // A normal press can never trip this — the loop below holds its tick while the
-    // flag is true, and a dot tap needs the finger to be on a dot, not the button.
     LaunchedEffect(pagerState.currentPage) {
-        watchNowPressed = false
         lastChangeMs = SystemClock.uptimeMillis()
     }
     // Video-audit #8 (Nov 2026): the pager index must not outlive the list
@@ -226,11 +184,11 @@ fun HeroCarousel(
     // so the slide in view sat at the old list's position, not the new
     // list's item. That is the shape the video's Ranma slide takes: art
     // and text that do not belong to the same item. A new list identity
-    // restarts the carousel at its first item, so the art and the text on
-    // screen always belong to the one item in view; the clock restarts
-    // too, so the new first slide gets its full interval. The key is the
-    // ids, not the list instance: a recomposition that hands the same
-    // titles back does not restart the carousel.
+    // restarts the carousel at its first item, so the slide in view is
+    // always the new list's own item; the clock restarts too, so the new
+    // first slide gets its full interval. The key is the ids, not the list
+    // instance: a recomposition that hands the same titles back does not
+    // restart the carousel.
     val heroIds = posts.map { it.id }
     LaunchedEffect(heroIds) {
         if (pagerState.currentPage != 0) pagerState.scrollToPage(0)
@@ -240,19 +198,17 @@ fun HeroCarousel(
     LaunchedEffect(posts.size, reduceMotion, autoplay, intervalMs) {
         if (!autoplay || posts.size < 2 || reduceMotion) return@LaunchedEffect
         while (true) {
-            // Tick, don't sleep the whole interval: a press, a drag, or a
-            // manual page change part-way through the wait must hold the
-            // advance, and a single long delay could not notice any of them
-            // until it had already fired. The tick is the only cost; the
-            // decision — and its test — lives in [shouldAdvanceHero].
+            // Tick, don't sleep the whole interval: a drag, or a manual
+            // page change part-way through the wait must hold the advance,
+            // and a single long delay could not notice any of them until it
+            // had already fired. The tick is the only cost; the decision —
+            // and its test — lives in [shouldAdvanceHero].
             delay(HERO_ADVANCE_TICK_MS)
             if (!shouldAdvanceHero(
                     nowMs = SystemClock.uptimeMillis(),
                     lastChangeMs = lastChangeMs,
                     intervalMs = intervalMs,
                     isScrolling = pagerState.isScrollInProgress,
-                    watchNowPressed = watchNowPressed,
-                    paused = paused,
                 )
             ) continue
             lastChangeMs = SystemClock.uptimeMillis()
@@ -270,12 +226,11 @@ fun HeroCarousel(
     }
 
     // P1-5 (Nov 2026): full-bleed — the dots ride ON the art, top-end in
-    // the contrast pill, beside the pause control when autoplay is on.
-    // The top end is free art: the title and buttons sit at the bottom
-    // and the fallback mark is centred, so on-art dots can cover no
-    // control — the overlap that once ate Watch Now taps is structural
-    // now, not a band calculation ([heroIndicatorOverlapsActionRow] is
-    // gone with it).
+    // the contrast pill. The top end is free art: nothing else sits on it
+    // (the hero is clean — no title, no buttons, no pause control), so
+    // on-art dots can cover no control — the overlap that once ate Watch
+    // Now taps is structural now, not a band calculation
+    // ([heroIndicatorOverlapsActionRow] is gone with it).
     Column(modifier.fillMaxWidth()) {
     AnimatedVisibility(
         visible = heroVisible,
@@ -320,21 +275,17 @@ fun HeroCarousel(
                 post = post,
                 backdropUrl = backdropFor(post),
                 onClick = { onPostClick(post) },
-                onWatchNow = { onWatchNow(post) },
-                onWatchNowPressChange = { watchNowPressed = it },
-                isFavorite = isFavorite(post),
-                onToggleFavorite = { onToggleFavorite(post) },
                 sharedTransitionScope = sharedTransitionScope,
                 animatedVisibilityScope = animatedVisibilityScope,
             )
         }
 
         if (posts.size > 1) {
-            // Home fix (Nov 2026): the pause control rides beside the dots —
-            // one row at the top end, 48dp tall — and only while autoplay is
-            // on. Manual-swipe (the default) has nothing to pause, so it shows
-            // no control at all. The toggle restarts the clock, so resuming
-            // gives a full interval on the slide in view.
+            // The dots ride top-end, 48dp tall, on the art. The hero is
+            // clean (user direction, 21:51 PKT 27 Nov 2026) — the dots are
+            // its only visible chrome, and there is no pause control: a
+            // dot tap restarts the clock, so the slide just chosen is
+            // never yanked away a beat later (Samsung RTL v1.1.2, Issue 3).
             Row(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -362,30 +313,6 @@ fun HeroCarousel(
                     // by HeroIndicatorTest).
                     background = true,
                 )
-                if (autoplay) {
-                    IconButton(
-                        onClick = {
-                            paused = !paused
-                            lastChangeMs = SystemClock.uptimeMillis()
-                        },
-                        modifier = Modifier
-                            .size(48.dp)
-                            .background(
-                                color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.56f),
-                                shape = CircleShape,
-                            ),
-                    ) {
-                        Icon(
-                            painter = painterResource(if (paused) R.drawable.ic_player_play_filled else R.drawable.ic_player_pause),
-                            contentDescription = if (paused) {
-                                "Resume banner rotation"
-                            } else {
-                                "Pause banner rotation"
-                            },
-                            tint = Color.White,
-                        )
-                    }
-                }
             }
         }
     }
@@ -423,63 +350,13 @@ internal fun heroArtUrls(posts: List<Post>): List<String> =
     posts.mapNotNull { it.heroArtUrl?.takeIf { url -> url.isNotBlank() } }.distinct()
 
 /**
- * The hero's one meta line (review redesign, Nov 2026): year, seasons,
- * first genre — "2026 · Season 1–2 · Reality". The seasons text is
- * normalised by [heroSeasonsLabel] (the server sends "2", "S01–S03" and
- * "[1, 2]" for the same fact — a raw list leaked onto the card as
- * "[1, 2]"), the genre reads capitalised, and the parts join with " · ".
- * Null when the title carries none of the three, so the slide prints no
- * empty line. Pure, so the line is testable without a pager.
- *
- * S2 (2027 Home fix, round 2): the year leads — the brief's
- * year•duration•quality as far as the list wire honestly reaches (the
- * seasons ARE the length fact for a series; duration/quality need server
- * fields — see [posterMetaLine]). The rating keeps its slot after the
- * year, in the same relative order as the rail line.
- */
-internal fun heroMetaLine(post: Post): String? {
-    val parts = listOfNotNull(
-        post.yearLabel,
-        // E2 Ratings (Nov 2026): the hero is the one big surface that
-        // never painted a rating — the meta line is the only words under
-        // the title, so the rating rides it, "2026 · ★ 8.6 · Season 1–2
-        // · Drama", in the same year-first order the rail meta line
-        // ([posterMetaLine]) already uses. An absent or unparseable
-        // rating leaves its slot out — never an invented value.
-        UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
-        heroSeasonsLabel(post.seasons),
-        post.genreList.firstOrNull()?.lowercase()?.replaceFirstChar { it.uppercase() }?.takeIf { it.isNotBlank() },
-    )
-    return parts.joinToString(" · ").takeIf { it.isNotBlank() }
-}
-
-/**
- * The seasons half of [heroMetaLine], normalised from the server's free text.
- * A bare integer is a count of seasons ("2" -> "Season 1–2"); anything else
- * lists explicit season numbers ("[1, 2]", "S01–S03" -> "Season 1–2" and
- * "Season 1–3"). A single season reads "Season 1"; text with no numbers
- * carries no seasons at all. Pure, so the shapes are assertable without a pager.
- */
-internal fun heroSeasonsLabel(raw: String?): String? {
-    val text = raw?.trim().orEmpty()
-    if (text.isBlank()) return null
-    val numbers = Regex("""\d+""").findAll(text).mapNotNull { it.value.toIntOrNull() }.toList()
-    if (numbers.isEmpty()) return null
-    if (Regex("""^\d+$""").matches(text)) {
-        val count = numbers.first()
-        return if (count <= 1) "Season 1" else "Season 1–$count"
-    }
-    val first = numbers.min()
-    val last = numbers.max()
-    return if (first == last) "Season $first" else "Season $first–$last"
-}
-
-/**
- * The title the hero paints: the same clean-title treatment Detail uses
+ * The title the hero speaks: the same clean-title treatment Detail uses
  * ([UserWords.detailTitle] — server display title, then clean title, then
- * raw title, each stripped of the year/language/type/season suffixes the
- * meta line already states), so the hero and Detail can never disagree
- * about a title's name. Pure, so the shape is assertable without a pager.
+ * raw title, each stripped of the year/language/type/season suffixes), so
+ * the hero and Detail can never disagree about a title's name. Pure, so
+ * the shape is assertable without a pager. The clean hero (user direction,
+ * 21:51 PKT 27 Nov 2026) paints no visible title — this feeds the slide's
+ * spoken sentence only.
  */
 internal fun heroTitle(post: Post): String =
     UserWords.detailTitle(
@@ -504,8 +381,10 @@ internal suspend fun prefetchHeroArt(context: Context, posts: List<Post>) {
 
 /**
  * The banner's own placeholder while the first rail is still in flight. It keeps the real
- * hero's footprint ([heroHeight]) so the page does not jump when artwork lands, and a few
- * shimmering bars stand in for the title, meta line and Watch Now button.
+ * hero's footprint ([heroHeight]) so the page does not jump when artwork lands, and the
+ * shimmer + the dots stand in for the clean hero (user direction, 21:51 PKT 27 Nov
+ * 2026: the hero carries no words and no buttons, so its skeleton carries no
+ * bars for them).
  *
  * Samsung RTL (v1.1.2, Issue 3): the first load read as a blank grey box for ~10 s.
  * The skeleton was already here — but its shimmer band (0.16f) is near-invisible
@@ -530,44 +409,9 @@ fun HeroSkeleton(modifier: Modifier = Modifier) {
             ShimmerBox(Modifier.fillMaxSize(), highlightAlpha = HERO_SKELETON_SHIMMER_ALPHA)
             // H4: no mark in the skeleton — the mark's two open arcs read as
             // a loading spinner in the hero centre. Pure shimmer instead.
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth()
-                    .padding(horizontal = RaddTokens.Space.Gutter)
-                    .padding(bottom = RaddTokens.Space.Step20),
-                // The real slide's text column is 8dp-spaced, not 10dp.
-                verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
-            ) {
-                // Title: 24sp displaySmall, one 28dp line. The real title allows
-                // two lines, but a one-line title is the common case — a
-                // second bar would over-reserve every short title.
-                ShimmerBox(
-                    Modifier.fillMaxWidth(0.55f).height(28.dp).testTag("heroTitleSkeleton"), // token-exempt: skeleton title bar, fixed illustration geometry
-                    shape = RaddTokens.Shape.Poster,
-                )
-                // Meta line: one bodyMedium line (16dp) — the real meta line
-                // is a single 20dp line, not the 22dp badge pills it replaced.
-                ShimmerBox(
-                    Modifier.width(180.dp).height(20.dp), // token-exempt: skeleton meta bar, fixed illustration geometry
-                    shape = RaddTokens.Shape.Poster,
-                )
-                // Action row: Watch Now AND My List, equal halves at the
-                // 40dp button height, 8dp apart, 28dp corners — the old
-                // skeleton drew a 192dp bar and an 88dp bar (the 2f/1f
-                // split video-audit #28 removed), so the second button
-                // appeared out of nowhere on load.
-                Row(horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm)) {
-                    ShimmerBox(
-                        Modifier.width(160.dp).height(HERO_BUTTON_HEIGHT_DP.dp), // token-exempt: skeleton button bar, fixed illustration geometry
-                        shape = RaddTokens.Shape.Pill,
-                    )
-                    ShimmerBox(
-                        Modifier.width(160.dp).height(HERO_BUTTON_HEIGHT_DP.dp), // token-exempt: skeleton button bar, fixed illustration geometry
-                        shape = RaddTokens.Shape.Pill,
-                    )
-                }
-            }
+            // The clean hero (user direction, 21:51 PKT 27 Nov 2026) carries
+            // no words and no buttons, so the skeleton carries no bars for
+            // them either — shimmer + the dots below are the whole stand-in.
             // P1-5: the page dots on the art, top-end — six 48dp cells, each
             // with a small painted dot centred in it, the same footprint and
             // position as the real indicator. Six dots is the hero's default
@@ -644,13 +488,6 @@ private fun HeroSlide(
     post: Post,
     backdropUrl: String?,
     onClick: () -> Unit,
-    onWatchNow: () -> Unit = onClick,
-    /** Reports the Watch Now button's press state up, so the auto-advance loop can
-     *  hold its tick while a finger is down on it instead of sliding the button
-     *  away mid-tap. Default no-op: the slide is still fully usable without it. */
-    onWatchNowPressChange: (Boolean) -> Unit = {},
-    isFavorite: Boolean = false,
-    onToggleFavorite: () -> Unit = {},
     modifier: Modifier = Modifier,
     /**
      * Round 6 (motion): the shared-element scopes — see [HeroCarousel].
@@ -660,17 +497,20 @@ private fun HeroSlide(
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     val title = heroTitle(post)
-    // The spoken line still names the languages (the meta line replaced the
-    // visible pills, not the words) — read straight from the wire text,
-    // filtered by the same known-language rule, no pill cap or length cut:
-    // a screen reader is not a layout.
+    // The spoken line still names the languages and the rating — the
+    // visible pills and meta line are gone (clean hero, user direction
+    // 21:51 PKT 27 Nov 2026), but a screen reader is not a layout: the
+    // title, rating, year, genres and languages all live in this one
+    // sentence, read straight from the wire text, filtered by the same
+    // known-language rule, no pill cap or length cut.
     val languages = remember(post.language) {
         WireText.listOf(post.language).map { it.trim() }.filter { isKnownLanguage(it) }
     }
     val genres = remember(post.genres) { post.genreList.take(2) }
     val rating = remember(post.imdbRating) { UserWords.displayRating(post.imdbRating) }
-    // The slide merges its children, so TalkBack reads this line and then the Watch Now button
-    // inside it. Saying "watch now" here as well would announce the same action twice.
+    // The slide's only words are this spoken sentence: there is no
+    // visible title, meta line or button left to announce, so the
+    // sentence names the work and the tap target in one line.
     val a11y = buildString {
         append(title)
         rating?.let { append(", rating ").append(it) }
@@ -686,12 +526,10 @@ private fun HeroSlide(
             .clickable(onClick = onClick),
     ) {
         // 1 — artwork, or the branded fallback when there is nothing to paint.
-        // Audit #2: an art-less slide keeps the branded gradient, but the
-        // mark rides the upper half — never the button row — and the
-        // headline prints at the bottom over the scrim, like a slide with
-        // art. The old fallback card centred its grey title + mark in the
-        // middle of the slide, where the title read barely legible and
-        // the mark collided with the Watch Now / Saved buttons.
+        // The clean hero (user direction, 21:51 PKT 27 Nov 2026) carries no
+        // words at all: the art-less slide is the gradient + the mark only —
+        // no title printed in the middle, no headline below, nothing for
+        // the mark to collide with.
         if (backdropUrl.isNullOrBlank()) {
             Box(
                 Modifier.fillMaxSize()
@@ -704,9 +542,7 @@ private fun HeroSlide(
             ) {
                 // P1-5: the mark keeps its 48dp top. The on-art indicator row
                 // is TopEnd — it occupies only the right edge, and the centred
-                // 48dp mark clears it horizontally. Pushing the mark to 72dp
-                // (first attempt) dropped it onto the one-line title; 48dp
-                // keeps it above the reason line, as the old golden proved.
+                // 48dp mark clears it horizontally.
                 RaddStreamMark(
                     diameter = 48.dp, // token-exempt: fallback-mark size, not spacing
                     color = MaterialTheme.colorScheme.primary,
@@ -721,12 +557,10 @@ private fun HeroSlide(
                     .then(sharedPosterModifier(post, sharedTransitionScope, animatedVisibilityScope)),
                 contentScale = ContentScale.Crop,
                 // Home review (Nov 2026, M1): no fallback label here. When this
-                // image fails or is gated, the fallback card would print the
-                // title in the middle of the slide while the headline below
-                // prints it again — the duplicate the Appetize screenshots
-                // showed ("The Stranger" twice). The headline below always
-                // carries the title on this branch, so the fallback
-                // is mark + gradient only.
+                // image fails or is gated, a printed title in the middle of
+                // the slide would be the only words on a hero that carries
+                // none — the fallback is mark + gradient only, like the
+                // art-less slide above.
                 fallbackLabel = null,
                 // B1 (home review, Nov 2026): a failed backdrop paints the
                 // hero-tinted gradient, so the slide reads as a designed
@@ -737,207 +571,6 @@ private fun HeroSlide(
                 // what read as a black void on first paint.
                 loadingContent = { HeroFallbackFrame() },
             )
-        }
-
-        // 2 — vertical scrim: a multi-stop bottom fade into the page
-        // background (review redesign, Nov 2026). The old gradient faded
-        // too late and too softly, so baked-in poster text bled behind
-        // the title and buttons; this one is clear through the top fifth
-        // (the dots ride the top end now, on the art) and climbs to 0.70
-        // at 60% and 0.88 at 80% before landing at 0.95 at the bottom.
-        // Gemini home review (Nov 2026): the Dragon Ball Super title sat
-        // over bright yellow/white art with only the button area
-        // scrimmed — the scrim now covers the lower 80% with 0.70 behind
-        // the title and meta.
-        // Screen audit #9 (Nov 2026): the mid stop rose 0.65 → 0.78 —
-        // the title sits in the mid-zone, and on bright yellow art 0.65
-        // left it marginal; stop positions unchanged.
-        // Video-audit #29 (Nov 2026): the title was unreadable over a
-        // bright pink/white hero — white 28sp on art with the scrim at
-        // 0.78 only behind the buttons. The fade now starts at 20% and
-        // the title zone (roughly 40–65% of the slide) sits at 0.35–
-        // 0.70, so the words read on any art. The mid stops avoid 0.68f:
-        // that is the poster-ratio literal owned by CardGeometry
-        // (CardGeometryTest bans it in every other UI source), and 1% of
-        // hero height is invisible.
-        // Session 121 (P-20): the scrim protects the title/badges against
-        // bright art and blends smoothly into the page canvas at the
-        // bottom of the full-bleed hero.
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        0.20f to MaterialTheme.colorScheme.background.copy(alpha = 0f),
-                        0.40f to MaterialTheme.colorScheme.background.copy(alpha = 0.35f),
-                        0.60f to MaterialTheme.colorScheme.background.copy(alpha = 0.70f),
-                        0.80f to MaterialTheme.colorScheme.background.copy(alpha = 0.88f),
-                        1f to MaterialTheme.colorScheme.background.copy(alpha = 0.95f),
-                    )
-                ),
-        )
-
-        // 3 — the words. They sit at the bottom, over the scrim, with or
-        // without art: the art-less slide used to centre its buttons and
-        // drop the headline (the fallback card carried the title), which
-        // left the buttons floating mid-slide under a faint grey title.
-        // The headline is white bold over the scrim now, and the mark
-        // rides the upper half (step 1), clear of this row.
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .fillMaxWidth()
-                .padding(horizontal = RaddTokens.Space.Gutter)
-                .padding(bottom = HERO_ACTION_BOTTOM_DP.dp),
-            verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
-        ) {
-            // H1 (2027 Home fix): the reason line — the hero says WHY
-            // this title, in jade, before the title itself.
-            Text(
-                text = "Tonight's pick for you",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            // Gemini home review + Stitch redesign (Nov 2026): 28sp
-            // Bold, -0.3sp tracking. The title was 36sp Bold
-            // (displaySmall) — bigger than the redesign asks, and the
-            // weight was already Bold, so the legibility defect was
-            // the scrim above, not the weight.
-            // Video-audit #29 (Nov 2026) + the user's standing direction
-            // (smaller text everywhere): 24sp Bold, 28sp line — the
-            // 28sp title's two lines, with the reason + meta + buttons,
-            // needed ~196dp inside a 220dp hero, so the column's top
-            // (the reason line) sat inside the dots band and the title's
-            // first line clipped at larger font scales. 24sp keeps two
-            // lines inside the taller hero with the dots clear above.
-            // The sizes ride brandSp, not raw .sp literals — the
-            // brand ramp owns every sp (BrandDriftTest).
-            Text(
-                text = title,
-                style = RaddEmphasized.displaySmall.copy(
-                    fontSize = brandSp(24),
-                    lineHeight = brandSp(28),
-                    letterSpacing = brandSp(-0.3),
-                ),
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            // Mockup (Nov 2026): one meta line under the title —
-            // "S1-S2 | reality | 2026" — not four separate pills. The
-            // rating, year and type badges are gone with the pills; the
-            // meta line is the only words under the title.
-            heroMetaLine(post)?.let { meta ->
-                Text(
-                    text = meta,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // UI-fix P1-X1: press scale + haptic on the hero's primary action.
-                val watchNowSource = remember { MutableInteractionSource() }
-                PressHaptics(watchNowSource)
-                // The same press state the haptic reads, reported up: the carousel
-                // holds its auto-advance tick while this is true. Collected here,
-                // not in the carousel, because the source belongs to this slide's
-                // button — the carousel only ever sees the visible slide's press.
-                val watchNowPressed by watchNowSource.collectIsPressedAsState()
-                LaunchedEffect(watchNowPressed) { onWatchNowPressChange(watchNowPressed) }
-                Button(
-                    onClick = onWatchNow,
-                    shape = RaddTokens.Shape.Pill,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                    ),
-                    interactionSource = watchNowSource,
-                    // Mockup (Nov 2026): the two buttons share the slide's
-                    // width equally and read in sentence case — "Watch now" /
-                    // "My list" (P0-7: the ALL-CAPS read was a 2016 tell).
-                    // Video-audit #28 (Nov 2026): the split used to be 2f/1f
-                    // — "Watch now" took two thirds and "My list" was squeezed
-                    // to one third, its pill running to the screen edge on a
-                    // 360dp phone. Both buttons are 1f now, equal halves, and
-                    // the labels are labelMedium single-line with ellipsis, so
-                    // neither can push the other off the screen at any font
-                    // scale. The inset card is gone (full-bleed hero), so each
-                    // button is ~160dp wide; the default 24dp content padding
-                    // + 22dp icon pushed "Watch now" onto two lines — both
-                    // buttons take 12dp of content padding and an 18dp icon,
-                    // which fits the longest label on one line with room.
-                    contentPadding = PaddingValues(horizontal = RaddTokens.Space.Md, vertical = RaddTokens.Space.Sm),
-                    modifier = Modifier.weight(1f).heightIn(min = HERO_BUTTON_HEIGHT_DP.dp).pressScale(watchNowSource),
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_player_play_filled),
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp), // token-exempt: icon size, not spacing
-                    )
-                    Spacer(Modifier.width(RaddTokens.Space.Sm))
-                    Text(
-                        Brand.copy("hero_watch_now", "Watch now"),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                // Session 121 (P-26): My List on the hero, so saving a title does not
-                // need a trip to its details page first. The filled heart says saved.
-                // H1 (2027 Home fix): tonal now, not a scrim pill — the secondary
-                // action sits on surfaceContainerHigh with onSurface text, no
-                // border, no scrim: the hierarchy reads Play (filled jade)
-                // vs My List (tonal), and the tonal surface survives any
-                // art behind it without pretending to be part of the artwork.
-                // Video-audit #28 (Nov 2026): equal weight with Watch now
-                // (1f each — the old 2f/1f split squeezed this button to a
-                // third of the row); labelMedium single-line with ellipsis,
-                // like its neighbour, so it can never overflow the row.
-                Button(
-                    onClick = onToggleFavorite,
-                    shape = RaddTokens.Shape.Pill,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        contentColor = MaterialTheme.colorScheme.onSurface,
-                    ),
-                    // Same 12dp content padding as Watch Now (see above):
-                    // the two buttons share the width, so they share the
-                    // padding that keeps their labels on one line.
-                    contentPadding = PaddingValues(horizontal = RaddTokens.Space.Md, vertical = RaddTokens.Space.Sm),
-                    // CL-6: the button's visible text is "My list", so it announces
-                    // what the tap does instead:
-                    // "Save to My List", or "Saved to My List" once saved.
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = HERO_BUTTON_HEIGHT_DP.dp)
-                        .semantics { contentDescription = if (isFavorite) "Saved to My List" else "Save to My List" },
-                ) {
-                    Icon(
-                        painter = painterResource(if (isFavorite) R.drawable.ic_action_favorite_filled else R.drawable.ic_tab_my_list),
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp), // token-exempt: icon size, not spacing
-                    )
-                    Spacer(Modifier.width(RaddTokens.Space.Sm))
-                    Text(
-                        if (isFavorite) "Saved" else "My list",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
         }
     }
 }
@@ -1082,57 +715,37 @@ internal fun clampHeroPage(currentPage: Int, pageCount: Int): Int =
 
 /**
  * Whether the auto-advance loop may take the next slide, pure so the timing
- * is testable without a pager. A drag in progress, or a press on Watch Now,
- * holds the tick — an advance starting under a finger moves the button away
- * before tap-up, and the tap is then cancelled instead of navigating. And a
+ * is testable without a pager. A drag in progress holds the tick, and a
  * full [intervalMs] must have passed since the last page change or user
  * interaction ([lastChangeMs]): a manual swipe or dot tap restarts the clock,
  * so the slide just chosen is never yanked away a beat later (Samsung RTL
- * v1.1.2, Issue 3). A non-positive interval never advances on its own. A
- * paused banner never advances either (home fix, Nov 2026).
+ * v1.1.2, Issue 3). A non-positive interval never advances on its own.
  */
 internal fun shouldAdvanceHero(
     nowMs: Long,
     lastChangeMs: Long,
     intervalMs: Long,
     isScrolling: Boolean,
-    watchNowPressed: Boolean,
-    paused: Boolean = false,
 ): Boolean {
-    if (isScrolling || watchNowPressed || paused) return false
+    if (isScrolling) return false
     if (intervalMs <= 0L) return false
     return nowMs - lastChangeMs >= intervalMs
 }
 
-/**
- * Density (2026-11-15), revised by the Gemini home review (2026-11-17):
- * the hero action row was 56dp tall — M3's large button on a banner that
- * already eats 320–400dp of the first viewport. 40dp was M3's small button
- * and the size Netflix's Play button ships at; the review's 48dp touch
- * floor won for these two then — Watch now and My list are the hero's only
- * controls, and My List had no contained 48dp target at all. Video-audit
- * #28 (Nov 2026) + the user's standing direction (smaller buttons): the
- * 40dp small button is the size now — still a large target on a banner,
- * and the equal 1f/1f split gives each button ~160dp of width, so the
- * smaller height costs no reachability. Both buttons still span most of
- * the hero's width. The skeleton placeholder reads this same constant.
- */
-internal const val HERO_BUTTON_HEIGHT_DP = 40f
-internal const val HERO_ACTION_BOTTOM_DP = 20f
 private const val DOT_TOUCH_HEIGHT_DP = 48f
 
 /**
- * Samsung RTL (v1.1.2, Issue 3): 5 s per slide made Watch Now a moving
- * target — a viewer reading the slide and then reaching for the button got
- * the slide yanked away. 8 s is a full read plus a comfortable tap, and the
- * operator can still retune it from the panel (`hero_interval_s`); this is
- * only the default when no theme has been published. HomeScreen, PanelTheme
- * and the theme mirror in ServerSettingsRepository carry the same 8 s, so no
- * layer silently reverts it to 5.
+ * Samsung RTL (v1.1.2, Issue 3): 5 s per slide yanked the slide away while
+ * the viewer was still reading it. 8 s is a full read plus a comfortable
+ * tap, and the operator can still retune it from the panel
+ * (`hero_interval_s`); this is only the default when no theme has been
+ * published. HomeScreen, PanelTheme and the theme mirror in
+ * ServerSettingsRepository carry the same 8 s, so no layer silently
+ * reverts it to 5.
  */
 private const val AUTO_ADVANCE_MS = 8_000L
 
-/** The auto-advance loop's tick: short enough to notice a press, a drag, or a
+/** The auto-advance loop's tick: short enough to notice a drag or a
  *  manual page change promptly, long enough to cost nothing. */
 private const val HERO_ADVANCE_TICK_MS = 500L
 
@@ -1151,19 +764,16 @@ private val DOT_TOUCH_WIDTH: Dp = 48.dp
 // with the other hero geometry consts, NOT above the function: the
 // @Composable annotation between the two KDocs belongs to heroHeight(),
 // and a const placed there steals it (CI, 24 Nov 2026).
-// Video-audit #29 (Nov 2026): the floor was 220dp — on a 360dp phone the
-// 16:9 height (202.5dp) coerced to 220dp, but the bottom text column
-// (reason + two-line title + meta + buttons) needs ~176dp at font scale
-// 1.0 and ~204dp at 1.3x, and the dots band occupies the top 16–64dp.
-// At 220dp the column's top (the reason line) sat inside the dots band
-// and the title's first line clipped at larger font scales. 272dp fits
-// the column below the dots band up to ~1.3x font scale.
-private const val HERO_HEIGHT_MIN_DP = 272f
+// Clean hero (user direction, 21:51 PKT 27 Nov 2026): the floor is 220dp
+// again — the 272dp floor was the bottom text column's (reason + title +
+// meta + buttons) plus the dots band, and that column is gone with the
+// words. The hero is 16:9 art now, 202.5dp on a 360dp phone, floored at
+// 220dp so the first rail still peeks below it.
+private const val HERO_HEIGHT_MIN_DP = 220f
 private const val HERO_HEIGHT_MAX_DP = 360f
 
 /**
- * The banner's height. A full-bleed hero wants ~16:9 of a phone screen plus the text
- * block; 400dp keeps the first rail's posters peeking over the fold, so the page still
+ * The banner's height. A full-bleed hero wants ~16:9 of a phone screen; 400dp keeps the first rail's posters peeking over the fold, so the page still
  * reads as a catalog and not as a single poster. UI-fix P1-H2: on a narrow phone
  * (360dp class) 400dp is 62% of the screen for one title — the hero caps at 320dp
  * there, so the first rail still shows below it.
@@ -1171,12 +781,9 @@ private const val HERO_HEIGHT_MAX_DP = 360f
 @Composable
 /**
  * H1 (2027 Home fix): 16:9-derived — the hero is a 16:9 backdrop, so its
- * height follows the screen width (272dp floor, 360dp cap). Phones get
- * 272dp where they had 220dp — a taller hero, because the bottom text
- * column plus the dots band need the room (video-audit #29): at 220dp
- * the reason line sat inside the dots band and the title clipped. A
- * tablet (expanded width, 840dp+) caps at 360dp. [HeroSkeleton]
- * reads this same height, so the loading footprint shrinks with it.
+ * height follows the screen width (220dp floor, 360dp cap). A tablet
+ * (expanded width, 840dp+) caps at 360dp. [HeroSkeleton] reads this same
+ * height, so the loading footprint shrinks with it.
  */
 private fun heroHeight(): Dp {
     val width = LocalConfiguration.current.screenWidthDp

@@ -15,8 +15,9 @@ import org.junit.Test
  * - Detail Play: the skeleton's hero button must be the same 48dp min the
  *   real [PrimaryActions] Play button carries (`heightIn(min = 48.dp)`).
  *   The old skeleton drew 44dp — a 4dp jump on every detail load.
- * - Hero title: the skeleton's title bar must be the hero title's own line
- *   height (28dp — the 24sp copy, video-audit #29), not a guessed number.
+ * - Hero title: gone with the clean hero (user direction, 21:51 PKT 27 Nov
+ *   2026) — the hero paints no title, so its skeleton carries no title
+ *   bar to parity-check.
  */
 class SkeletonParityTest {
 
@@ -50,30 +51,6 @@ class SkeletonParityTest {
             "the skeleton Play bar must be the real Play button's height",
             realHeight,
             skeletonHeight,
-        )
-    }
-
-    @Test
-    fun `hero skeleton title bar is the hero title line height`() {
-        val hero = mainSource("com/raddstream/app/ui/components/HeroCarousel.kt")
-        // The real title is displaySmall copied to 24sp/28sp (video-audit
-        // #29, Nov 2026) — the skeleton must match the copy, not the token.
-        // The sizes ride brandSp (BrandDriftTest bans raw .sp literals).
-        // Audit #2 (Nov 2026): the no-art branch is gone — every slide
-        // carries the same BottomStart title column, so the anchor is the
-        // slide itself and the first lineHeight in it is the title's.
-        val slide = bodyOf(hero, "fun HeroSlide(")
-        val lineHeight = Regex("""lineHeight = brandSp\((\d+)\)""")
-            .find(slide)?.groupValues?.get(1)
-        assertEquals("the hero title must carry its 28sp line height", "28", lineHeight)
-
-        val skeleton = bodyOf(hero, "fun HeroSkeleton(")
-        val titleHeight = Regex("""\.height\((\d+)\.dp\)\.testTag\("heroTitleSkeleton"\)""")
-            .find(skeleton)?.groupValues?.get(1)
-        assertEquals(
-            "the skeleton title bar must be the hero title's line height",
-            lineHeight,
-            titleHeight,
         )
     }
 

@@ -226,7 +226,7 @@ class HomeHeaderTest {
     // ── the hero ──────────────────────────────────────────────────────────
 
     @Test
-    fun heroIsFullBleedWithSentenceCaseButtons() {
+    fun heroIsFullBleedCleanArtwork() {
         compose.setContent {
             RaddStreamTheme {
                 HomeContent(
@@ -236,7 +236,10 @@ class HomeHeaderTest {
                                 key = "recent",
                                 title = "Recently added",
                                 type = null,
-                                items = listOf(fakePost(1, "Hero Title", "movie")),
+                                items = listOf(
+                                    fakePost(1, "Hero Title", "movie"),
+                                    fakePost(2, "Second Title", "movie"),
+                                ),
                             ),
                         ),
                     ),
@@ -244,29 +247,21 @@ class HomeHeaderTest {
                 )
             }
         }
-        // P0-7: the buttons read in sentence case, not ALL CAPS.
-        compose.onNodeWithText("Watch now").assertIsDisplayed()
-        compose.onNodeWithText("My list").assertIsDisplayed()
+        // Clean hero (user direction, 21:51 PKT 27 Nov 2026): artwork +
+        // dots only — no title text, no Watch Now / My List buttons. The
+        // words live only in the slide's spoken sentence.
+        compose.onNodeWithText("Watch now").assertDoesNotExist()
+        compose.onNodeWithText("My list").assertDoesNotExist()
+        compose.onNodeWithText("Hero Title").assertDoesNotExist()
         // P1-5: the hero is full-bleed — the slide's art spans edge to
         // edge, so the merged slide node starts at the screen edge itself.
-        // The words still start 16dp in: the title and the Watch now
-        // button sit in the slide's own 16dp-padded text column, so their
-        // left edges clear 16dp even on the art-less slide, where the title
-        // rides the fallback card's centred label instead. The title is
-        // measured in the unmerged tree: the merged node is the whole
-        // slide, and its bounds are the art's, not the text's.
+        // The slide is found by its spoken sentence, which starts with the
+        // title: the merged node is the whole slide, and its bounds are the
+        // art's, not the text's.
         val slideBounds = compose.onNodeWithContentDescription("Hero Title", substring = true)
             .fetchSemanticsNode().boundsInRoot
         with(compose.density) {
             assertTrue("hero art is not edge-to-edge", slideBounds.left.toDp() == 0.dp)
-        }
-        val buttonBounds = compose.onNodeWithText("Watch now").fetchSemanticsNode().boundsInRoot
-        with(compose.density) {
-            assertTrue("Watch now starts under 16dp from the edge", buttonBounds.left.toDp() >= 16.dp)
-        }
-        val bounds = compose.onNodeWithText("Hero Title", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        with(compose.density) {
-            assertTrue("hero title starts under 16dp from the edge", bounds.left.toDp() >= 16.dp)
         }
     }
 }

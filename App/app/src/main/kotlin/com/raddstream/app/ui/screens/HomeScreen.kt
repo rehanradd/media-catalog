@@ -727,12 +727,6 @@ internal fun HomeContent(
                     HeroCarousel(
                         posts = heroItems,
                         onPostClick = onPostClick,
-                        onWatchNow = { post -> onWatchNowClick(post) },
-                        isFavorite = { post ->
-                            post.id in state.favoriteIds ||
-                                (post.workRef != null && post.workRef in state.favoriteWorkRefs)
-                        },
-                        onToggleFavorite = { post -> onToggleFavorite(post) },
                         autoplay = heroAutoplay,
                         intervalMs = heroIntervalMs,
                         sharedTransitionScope = sharedTransitionScope,
