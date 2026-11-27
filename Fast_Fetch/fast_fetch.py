@@ -10179,7 +10179,12 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
     FilePress prepare poll, ~2 min) may use their long budget, because no
     client is waiting on the answer. A press leaves it False, so a play
     request never blocks on a prep — the short press budget fails fast
-    and the background warm banks the link for the next press.
+    and the background warm banks the link for the next press. A background
+    call banks into resolved_cache only and never rewrites the ledger row:
+    only a press rewrites the stored URL. The operator port shows what is
+    stored, so a warm rewriting the row would corrupt the audit trail
+    (a pixeldrain /u/ share rewritten to its /api/file/ direct form by a
+    warm is exactly the failure test_redact pins).
 
     ``v2=True`` selects the honest resolution contract for the v2 API (API_V2.md §12,
     HANDOFF_apidocs B13) and changes nothing on the default path, which the shipped
@@ -11733,13 +11738,15 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
             fresh_url = None
             fresh_verdict = None
 
-    if fresh_url and _hubcloud_path:
+    if fresh_url and _hubcloud_path and not background:
         # One-round refresh: this gamerxyt fetch already paid for every
         # button — bank the siblings now, while the URLs are fresh,
         # instead of making each sibling re-resolve the same drive.
         # Placed after the Stage-2 gate (a gated-out URL banks nothing)
         # and before the pressed-row bank below, so it also runs when
-        # the fresh URL equals the stored one.
+        # the fresh URL equals the stored one. A background warm never
+        # banks siblings: it banks into resolved_cache only (see below),
+        # so a warm cannot rewrite ledger rows it was never asked to play.
         _bank_hubcloud_siblings(release_id=src["release_id"],
                                 pressed_id=src["id"],
                                 candidates=_hubcloud_candidates)
@@ -11806,15 +11813,22 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
         for column, value in measured:
             src[column] = value
         with get_db() as conn:
-            conn.execute(f"""
-                UPDATE download_sources
-                SET final_url = ?, is_temporary = ?, status = 'active',
-                    last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP,
-                    last_failed_at = NULL, failure_class = NULL
-                    {"".join(f", {column} = ?" for column, _value in measured)}
-                WHERE id = ?
-            """, (fresh_url, fresh_temp, *(value for _column, value in measured),
-                  src["id"]))
+            # A background warm must never rewrite the ledger row: it banks
+            # into resolved_cache only (the caller does that). Only a press
+            # rewrites the stored URL — the operator port shows what is
+            # stored, so a warm rewriting it corrupts the audit trail
+            # (test_redact pins the operator seeing the stored /u/ form,
+            # not the direct-skip /api/file/ form).
+            if not background:
+                conn.execute(f"""
+                    UPDATE download_sources
+                    SET final_url = ?, is_temporary = ?, status = 'active',
+                        last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP,
+                        last_failed_at = NULL, failure_class = NULL
+                        {"".join(f", {column} = ?" for column, _value in measured)}
+                    WHERE id = ?
+                """, (fresh_url, fresh_temp, *(value for _column, value in measured),
+                      src["id"]))
             # Gap A3: persist the subtitles the resolver just unwrapped,
             # keyed by this ledger link — the next bundle for the release
             # then carries them as `tracks[]`. Same transaction as the URL
@@ -11972,24 +11986,28 @@ def resolve_live_source(source_id: int, *, v2: bool = False,
                 deadline=_sibling_deadline)
             _winner = _rel.get("watch_winner")
             if _winner and _winner.get("url"):
-                with get_db() as _conn:
-                    _conn.execute(
-                        """UPDATE download_sources
-                           SET final_url = ?, is_temporary = ?,
-                               status = 'active',
-                               last_checked_at = CURRENT_TIMESTAMP,
-                               updated_at = CURRENT_TIMESTAMP,
-                               last_failed_at = NULL, failure_class = NULL,
-                               mime_type = ?, file_size_bytes = ?,
-                               is_resumable = ?, http_status = ?
-                           WHERE id = ?""",
-                        (_winner["url"],
-                         1 if _winner.get("temporary") else 0,
-                         _winner.get("mime"), _winner.get("size"),
-                         1 if _winner.get("resumable") else 0,
-                         206 if (_winner.get("resumable")
-                                 and _winner.get("kind") == "file") else 200,
-                         _winner.get("row_id")))
+                # A background warm never rewrites a ledger row either:
+                # it returns the winner URL for resolved_cache only.
+                # Only a press banks the failover winner into the row.
+                if not background:
+                    with get_db() as _conn:
+                        _conn.execute(
+                            """UPDATE download_sources
+                               SET final_url = ?, is_temporary = ?,
+                                   status = 'active',
+                                   last_checked_at = CURRENT_TIMESTAMP,
+                                   updated_at = CURRENT_TIMESTAMP,
+                                   last_failed_at = NULL, failure_class = NULL,
+                                   mime_type = ?, file_size_bytes = ?,
+                                   is_resumable = ?, http_status = ?
+                               WHERE id = ?""",
+                            (_winner["url"],
+                             1 if _winner.get("temporary") else 0,
+                             _winner.get("mime"), _winner.get("size"),
+                             1 if _winner.get("resumable") else 0,
+                             206 if (_winner.get("resumable")
+                                     and _winner.get("kind") == "file") else 200,
+                             _winner.get("row_id")))
                 return {
                     "success": True,
                     "id": src["id"],

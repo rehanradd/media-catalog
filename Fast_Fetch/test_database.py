@@ -949,6 +949,45 @@ class DatabaseSaveTests(unittest.TestCase):
         self.assertTrue(res["cached"])
         self.assertFalse(res["refreshed"])
 
+    def test_background_warm_never_rewrites_the_ledger_row(self):
+        """A background warm banks into resolved_cache only: the stored
+        final_url stays as-ingested. Only a press rewrites it. (Backend CI
+        run 45919668122: a warm rewrote the pixeldrain /u/ share to its
+        /api/file/ direct form, so the operator port — which shows what is
+        stored — answered /api/file/ and test_redact's audit pin failed.)"""
+        media_data = self.media("site_a", "https://site-a.example/example-film/")
+        media_data["releases"][0]["sources"] = [{
+            "source_name": "PixelDrain [Direct CDN]",
+            "service": "pixeldrain",
+            "resource_id": "site_a-id",
+            "source_url": "https://site-a.example/source",
+            "final_url": "https://pixeldrain.com/u/AbCdEf12",
+            "is_temporary": 0,
+        }]
+        fast_fetch.save_scraped_data(media_data)
+        with fast_fetch.get_db() as conn:
+            source = conn.execute("SELECT id FROM download_sources LIMIT 1").fetchone()
+
+        warm = fast_fetch.resolve_live_source(source["id"], background=True)
+        self.assertTrue(warm["success"], warm)
+        self.assertEqual(warm["url"], "https://pixeldrain.com/api/file/AbCdEf12")
+        with fast_fetch.get_db() as conn:
+            row = conn.execute(
+                "SELECT final_url FROM download_sources WHERE id = ?",
+                (source["id"],)).fetchone()
+        self.assertEqual(row["final_url"], "https://pixeldrain.com/u/AbCdEf12",
+                         "a warm must not rewrite the stored URL")
+
+        press = fast_fetch.resolve_live_source(source["id"])
+        self.assertTrue(press["success"], press)
+        self.assertEqual(press["url"], "https://pixeldrain.com/api/file/AbCdEf12")
+        with fast_fetch.get_db() as conn:
+            row = conn.execute(
+                "SELECT final_url FROM download_sources WHERE id = ?",
+                (source["id"],)).fetchone()
+        self.assertEqual(row["final_url"], "https://pixeldrain.com/api/file/AbCdEf12",
+                         "a press rewrites the stored URL to the direct form")
+
     def test_stage2_gate_refuses_an_unprobed_cached_page(self):
         """The strict gate: a cached address that fails its probe is never
         served, on either contract — the answer is no_playable_source,

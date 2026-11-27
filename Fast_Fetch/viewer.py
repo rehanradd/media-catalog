@@ -7419,12 +7419,14 @@ class _InFlightResolve:
 
 
 def _resolve_coalesced(source_id: int, *, v2: bool = False,
-                       want: str = "watch") -> dict:
+                       want: str = "watch", background: bool = False) -> dict:
     """Resolve one link, joining an in-flight resolve for the same source.
 
     Returns the resolver's dict, a fresh copy per caller so nobody mutates a
     shared answer. A waiter that times out, or whose leader left no usable
     answer, resolves on its own, exactly as before this change.
+    ``background=True`` marks a warm, not a press: the resolve banks into
+    resolved_cache only and never rewrites the ledger row.
     """
     import fast_fetch
     key = (int(source_id), bool(v2), str(want))
@@ -7441,9 +7443,11 @@ def _resolve_coalesced(source_id: int, *, v2: bool = False,
             result = inflight.result
             if isinstance(result, dict):
                 return dict(result)
-        return fast_fetch.resolve_live_source(int(source_id), v2=v2, want=want)
+        return fast_fetch.resolve_live_source(int(source_id), v2=v2, want=want,
+                                              background=background)
     try:
-        result = fast_fetch.resolve_live_source(int(source_id), v2=v2, want=want)
+        result = fast_fetch.resolve_live_source(int(source_id), v2=v2, want=want,
+                                                background=background)
         inflight.result = result if isinstance(result, dict) else {"success": False}
         return dict(inflight.result)
     finally:
@@ -7464,7 +7468,11 @@ def _resolve_and_bank(source_id: int) -> None:
     """
     try:
         import resolved_cache
-        res = _resolve_coalesced(int(source_id), want="watch")
+        # background=True: this is a warm, not a press — the resolve banks
+        # into resolved_cache only and must never rewrite the ledger row
+        # (a warm rewriting a stored /u/ URL to its /api/file/ direct form
+        # corrupts the operator's audit trail; only a press rewrites it).
+        res = _resolve_coalesced(int(source_id), want="watch", background=True)
         if res.get("success") and res.get("url") and not res.get("stale"):
             with get_db() as conn:
                 resolved_cache.record_resolved_cache(conn, int(source_id), res)
