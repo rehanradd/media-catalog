@@ -152,7 +152,6 @@ import com.raddstream.app.ui.components.UserWords
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddTokens
-import com.raddstream.app.ui.theme.posterSharedElement
 import com.raddstream.app.viewmodel.GenreFilter
 import com.raddstream.app.viewmodel.LanguageFilter
 import com.raddstream.app.viewmodel.ResumeTile
@@ -2271,9 +2270,6 @@ internal fun SearchContent(
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
-    // Design direction (Nov 2026): one poster-card size on this screen —
-    // the rail and the 3-up grids share [searchPosterCardWidthDp].
-    val cardWidthDp = searchPosterCardWidthDp(LocalConfiguration.current.screenWidthDp)
     // Session 121 (P-12): scrolling the results dismisses the keyboard — the open
     // keyboard covering the top row was the other half of the complaint (the first
     // half was submit, handled at the field). Hoisted here so the list state is
@@ -2449,29 +2445,31 @@ internal fun SearchContent(
                             titleStyle = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                         )
                     }
-                    // P0-6 (2027 Home fix): results are a scannable vertical grid, three posters
-                    // wide — rails are for Home, and one density rules everywhere (the
-                    // discovery "For you" grid was already 3-wide). Scanning 20
-                    // results no longer means swiping every rail sideways.
+                    // Design direction REFINED (Nov 2026): search results
+                    // are rich rows, not poster cards — a YouTube-style row
+                    // with a bigger thumb, the title, the rating and more
+                    // info. Search shows MORE than Home, because the viewer
+                    // is comparing; the discovery rails above keep the
+                    // poster card. One row per result, not a 3-up grid.
                     // Session 158 (S5): a row is keyed by what it holds, not
                     // where it sits — a re-emitted list (the same search
                     // landing twice, a second identical submit) rebuilds the
                     // groups, and an index key lets the rows shift under a
                     // press in flight. A content key keeps the row — and the
                     // press on it — alive across the re-emission.
-                    // Motion (round 2): the rows stagger in — each trio fades
+                    // Motion (round 2): the rows stagger in — each row fades
                     // and rises 24dp behind the one above it, on the emphasized
                     // spring, capped at 300ms so a long list never waits on the
                     // animation. The delay is pure over the row's position, so
                     // it is stable across recompositions.
-                    group.items.chunked(3).forEachIndexed { rowIndex, trio ->
+                    group.items.forEachIndexed { itemIndex, post ->
                         // P2-12 (audit B-43): the row key is hoisted so the
                         // lazy item key and the entrance set track the same
                         // identity — the key and the set can never drift.
-                        val rowKey = "${group.typeKey}-${trio.joinToString(separator = ",") { it.id.toString() }}"
+                        val rowKey = "${group.typeKey}-${post.id}"
                         item(key = rowKey) {
                             SearchStaggeredFade(
-                                delayMillis = searchEntranceDelayMs(groupIndex * 10 + rowIndex),
+                                delayMillis = searchEntranceDelayMs(groupIndex * 10 + itemIndex),
                                 // P2-12 (audit B-43): the entered-ids set —
                                 // the My List pattern. A row that scrolls
                                 // out and back finds its key already in the
@@ -2484,45 +2482,19 @@ internal fun SearchContent(
                                 // new query — see the staggerKey above.
                                 staggerKey = staggerKey,
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                ) {
-                                    trio.forEach { post ->
-                                        // Screen audit #7 (Nov 2026): result tiles
-                                        // get two title lines and no bare-type meta
-                                        // — a long title reads whole under the
-                                        // "Series" header instead of truncating to
-                                        // "One Piece ·…", and the "Series" line
-                                        // under it no longer restates the header.
-                                        // The discovery rails above keep the
-                                        // one-line tile and the full meta line.
-                                        // Round 6 (motion): the poster carries the
-                                        // shared element to the Detail hero — key
-                                        // "poster-<workId>", one key per work,
-                                        // shared by source and destination. The
-                                        // scopes come from the NavHost (via
-                                        // SearchContent params); the infra helper
-                                        // no-ops when either is null.
-                                        val posterModifier = Modifier.width(cardWidthDp.dp).posterSharedElement(
-                                            key = "poster-${post.workId ?: post.id}",
-                                            sharedTransitionScope = sharedTransitionScope,
-                                            animatedVisibilityScope = animatedVisibilityScope,
-                                        )
-                                        PosterCard(
-                                            post = post,
-                                            onClick = { onPostClick(post) },
-                                            modifier = posterModifier,
-                                            titleMaxLines = 2,
-                                            suppressBareTypeMeta = true,
-                                            compactMeta = true,
-                                        )
-                                    }
-                                    // A short last row holds its width: empty
-                                    // cells keep the row's posters at grid
-                                    // width instead of stretching to fill it.
-                                    repeat(3 - trio.size) { Spacer(Modifier.width(cardWidthDp.dp)) }
-                                }
+                                // Round 6 (motion): the row's thumb carries
+                                // the shared element to the Detail hero —
+                                // key "poster-<workId>", one key per work,
+                                // shared by source and destination. The
+                                // scopes come from the NavHost (via
+                                // SearchContent params); the infra helper
+                                // no-ops when either is null.
+                                SearchResultRow(
+                                    post = post,
+                                    onClick = { onPostClick(post) },
+                                    sharedTransitionScope = sharedTransitionScope,
+                                    animatedVisibilityScope = animatedVisibilityScope,
+                                )
                             }
                             Spacer(Modifier.height(12.dp))
                         }
@@ -2691,7 +2663,7 @@ internal fun FilterSheetBody(
                 Column(Modifier.weight(1f)) {
                     Text(
                         "Complete series only",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.clearAndSetSemantics { },
                     )
@@ -2777,7 +2749,7 @@ internal fun FilterSheetBody(
                         colors = raddFilterChipColors(),
                         selected = state.filters.includedOnly,
                         onClick = { onSetIncludedOnly(!state.filters.includedOnly) },
-                        label = { Text("Included in my plan", style = MaterialTheme.typography.labelMedium) },
+                        label = { Text("Included in my plan") },
                         // P2-chip2027: the selected check, as on every
                         // other selected filter chip.
                         leadingIcon = if (state.filters.includedOnly) ({ SelectedCheckIcon() }) else null,
@@ -2833,26 +2805,7 @@ internal fun FilterSheetBody(
             enabled = state.hasActiveFilters && savedFilters.size < MaxSavedFilters,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(top = 8.dp),
         ) {
-            Text("Save this filter", style = MaterialTheme.typography.labelMedium)
-        }
-        // Video audit #37 (Nov 2026): the greyed-out Save said nothing
-        // about why — the viewer could not tell "nothing to save" from
-        // "no room left". The reason rides under the button, only while
-        // it is disabled, in the words the viewer needs.
-        if (!state.hasActiveFilters) {
-            Text(
-                "Choose a filter first — there is nothing to save yet.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-            )
-        } else if (savedFilters.size >= MaxSavedFilters) {
-            Text(
-                "You already saved $MaxSavedFilters filters. Remove one to save another.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-            )
+            Text("Save this filter")
         }
         Row(
             modifier = Modifier
@@ -2868,14 +2821,14 @@ internal fun FilterSheetBody(
                 onClick = onResetFilters,
                 modifier = Modifier.heightIn(min = 48.dp),
             ) {
-                Text("Reset", style = MaterialTheme.typography.labelMedium)
+                Text("Reset")
             }
             Button(
                 shape = RaddTokens.Shape.Pill,
                 onClick = onDone,
                 modifier = Modifier.heightIn(min = 48.dp),
             ) {
-                Text("Apply", style = MaterialTheme.typography.labelMedium)
+                Text("Apply")
             }
         }
     }
@@ -2921,7 +2874,7 @@ internal fun SortOptionRow(
     ) {
         RadioButton(selected = selected, onClick = null)
         Spacer(Modifier.width(8.dp))
-        Text(sort.label, style = MaterialTheme.typography.bodyMedium)
+        Text(sort.label)
     }
 }
 
@@ -2958,7 +2911,7 @@ private fun <T> FacetChips(
                 colors = raddFilterChipColors(),
                 selected = isSelected(option),
                 onClick = { onSelect(option) },
-                label = { Text(label(option), style = MaterialTheme.typography.labelMedium) },
+                label = { Text(label(option)) },
                 // P2-chip2027: the selected check — the M3 Expressive
                 // mark, the same one RaddChip shows.
                 leadingIcon = if (isSelected(option)) ({ SelectedCheckIcon() }) else null,
@@ -2993,7 +2946,7 @@ private fun FacetHeader(title: String, @DrawableRes icon: Int?) {
             )
             Spacer(Modifier.width(8.dp))
         }
-        Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 
