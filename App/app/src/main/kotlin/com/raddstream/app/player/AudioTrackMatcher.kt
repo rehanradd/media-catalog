@@ -150,6 +150,35 @@ object AudioTrackMatcher {
         return text
     }
 
+    /**
+     * Video-audit #17 (27 Nov 2026): a muxer-generated track id is not a
+     * name. HLS packagers label their audio renditions `audio_0`,
+     * `audio_1` (and subtitles `sub_0`, `track_2`) — the stream's internal
+     * id, which Media3 hands through as the format label. Printing it is
+     * raw backend data leaking into the UI ("Audio: audio_0" on the Madani
+     * pause line). A label that is only a kind word plus a number is
+     * missing, not a name, so callers fall through to the language or the
+     * numbered fallback instead.
+     */
+    fun isRawTrackId(label: String?): Boolean {
+        val text = label?.trim().orEmpty()
+        if (text.isEmpty()) return false
+        return RAW_TRACK_ID.matches(text)
+    }
+
+    /**
+     * The name a screen may print for one audio track: the real language
+     * ("Urdu") when the track declares one, else its own label when that
+     * label is a human word — never a raw track id, never a placeholder.
+     * Null means the track has nothing worth printing, and the caller
+     * omits the field instead of inventing a name.
+     */
+    fun displayAudioName(language: String?, label: String?): String? =
+        displayName(language)
+            ?: label?.trim()?.takeIf { it.isNotEmpty() && !isRawTrackId(it) }
+
+    private val RAW_TRACK_ID = Regex("""(?i)^(audio|sub|subtitle|track|video|a|v|s)[_-]?\d+$""")
+
     // ── internals ────────────────────────────────────────────────────────────────
 
     private sealed interface Pick {

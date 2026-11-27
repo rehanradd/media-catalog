@@ -59,6 +59,46 @@ class PlayerBufferingTest {
     }
 
     /**
+     * Video-audit #3 (27 Nov 2026): the old 1 s resume threshold restarted
+     * the picture on one second of media, and a live HLS segment is 2–6 s —
+     * so the Madani player played ~2 s, stalled, and resumed into the same
+     * stall. Three seconds is a whole segment's worth of cushion, and it
+     * still fits inside the 15 s the player aims to hold.
+     */
+    @Test
+    fun `recovery waits for a whole live segment before restarting`() {
+        assertEquals(
+            "a post-stall start on less than a segment re-stalls within one segment",
+            3_000,
+            PlayerBuffering.BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
+        )
+        assertTrue(
+            "the resume threshold must still fit inside the holding target",
+            PlayerBuffering.BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS <= PlayerBuffering.MIN_BUFFER_MS,
+        )
+    }
+
+    /**
+     * Video-audit #6 (27 Nov 2026): a live start legitimately buffers 6–12 s
+     * while the redirector mints the 302, so the 5 s "slow connection" card
+     * fired on a start that was succeeding. A live stall counts as stuck
+     * only past 12 s — beyond the measured resolve ceiling, still well
+     * before the 20 s start watchdog fails the attempt over. VOD keeps 5 s.
+     */
+    @Test
+    fun `a live stall gets the longer stuck clock`() {
+        assertFalse(isStuckBuffering(4_999))
+        assertTrue(isStuckBuffering(5_000))
+        assertFalse(isStuckBuffering(11_999, isLive = true))
+        assertTrue(isStuckBuffering(12_000, isLive = true))
+        assertEquals(12_000L, PlayerBuffering.STUCK_AFTER_MS_LIVE)
+        assertTrue(
+            "the live stuck clock must stay inside the start watchdog",
+            PlayerBuffering.STUCK_AFTER_MS_LIVE < StartDeadline.START_WATCHDOG_MS,
+        )
+    }
+
+    /**
      * The census is the part that cannot be answered by reading one file: the numbers have to be
      * handed to Media3 in the order the method takes them, and a second load control built
      * somewhere else is a second buffering policy that nobody is changing when this one is.

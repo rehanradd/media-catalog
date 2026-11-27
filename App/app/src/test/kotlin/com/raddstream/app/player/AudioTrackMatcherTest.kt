@@ -271,4 +271,36 @@ class AudioTrackMatcherTest {
         )
         assertEquals("g0-t2", AudioTrackMatcher.cycle(tracks, currentId = "g0-t0"))
     }
+
+    // ── raw track ids (video-audit #17, 27 Nov 2026) ────────────────────────────
+    // A muxer-generated id ("audio_0") is not a name: the status line must
+    // never print one, and the display name must prefer the real language.
+
+    @Test
+    fun `a muxer-generated id is a raw id, a human label is not`() {
+        assertTrue(AudioTrackMatcher.isRawTrackId("audio_0"))
+        assertTrue(AudioTrackMatcher.isRawTrackId("audio_1"))
+        assertTrue(AudioTrackMatcher.isRawTrackId("sub_0"))
+        assertTrue(AudioTrackMatcher.isRawTrackId("track-2"))
+        assertTrue(AudioTrackMatcher.isRawTrackId("AUDIO_0"))
+        assertFalse(AudioTrackMatcher.isRawTrackId("Hindi"))
+        assertFalse(AudioTrackMatcher.isRawTrackId("Hindi Dubbed"))
+        assertFalse(AudioTrackMatcher.isRawTrackId("Audio 1"))
+        assertFalse(AudioTrackMatcher.isRawTrackId("English [HD]"))
+        assertFalse(AudioTrackMatcher.isRawTrackId(null))
+        assertFalse(AudioTrackMatcher.isRawTrackId(""))
+    }
+
+    @Test
+    fun `displayAudioName prefers the language and never prints a raw id`() {
+        // The audit's own case: Madani's track carries label "audio_0"
+        // and language "ur" — the line reads Urdu, never audio_0.
+        assertEquals("Urdu", AudioTrackMatcher.displayAudioName("ur", "audio_0"))
+        assertEquals("Urdu", AudioTrackMatcher.displayAudioName("urd", "audio_0"))
+        assertEquals("Hindi", AudioTrackMatcher.displayAudioName("hin", "Hindi Dubbed"))
+        assertEquals("English", AudioTrackMatcher.displayAudioName(null, "English"))
+        assertNull(AudioTrackMatcher.displayAudioName(null, "audio_0"))
+        assertNull(AudioTrackMatcher.displayAudioName("und", "sub_0"))
+        assertNull(AudioTrackMatcher.displayAudioName(null, null))
+    }
 }

@@ -4,7 +4,6 @@ import android.app.Activity
 import android.app.ActivityManager
 import android.content.Context
 import android.content.pm.ActivityInfo
-import android.content.res.Configuration
 import android.graphics.Typeface
 import android.os.Build
 import android.provider.Settings
@@ -58,7 +57,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -224,7 +222,6 @@ private fun PlayerScreenContent(
     // stringResource() cannot run — resolve them here, at composition time.
     val kidsPinWrong = stringResource(R.string.kids_pin_wrong)
     val kidsPinIncomplete = stringResource(R.string.kids_pin_incomplete)
-    val configuration = LocalConfiguration.current
     val activity = remember(context) { context.findActivity() }
     // MX #7 — Kids Lock: the unlock pad, raised when the VM answers an
     // unlock tap in kids mode with RequestKidsPin. The error and lockout
@@ -332,25 +329,18 @@ private fun PlayerScreenContent(
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         insets?.hide(WindowInsetsCompat.Type.systemBars())
         val originalBrightness = window?.attributes?.screenBrightness
-        // H18 (user decision 04:42 PKT 20 Nov): playback entry respects
-        // the phone's held orientation instead of forcing landscape — a
-        // viewer holding the phone portrait opens portrait; landscape
-        // stays available through the rotate control. The sensor request
-        // follows how the device is held right now, and the state is
-        // synced to it here so the orientation effect below applies the
-        // held orientation on its first run instead of overwriting the
-        // sensor request with the stale LANDSCAPE default. (Session 157
-        // S4 forced landscape because a sensor on a fixed/flat/slow
-        // device could hold the player portrait while a landscape picture
-        // played sideways; the owner decided the held orientation wins.)
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
-        vm.setOrientation(
-            if (configuration.orientation == Configuration.ORIENTATION_PORTRAIT) {
-                PlayerOrientation.PORTRAIT
-            } else {
-                PlayerOrientation.LANDSCAPE
-            },
-        )
+        // Video-audit #18 (user order 20:11 PKT 27 Nov 2026): the player
+        // MUST open in landscape on Play, VOD and Live TV alike — a video
+        // app that plays TV as a small portrait strip is not acceptable.
+        // This supersedes H18 (20 Nov, "held orientation wins"), which
+        // left the Madani player portrait while a landscape picture played
+        // in a strip. Forced landscape on entry; the rotate control still
+        // lets the viewer flip back to portrait by hand, and the dispose
+        // step below snaps the app back to portrait on exit. The
+        // fullscreen toggle in the bottom bar flips the immersive bars,
+        // not the orientation — the two stay independent.
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        vm.setOrientation(PlayerOrientation.LANDSCAPE)
         onDispose {
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             insets?.show(WindowInsetsCompat.Type.systemBars())
@@ -364,14 +354,13 @@ private fun PlayerScreenContent(
             // back on a device whose rotation is locked (a cloud device,
             // or a phone with auto-rotate off) — after exiting the Salaar
             // player the detail stayed landscape while the device frame
-            // was portrait, until the tester rotated the device. Ask the
-            // sensor once, so the app follows how the device is actually
-            // held right now, then release back to neutral a second later
-            // so the rest of the app is not sensor-driven forever. The
-            // delayed post survives the composition (it is tied to the
-            // decor view, not the composable) and is a no-op on a
-            // finishing activity.
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
+            // was portrait, until the tester rotated the device. Ask for
+            // portrait outright, so the app follows the exit the viewer
+            // expects, then release back to neutral a second later so the
+            // rest of the app is not forced portrait forever. The delayed
+            // post survives the composition (it is tied to the decor view,
+            // not the composable) and is a no-op on a finishing activity.
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             activity?.window?.decorView?.postDelayed(
                 { activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED },
                 1_000L,
@@ -399,9 +388,9 @@ private fun PlayerScreenContent(
     }
 
     // Manual orientation (rotate button). configChanges on MainActivity keeps playback alive.
-    // H18: the entry effect above already synced the state to the held
-    // orientation, so the first composition applies it; later flips are
-    // the viewer's explicit choice. The landscape branch is forced, the
+    // Video-audit #18 (27 Nov 2026): the entry effect above already forced
+    // LANDSCAPE, so the first composition applies it; later flips are the
+    // viewer's explicit choice. The landscape branch is forced, the
     // portrait branch keeps the sensor, so an explicit flip to portrait
     // still follows how the viewer holds the device.
     LaunchedEffect(state.orientation) {
@@ -913,6 +902,12 @@ private fun PlayerScreenContent(
                     } else {
                         null
                     },
+                    // Video-audit #6 (27 Nov 2026): a stuck live channel
+                    // offers the way back to the channel list — the
+                    // fallback channel, since the player never sees the
+                    // list and cannot name the next channel itself. Back
+                    // returns to the grid the viewer came from.
+                    onBrowseChannels = if (state.isLive) onBackClick else null,
                 )
             } else {
                 // Robo run 7: the loading notice's title was unreadable over the

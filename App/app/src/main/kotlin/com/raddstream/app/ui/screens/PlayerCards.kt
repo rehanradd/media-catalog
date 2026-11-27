@@ -413,11 +413,17 @@ Button(
 // to the rung this title actually offers. The 480p button is only
 // composed when 480p is offered — on a title without the rung it would
 // show a snackbar and do nothing, which is a button that lies.
+// Video-audit #6 (27 Nov 2026): a live stall gets a third way out —
+// "Browse channels". The player cannot name the next channel (it never
+// sees the Live TV list), so the honest fallback is the way back to the
+// list itself, where the viewer picks another channel instead of
+// retrying the same stalled one. Only composed for live.
 @Composable
 internal fun StuckBufferCard(
     bufferedPct: Int?,
     onRetry: () -> Unit,
     onPlay480p: (() -> Unit)?,
+    onBrowseChannels: (() -> Unit)? = null,
 ) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Surface(
@@ -470,6 +476,20 @@ internal fun StuckBufferCard(
                         ) {
                             Text(
                                 stringResource(R.string.player_play_480p),
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                    if (onBrowseChannels != null) {
+                        OutlinedButton(
+                            onClick = onBrowseChannels,
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.4f)),
+                            shape = RoundedCornerShape(28.dp),
+                            modifier = Modifier.heightIn(min = MinControlTarget),
+                        ) {
+                            Text(
+                                stringResource(R.string.player_browse_channels),
                                 fontWeight = FontWeight.SemiBold,
                             )
                         }

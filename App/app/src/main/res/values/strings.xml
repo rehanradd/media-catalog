@@ -100,6 +100,7 @@
          being "Buffering…" and says so, with two ways out. -->
     <string name="player_still_loading">Still loading — your connection looks slow</string>
     <string name="player_play_480p">Play at 480p</string>
+    <string name="player_browse_channels">Browse channels</string>
     <string name="player_notice_spaced">%1$s %2$s</string>
     <string name="player_giveup_download_only">Download only</string>
     <string name="player_giveup_no_candidate">Nothing playable here right now</string>

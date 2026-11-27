@@ -3,6 +3,7 @@ package com.raddstream.app.ui
 import android.content.Context
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.fetchSemanticsNode
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onChildren
@@ -10,6 +11,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
+import androidx.media3.common.Format
+import androidx.media3.common.TrackGroup
 import androidx.test.core.app.ApplicationProvider
 import com.raddstream.app.R
 import com.raddstream.app.player.LadderRung
@@ -17,8 +20,12 @@ import com.raddstream.app.player.PlaybackInfo
 import com.raddstream.app.player.PlaybackRendition
 import com.raddstream.app.player.PlayerUiState
 import com.raddstream.app.player.PrintInfo
+import com.raddstream.app.player.TrackUiOption
 import com.raddstream.app.ui.screens.BottomControls
 import com.raddstream.app.ui.screens.CenterPlayPause
+import com.raddstream.app.ui.screens.PlayerRowCompactRail
+import com.raddstream.app.ui.screens.PlayerRowCompactWidth
+import com.raddstream.app.ui.screens.playerControlsNeedCompact
 import com.raddstream.app.ui.screens.playerSafeRailDp
 import com.raddstream.app.ui.theme.RaddStreamTheme
 import java.io.File
@@ -29,6 +36,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * The 16 Nov player review fixes, pinned in code: the malformed pause/play
@@ -254,6 +262,87 @@ class PlayerReviewFixesTest {
         setBottom(liveBase(isPlaying = false))
         compose.onNodeWithText("PAUSED").assertIsDisplayed()
         compose.onNodeWithText("LIVE").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a buffering live picture reads LIVE, never PAUSED`() {
+        // Video-audit #3 (27 Nov 2026): the Madani mark flicked LIVE ↔
+        // PAUSED every ~2 s on the rebuffer cycle. A stall keeps LIVE;
+        // only a settled pause reads PAUSED.
+        setBottom(liveBase(isPlaying = false).copy(isBuffering = true))
+        compose.onNodeWithText("LIVE").assertIsDisplayed()
+        compose.onNodeWithText("PAUSED").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a single audio track hides the Audio field, a raw id never prints`() {
+        // Video-audit #17 (27 Nov 2026): the pause line read
+        // "Auto · Audio: audio_0 · Subtitles: Off". One track needs no
+        // Audio field at all, and a muxer id is never printed.
+        val single = TrackUiOption(
+            id = "g0-t0",
+            group = TrackGroup(Format.Builder().build()),
+            trackIndex = 0,
+            label = "audio_0",
+            language = "ur",
+            supported = true,
+            selected = true,
+        )
+        setBottom(vodBase(isPlaying = false).copy(audioTracks = listOf(single)))
+        compose.onNodeWithText("Audio:", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("audio_0", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `two audio tracks name the real language, never the raw id`() {
+        // Video-audit #17 (27 Nov 2026): with a choice to name, the line
+        // reads the language — "Audio: Urdu" — not the muxer id.
+        val group = TrackGroup(Format.Builder().build())
+        val tracks = listOf(
+            TrackUiOption("g0-t0", group, 0, "audio_0", "ur", true, true),
+            TrackUiOption("g0-t1", group, 1, "audio_1", "eng", true, false),
+        )
+        setBottom(vodBase(isPlaying = false).copy(audioTracks = tracks))
+        compose.onNodeWithText("Audio: Urdu", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("audio_0", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `the compact row decision follows the 360dp arithmetic`() {
+        // Video-audit #20 (27 Nov 2026): seven 48dp controls (376dp) plus
+        // 48dp rails cannot fit a 360dp or 411dp phone; the compact row
+        // (304dp + 16dp rails) fits 360dp with room to spare, and a wide
+        // landscape frame keeps the full row.
+        assertTrue(playerControlsNeedCompact(360, 48.dp))
+        assertTrue(playerControlsNeedCompact(411, 48.dp))
+        assertFalse(playerControlsNeedCompact(851, 48.dp))
+        assertFalse(playerControlsNeedCompact(600, 48.dp))
+        assertTrue(
+            "the compact row plus its rails must fit the 360dp phone",
+            PlayerRowCompactWidth + PlayerRowCompactRail * 2 <= 360.dp,
+        )
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h640dp")
+    fun `all seven controls fit inside a 360dp-wide player row`() {
+        // Video-audit #20 (27 Nov 2026): on the Tecno SPARK 7T the row
+        // showed five icons and Fullscreen + More were off-screen. At
+        // 360dp every control's bounds must sit inside the root's bounds.
+        setBottom(vodBase())
+        val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
+        val more = compose.onNodeWithContentDescription(context.getString(R.string.player_more))
+            .fetchSemanticsNode().boundsInRoot
+        assertTrue("More must sit inside the row, not past its edge", more.right <= root.right)
+        assertTrue("More must sit inside the row, not before its start", more.left >= root.left)
+        val fullscreen = compose.onNodeWithContentDescription(
+            context.getString(R.string.player_exit_fullscreen),
+        ).fetchSemanticsNode().boundsInRoot
+        assertTrue("Fullscreen must sit inside the row", fullscreen.right <= root.right)
+        val left = compose.onNodeWithTag("player-controls-left").fetchSemanticsNode().boundsInRoot
+        assertTrue("the transport cluster must sit inside the row", left.left >= root.left)
+        val right = compose.onNodeWithTag("player-controls-right").fetchSemanticsNode().boundsInRoot
+        assertTrue("the tools cluster must sit inside the row", right.right <= root.right)
     }
 
     @Test

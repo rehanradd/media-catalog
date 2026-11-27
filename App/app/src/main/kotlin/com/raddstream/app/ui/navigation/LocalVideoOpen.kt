@@ -3,6 +3,8 @@ package com.raddstream.app.ui.navigation
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 
+import com.raddstream.app.data.local.stripSourceTag
+
 /**
  * Another app asked us to open one of this device's video files; this is the route that plays
  * it.
@@ -100,7 +102,10 @@ data class LocalVideoOpen(val uri: String, val title: String, val nonce: Long) {
                 raw
             }
             val name = decoded.substringAfterLast(':').substringAfterLast('/').substringBeforeLast('.')
-            val cleaned = name.replace('_', ' ').filterNot { it.isISOControl() }.trim().take(80)
+            // Video-audit #35 (27 Nov 2026): a trailing source-site tag
+            // baked into the file name is cut before display, same rule as
+            // the on-device library — the file itself is never renamed.
+            val cleaned = stripSourceTag(name).replace('_', ' ').filterNot { it.isISOControl() }.trim().take(80)
             return cleaned.takeIf { it.isNotEmpty() && !cleaned.all { ch -> ch.isDigit() } } ?: UNTITLED
         }
     }

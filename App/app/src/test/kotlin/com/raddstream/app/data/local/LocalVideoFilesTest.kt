@@ -23,6 +23,50 @@ class LocalVideoFilesTest {
         assertEquals(LOCAL_VIDEO_UNTITLED, localVideoTitle(".mp4"))
     }
 
+    // Video-audit #35 (27 Nov 2026): "River of No Return (2026) Episode 15
+    // kisskh" — the downloader baked the source site's name into the file
+    // name, and the file name is the displayed title. The tag is cut at
+    // display time only; the file itself is never renamed.
+
+    @Test
+    fun titleStripsATrailingSourceSiteTag() {
+        assertEquals(
+            "River of No Return (2026) Episode 15",
+            localVideoTitle("River of No Return (2026) Episode 15 kisskh.mp4"),
+        )
+        assertEquals(
+            "River of No Return (2026) Episode 15",
+            localVideoTitle("River_of_No_Return_(2026)_Episode_15_kisskh.mp4"),
+        )
+        assertEquals(
+            "Dune Part Two (2024)",
+            localVideoTitle("Dune Part Two (2024)-kisskh.mkv"),
+        )
+        assertEquals(
+            "Show (2023) S01E01",
+            localVideoTitle("Show (2023) S01E01 [vegamovies].mp4"),
+        )
+    }
+
+    @Test
+    fun titleKeepsARealWordThatHappensToBeASiteName() {
+        // "The Castle" has no year and no episode marker, so its last word
+        // is the title, not a tag — a conservative miss beats a wrong cut.
+        assertEquals("The Castle", localVideoTitle("The Castle.mp4"))
+        assertEquals("Archive", localVideoTitle("Archive.mp4"))
+        // An unknown trailing word is not a site slug: kept.
+        assertEquals("My Movie xyzabc", localVideoTitle("My Movie xyzabc.mp4"))
+    }
+
+    @Test
+    fun stripSourceTagNeedsAYearOrAnEpisodeToCut() {
+        assertEquals("Castle (2009) S01E01", stripSourceTag("Castle (2009) S01E01 castle"))
+        assertEquals("Movie (2024)", stripSourceTag("Movie (2024) kisskh"))
+        assertEquals("The Castle", stripSourceTag("The Castle"))
+        assertEquals("Movie 480p kisskh", stripSourceTag("Movie 480p kisskh"))
+        assertEquals("Dune Part Two (2024)", stripSourceTag("Dune Part Two (2024)"))
+    }
+
     @Test
     fun folderNamesMoviesAndDownloadsFromEitherPathShape() {
         assertEquals("Movies", localVideoFolder("Movies/RaddStream/", null))

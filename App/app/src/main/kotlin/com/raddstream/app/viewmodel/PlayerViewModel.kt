@@ -634,6 +634,12 @@ class PlayerViewModel @Inject constructor(
                 // sync; a fresh ViewModel starts at 0, so publish that before playback starts.
                 store.subtitleOffsetMs = _ui.value.subtitle.delayMs
                 c.addListener(playerListener)
+                // Video-audit #23: ground the buffering derivation from the
+                // controller's own halves — a listener added mid-stall must
+                // not read the IDLE/true defaults as a fact.
+                lastPlaybackState = c.playbackState
+                lastPlayWhenReady = c.playWhenReady
+                updateBufferingFlag()
                 // P-1: the service is a process singleton and never resets
                 // speed, so a fresh ViewModel can inherit a previous
                 // screen's 2x from the service player. A new player session
@@ -658,6 +664,28 @@ class PlayerViewModel @Inject constructor(
         }, ContextCompat.getMainExecutor(appContext))
     }
 
+    // Video-audit #23 (27 Nov 2026): the raw halves behind isBuffering.
+    // A pause fires only onPlayWhenReadyChanged and a stall only
+    // onPlaybackStateChanged, so neither callback alone can derive the
+    // flag — both keep their half here and [updateBufferingFlag] derives
+    // it. Grounded from the controller at bind time (see connectController)
+    // so the first state callback never reads a stale default.
+    private var lastPlaybackState: Int = Player.STATE_IDLE
+    private var lastPlayWhenReady: Boolean = true
+
+    /**
+     * Video-audit #23: buffering is "trying to play but stalled". A paused
+     * player is not trying — its BUFFERING state is a leftover from the
+     * stall it was paused in, not a wait the viewer is in. Clearing the
+     * flag on pause stands down the centre spinner, the buffering plate
+     * and the stuck card together, and the status word falls through to
+     * PAUSED, so no two indicators ever contradict each other again.
+     */
+    private fun updateBufferingFlag() {
+        val buffering = lastPlaybackState == Player.STATE_BUFFERING && lastPlayWhenReady
+        _ui.update { if (it.isBuffering == buffering) it else it.copy(isBuffering = buffering) }
+    }
+
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             // PL-3: a first frame playing is the proof the network is back — the
@@ -674,9 +702,19 @@ class PlayerViewModel @Inject constructor(
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
+            // Video-audit #23 (27 Nov 2026): isBuffering means "trying to
+            // play but stalled", not "the pipeline is loading while
+            // paused". ExoPlayer keeps playbackState BUFFERING after a
+            // pause mid-stall, so the old one-line derivation showed the
+            // "Buffering…" chip over a PAUSED picture (frame 1:02: frame
+            // + PAUSED + Buffering at once). The raw halves are kept and
+            // the flag is derived from both; [updateBufferingFlag] is the
+            // one writer, called from here and from onPlayWhenReadyChanged,
+            // because a stall fires only the first and a pause only the
+            // second.
+            lastPlaybackState = playbackState
             _ui.update {
                 it.copy(
-                    isBuffering = playbackState == Player.STATE_BUFFERING,
                     isEnded = playbackState == Player.STATE_ENDED,
                     // The ended successor offer dies the moment playback leaves the ended
                     // state — a replay or a new title must not inherit the last episode's
@@ -684,6 +722,7 @@ class PlayerViewModel @Inject constructor(
                     endedHasNextEpisode = if (playbackState == Player.STATE_ENDED) it.endedHasNextEpisode else false,
                 )
             }
+            updateBufferingFlag()
             if (playbackState == Player.STATE_ENDED) {
                 rememberResume()
                 handleSleepEndOfVideo()
@@ -691,6 +730,15 @@ class PlayerViewModel @Inject constructor(
                 onEpisodeEndedSmartDownloads()
                 loadPostPlayPreviews()
             }
+        }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            // Video-audit #23: the other half of the derivation — pausing
+            // mid-stall clears the buffering flag at once (no waiting for a
+            // state change that never comes), resuming re-arms it when the
+            // pipeline is still stalled.
+            lastPlayWhenReady = playWhenReady
+            updateBufferingFlag()
         }
 
         override fun onTracksChanged(tracks: Tracks) {
@@ -1018,7 +1066,12 @@ class PlayerViewModel @Inject constructor(
                     val stalled = s.isBuffering && !s.isPlaying && s.startPhase == StartPhase.NONE
                     if (stalled) {
                         val since = bufferingSinceMs ?: SystemClock.elapsedRealtime().also { bufferingSinceMs = it }
-                        if (!s.stuckBuffering && isStuckBuffering(SystemClock.elapsedRealtime() - since)) {
+                        // Video-audit #6 (27 Nov 2026): a live stall gets
+                        // the longer clock — a live start legitimately
+                        // buffers 6–12 s while the resolve mints, so the
+                        // 5 s VOD clock cried "slow connection" on a start
+                        // that was succeeding.
+                        if (!s.stuckBuffering && isStuckBuffering(SystemClock.elapsedRealtime() - since, s.isLive)) {
                             _ui.update { it.copy(stuckBuffering = true) }
                         }
                     } else if (s.stuckBuffering || bufferingSinceMs != null) {
@@ -2938,8 +2991,22 @@ class PlayerViewModel @Inject constructor(
     fun jumpSubtitleLine(next: Boolean) {
         val file = customSubtitleFile
         if (file == null) {
-            viewModelScope.launch {
-                _events.emit(PlayerEvent.Message("Line jump needs an external subtitle file"))
+            // Video-audit #34 (27 Nov 2026): the old message — "Line jump
+            // needs an external subtitle file" — is developer-speak the
+            // viewer cannot act on, and it fired on a local file with no
+            // subtitles at all, where the flick has nothing to jump
+            // between. It stays silent there now: no subtitles, no toast.
+            // When subtitles DO exist (a native track, whose cue list the
+            // player cannot walk), the jump is still impossible — but the
+            // message says so in plain words.
+            val hasSubtitles = _ui.value.subtitleTracks.isNotEmpty() ||
+                _ui.value.customSubtitleLoaded != null
+            if (hasSubtitles) {
+                viewModelScope.launch {
+                    _events.emit(
+                        PlayerEvent.Message("Can't jump between subtitle lines for this video"),
+                    )
+                }
             }
             return
         }
@@ -3463,6 +3530,19 @@ class PlayerViewModel @Inject constructor(
         settingsJob?.cancel()
         bingeResolveJob?.cancel()
         bingePrefetchJob?.cancel()
+        // Video-audit #2 (27 Nov 2026): releasing the controller alone
+        // does NOT stop playback — the player lives in the
+        // MediaSessionService, and a released controller leaves its
+        // ExoPlayer playing with no UI, which is how the Madani audio kept
+        // playing after Back to the Live TV grid. Stop the session player
+        // first (after rememberResume, so the position is banked before
+        // the stop resets it), then release the controller. A cast
+        // receiver is the exception: MX #9 says the TV keeps playing after
+        // the phone app dies, so a casting exit never stops the session.
+        if (!_ui.value.isCasting) {
+            runCatching { controller?.pause() }
+            runCatching { controller?.stop() }
+        }
         _player.value = null
         controller?.removeListener(playerListener)
         controller?.release()
@@ -3538,8 +3618,14 @@ internal object TrackMapper {
                         // numbered fallback — but never a placeholder: a muxer
                         // writes "und" for an unrecorded language, and a bare
                         // "und" as the row's label is the same leak as the
-                        // catalog's "Unknown".
+                        // catalog's "Unknown". Video-audit #17 (27 Nov 2026):
+                        // a muxer-generated id ("audio_0") is the same leak —
+                        // it falls through to the language's real name
+                        // ("Urdu") before the numbered fallback, so no sheet
+                        // or status line ever prints an internal id.
                         label = AudioTrackMatcher.displayableLanguageTag(format.label?.toString())
+                            ?.takeUnless { AudioTrackMatcher.isRawTrackId(it) }
+                            ?: AudioTrackMatcher.displayName(format.language)
                             ?: AudioTrackMatcher.displayableLanguageTag(format.language)
                             ?: fallback,
                         language = format.language,

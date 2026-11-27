@@ -41,6 +41,28 @@ class PlayerStatusWordTest {
         )
     }
 
+    // Video-audit #3 (27 Nov 2026): the live mark flicked LIVE ↔ PAUSED
+    // every ~2 s on the Madani rebuffer cycle, because ExoPlayer reports
+    // isPlaying false while its state is BUFFERING. A stall keeps LIVE;
+    // only a settled pause reads PAUSED.
+
+    @Test
+    fun aBufferingLivePictureKeepsTheLiveMark() {
+        assertFalse(liveMarkPaused(isPlaying = false, isBuffering = true, startPhase = StartPhase.NONE))
+        assertFalse(liveMarkPaused(isPlaying = true, isBuffering = true, startPhase = StartPhase.NONE))
+    }
+
+    @Test
+    fun aSettledLivePauseReadsPaused() {
+        assertTrue(liveMarkPaused(isPlaying = false, isBuffering = false, startPhase = StartPhase.NONE))
+    }
+
+    @Test
+    fun aStartingLivePictureDoesNotReadPaused() {
+        assertFalse(liveMarkPaused(isPlaying = false, isBuffering = false, startPhase = StartPhase.STARTING))
+        assertFalse(liveMarkPaused(isPlaying = false, isBuffering = true, startPhase = StartPhase.STARTING))
+    }
+
     // F4 (Batch B): the buffering notice's percent.
 
     @Test

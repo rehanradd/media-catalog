@@ -3726,3 +3726,26 @@ CI on tip `2d35eb91`: Android 45897077406 (auto-triggered on push) + Backend 458
 **PROVEN vs SUSPECTED:** the hero guard is proven-safe hardening (bounds already verified: `nextHeroPage` modulo-guarded, all index reads `getOrNull`). The OOM-via-unreleased-player crash cause remains SUSPECTED, not proven — no Crashlytics trace exists; the sibling player batch's service-stop fix is the real fix for the prime suspect.
 
 **CI on exact tip `69255765`:** Backend 46027050875 SUCCESS + Android 46027081278 SUCCESS. (The push-triggered Android run 46027022602 was cancelled by concurrency; the dispatched runs above are the verdicts.) Not landed — coordinator lands batches in order.
+## Session — Video-audit PLAYER batch (27 Nov 2026, branch videofix-player-20261127, NOT landed)
+
+**Branch:** `videofix-player-20261127` (base `1b580bcd`). Player batch for video-audit issues 2, 3, 6, 17, 18, 20, 21, 23, 25, 34, 35. Replacement worker — the first player worker died at setup (runtime restart mid-clone); this clone is fresh from the base SHA, verified.
+
+**Fixes (all in App/ only):**
+- #2/#25 (CRITICAL, the crash): `PlayerViewModel.onCleared` now pauses + stops the session player before releasing the controller (after `rememberResume`, so the position is banked before the stop resets it); casting exits never stop the TV (MX #9). Releasing the controller alone left the service ExoPlayer playing with no UI — the leaked player behind both the Madani background audio and the ~2-min-later crash.
+- #3: live mark keeps LIVE through a stall (`liveMarkPaused`: PAUSED only when settled, not playing, not buffering, past start); rebuffer resume threshold 1 s → 3 s (a live HLS segment is 2–6 s; 1 s resumed into the same stall every ~2 s).
+- #6: live stuck clock 5 s → 12 s (resolve mints take 6–12 s); stuck card gains a "Browse channels" fallback (live only, back to the grid) alongside Retry / 480p; dismiss-on-play already true.
+- #17: raw muxer ids (`audio_0`) never print — `AudioTrackMatcher.isRawTrackId` + `displayAudioName` (language first, e.g. Urdu); Audio field hidden when only one audio track; same treatment for subtitle status.
+- #18: player opens forced LANDSCAPE on Play (VOD + Live TV), portrait on exit; supersedes H18 "held orientation wins" per user order 20:11 PKT 27 Nov. Rotate button + fullscreen toggle unchanged.
+- #20: bottom row goes compact on narrow screens (16dp rails, 40dp targets, 4dp gaps — 304dp fits 360dp); all 7 controls stay, none dropped; landscape keeps the full 48dp row.
+- #21: forward-10 drawable gains the missing "1" path.
+- #23: `isBuffering` derived from both halves (playbackState BUFFERING *and* playWhenReady) — pausing mid-stall clears the "Buffering…" chip at once.
+- #34: line-jump toast silent when no subtitles exist; plain "Can't jump between subtitle lines for this video" when native subtitles exist.
+- #35: `stripSourceTag` cuts a trailing source-site slug (48 importer slugs) at display time only, guarded by year/episode completeness ("The Castle" kept); applied in `localVideoTitle` and `LocalVideoOpen.titleFrom`. Files never renamed.
+
+**Tests (new/expanded, no local Gradle per owner order — CI is the gate):** `PlayerExitTest` (issue-25 regression gate: stop-before-release order, cast guard, resume-before-stop, exactly one release path — a source-scan test; the VM's 12 injected deps have no fakes and its controller binds a real service, so end-to-end audio-stop still needs a device run, stated honestly in the test); `PlayerReviewFixesTest` (buffering-live LIVE test, single/multi audio xray tests, compact-row arithmetic + 360dp bounds test); `PlayerBufferingTest` (3 s resume, 12 s live stuck clock), `PlayerStatusWordTest` (`liveMarkPaused`), `AudioTrackMatcherTest`, `LocalVideoFilesTest`.
+
+**Sanity check (inspection only, no local build):** found and fixed one real defect — the `liveMarkPaused` edit had split the `bufferingPercent` doc comment, leaving dangling comment lines (compile error). All 15 changed .kt files balance after stripping strings/comments; imports, `TrackUiOption` constructor, `player_audio_label` format and `fullscreen` default verified against the code.
+
+**CI:** Backend + Android dispatched on the exact tip; verdicts recorded in the coordinator's report (this log entry written before the poll finished — see final report for run IDs).
+
+**Not in this batch:** issues 1 (needs Crashlytics trace), 22, 24, 26–33, 36–40. Home-press/background path (VM not cleared) deliberately unchanged — reported repros are back-press; follow-up owed.

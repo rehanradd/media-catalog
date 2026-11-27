@@ -57,6 +57,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
@@ -79,11 +80,13 @@ import com.google.android.gms.cast.framework.CastButtonFactory
 import com.raddstream.app.R
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.player.AspectMode
+import com.raddstream.app.player.AudioTrackMatcher
 import com.raddstream.app.player.CacheAffordance
 import com.raddstream.app.player.GestureSettings
 import com.raddstream.app.player.KeepUiState
 import com.raddstream.app.player.PlayerStatusWord
 import com.raddstream.app.player.PlayerUiState
+import com.raddstream.app.player.liveMarkPaused
 import com.raddstream.app.player.playerStatusWord
 import com.raddstream.app.player.SleepMode
 import com.raddstream.app.player.StartDeadlineStage
@@ -118,6 +121,26 @@ import kotlin.math.roundToInt
  */
 internal fun playerSafeRailDp(cutoutLeft: Dp, cutoutRight: Dp): Dp =
     maxOf(48.dp, cutoutLeft + 16.dp, cutoutRight + 16.dp)
+
+/**
+ * Video-audit #20 (27 Nov 2026): the bottom control row is seven fixed
+ * 48dp controls with 8dp gaps — 376dp — but the 48dp rails leave only
+ * 264dp on a 360dp phone, so Fullscreen and More were off-screen in
+ * portrait (the code mechanism behind issue 18's missing fullscreen
+ * button). The row goes compact when the full row plus rails does not
+ * fit: 16dp rails, 40dp targets, 4dp gaps — 304dp of row, which fits a
+ * 360dp screen with room to spare. The seven controls never move and
+ * none is dropped; only the chrome around them tightens, and only on a
+ * narrow screen. Landscape keeps the full 48dp row. Pure so a JVM test
+ * can pin the 360dp arithmetic without a device.
+ */
+internal val PlayerRowFullWidth = 376.dp
+internal val PlayerRowCompactWidth = 304.dp
+internal val PlayerRowCompactRail = 16.dp
+internal val PlayerRowCompactTarget = 40.dp
+
+internal fun playerControlsNeedCompact(screenWidthDp: Int, railDp: Dp): Boolean =
+    screenWidthDp.dp < PlayerRowFullWidth + railDp * 2
 
 @Composable
 private fun playerChromeRail(): Dp {
@@ -734,6 +757,16 @@ internal fun BottomControls(
     val volumePercent = (state.userVolume * 100).toInt()
     val chrome = PlayerChromeTheme.Default
     val rail = playerChromeRail()
+    // Video-audit #20 (27 Nov 2026): the seven 48dp controls need 376dp
+    // plus rails — on a 360dp phone the full row cannot fit, so the row
+    // goes compact (16dp rails, 40dp targets, 4dp gaps) instead of
+    // clipping Fullscreen and More off the edge. The compact decision
+    // reads the screen width, so a landscape frame and a wide tablet
+    // keep the full 48dp row.
+    val compactControls = playerControlsNeedCompact(LocalConfiguration.current.screenWidthDp, rail)
+    val controlRail = if (compactControls) PlayerRowCompactRail else rail
+    val controlTarget = if (compactControls) PlayerRowCompactTarget else MinControlTarget
+    val controlGap = if (compactControls) 4.dp else 8.dp
     // Review fix (16 Nov): the bottom scrim is a full-height gradient — the
     // old one went transparent exactly where the live mark sits, so the mark
     // read over a bright ticker instead of over the dark. P2-6 (audit
@@ -759,8 +792,12 @@ internal fun BottomControls(
                 // immersive frame's bottom edge, and every press target stays
                 // 48dp — the bar shrinks by tightening the gap, never by
                 // shrinking a target. See [CinemaChrome.BOTTOM_BAR_MIN_DP].
-                .heightIn(min = CinemaChrome.BOTTOM_BAR_MIN_DP.dp)
-                .padding(start = rail, end = rail, bottom = 0.dp),
+                // Video-audit #20 (27 Nov 2026): the Column carries no
+                // horizontal padding any more — the scrubber/time rows take
+                // the full rail, and the control row takes its own (narrower)
+                // rail when compact, so the seven controls fit a 360dp
+                // screen instead of clipping off its edge.
+                .heightIn(min = CinemaChrome.BOTTOM_BAR_MIN_DP.dp),
         ) {
             // P1-16 (road to 100/100, audit B-21): pause is discovery,
             // but the X-Ray is ONE line now — the context line (episode ·
@@ -790,7 +827,16 @@ internal fun BottomControls(
                 val xrayLine = xrayContextLine(
                     episodeLabel = episodeLabel,
                     quality = state.qualityLabel,
-                    audio = state.audioTracks.firstOrNull { it.selected }?.label?.takeIf { it.isNotBlank() }
+                    // Video-audit #17 (27 Nov 2026): the Audio field names
+                    // the real language ("Urdu") when the track has one,
+                    // and is hidden entirely when there is only one audio
+                    // track — a single track needs no label, and a raw
+                    // muxer id ("audio_0") is never printed. See
+                    // [AudioTrackMatcher.displayAudioName].
+                    audio = state.audioTracks
+                        .takeIf { it.size > 1 }
+                        ?.firstOrNull { it.selected }
+                        ?.let { AudioTrackMatcher.displayAudioName(it.language, it.label) }
                         ?.let { stringResource(R.string.player_audio_label, it) },
                     subtitle = stringResource(
                         R.string.player_subtitles_label,
@@ -805,7 +851,7 @@ internal fun BottomControls(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp)
+                            .padding(start = rail, end = rail, top = 8.dp)
                             .then(
                                 if (hasCast) {
                                     Modifier
@@ -904,7 +950,8 @@ internal fun BottomControls(
                 }
                 Row(
                     Modifier
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .padding(start = rail, end = rail),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -957,11 +1004,17 @@ internal fun BottomControls(
                 // while paused, so a frozen live picture never reads live.
                 // P1-16: a live title with a keep rides the same row as
                 // the mark — live has no time row to carry the status.
+                // Video-audit #3 (27 Nov 2026): a buffering live picture
+                // is not paused — ExoPlayer reports isPlaying false while
+                // BUFFERING, so the mark used to flick LIVE ↔ PAUSED every
+                // ~2 s on the Madani rebuffer cycle. [liveMarkPaused] keeps
+                // the LIVE mark through a stall; only a settled pause reads
+                // PAUSED.
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(bottom = 8.dp),
+                    modifier = Modifier.padding(start = rail, end = rail, bottom = 8.dp),
                 ) {
-                    LiveMark(paused = !state.isPlaying)
+                    LiveMark(paused = liveMarkPaused(state.isPlaying, state.isBuffering, state.startPhase))
                     if (keepStatusVisible(state)) {
                         Spacer(Modifier.width(8.dp))
                         KeepTimeRowStatus(state, onKeepCurrent)
@@ -978,13 +1031,14 @@ internal fun BottomControls(
             // mutes, long-press opens the inline slider (B-18).
             Row(
                 Modifier
-                    .fillMaxWidth(),
+                    .fillMaxWidth()
+                    .padding(start = controlRail, end = controlRail),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Row(
                     modifier = Modifier.testTag("player-controls-left"),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(controlGap),
                 ) {
                     PlayerControlButton(
                         { if (state.isEnded) onPlayFromStart() else onTogglePlayPause() },
@@ -992,6 +1046,7 @@ internal fun BottomControls(
                         // Cinema (Nov 2026): the primary glyph is 36dp; the
                         // 48dp press target stays.
                         iconSize = 36.dp,
+                        targetSize = controlTarget,
                     ) {
                         Icon(
                             painter = if (state.isPlaying) painterResource(R.drawable.ic_player_pause) else painterResource(R.drawable.ic_player_play_filled),
@@ -1008,6 +1063,7 @@ internal fun BottomControls(
                         { onSeekBy(-10_000) },
                         stringResource(R.string.player_rewind_10),
                         enabled = state.seekEnabled,
+                        targetSize = controlTarget,
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.ic_player_replay_10),
@@ -1019,6 +1075,7 @@ internal fun BottomControls(
                         { onSeekBy(10_000) },
                         stringResource(R.string.player_forward_10),
                         enabled = state.seekEnabled,
+                        targetSize = controlTarget,
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.ic_player_forward_10),
@@ -1037,6 +1094,7 @@ internal fun BottomControls(
                             if (state.userVolume > 0f) stringResource(R.string.player_volume, volumePercent)
                             else stringResource(R.string.player_volume_muted),
                             onLongClick = { showVolumeSlider = true },
+                            targetSize = controlTarget,
                         ) {
                             if (state.userVolume > 0f) {
                                 Icon(
@@ -1058,7 +1116,7 @@ internal fun BottomControls(
                 Row(
                     modifier = Modifier.testTag("player-controls-right"),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(controlGap),
                 ) {
                     // Captions/Audio is one fixed slot: it opens the combined
                     // "Audio & Subtitles" sheet, which already carries the
@@ -1069,6 +1127,7 @@ internal fun BottomControls(
                         { onShowSubtitleSheet() },
                         stringResource(R.string.player_audio_subtitles_title),
                         selected = subtitleActive(state),
+                        targetSize = controlTarget,
                     ) {
                         Icon(painterResource(R.drawable.ic_player_subtitles), null, tint = if (subtitleActive(state)) RaddCurrent500 else PlayerOnVideo.text)
                     }
@@ -1076,6 +1135,7 @@ internal fun BottomControls(
                         { onToggleFullscreen() },
                         if (state.fullscreen) stringResource(R.string.player_exit_fullscreen)
                         else stringResource(R.string.player_fullscreen),
+                        targetSize = controlTarget,
                     ) {
                         if (state.fullscreen) {
                             Icon(
@@ -1090,6 +1150,7 @@ internal fun BottomControls(
                     PlayerControlButton(
                         { onShowMoreSheet() },
                         stringResource(R.string.player_more),
+                        targetSize = controlTarget,
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.ic_player_more),
@@ -1189,7 +1250,16 @@ private fun subtitleActive(state: PlayerUiState) =
  */
 internal fun subtitleStatusLabel(state: PlayerUiState, offWord: String): String =
     state.customSubtitleLoaded
-        ?: state.selectedSubtitleId?.let { id -> state.subtitleTracks.firstOrNull { it.id == id }?.label }
+        ?: state.selectedSubtitleId?.let { id ->
+            // Video-audit #17 (27 Nov 2026): a subtitle track's label gets
+            // the same treatment as audio — the real language when it has
+            // one, never a raw muxer id ("sub_0"). A track with nothing
+            // printable keeps its own label rather than reading "Off"
+            // while subtitles are on.
+            state.subtitleTracks.firstOrNull { it.id == id }?.let { track ->
+                AudioTrackMatcher.displayAudioName(track.language, track.label) ?: track.label
+            }
+        }
         ?: offWord
 
 /**

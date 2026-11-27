@@ -27,6 +27,21 @@ fun playerStatusWord(
 }
 
 /**
+ * Video-audit #3 (27 Nov 2026): whether the live mark reads PAUSED. A
+ * live picture that is buffering is not paused — ExoPlayer reports
+ * `isPlaying = false` while its state is BUFFERING, so reading the mark
+ * off `isPlaying` alone flicked LIVE ↔ PAUSED every ~2 s on the Madani
+ * rebuffer cycle. Only a settled pause (not playing, not buffering, past
+ * the start) reads PAUSED; a stall keeps the LIVE mark, and the buffering
+ * plate beside it says what is actually happening.
+ */
+fun liveMarkPaused(
+    isPlaying: Boolean,
+    isBuffering: Boolean,
+    startPhase: StartPhase,
+): Boolean = !isPlaying && !isBuffering && startPhase == StartPhase.NONE
+
+/**
  * F4 (Batch B): how much of the file is buffered ahead, as a whole percent —
  * the buffering notice's number. Null when there is no duration to measure
  * against (still starting, or a live stream: a live window's "percent" is a
