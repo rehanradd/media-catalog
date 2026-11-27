@@ -2858,10 +2858,14 @@ class V2CursorTests(V2WireFixture):
             "SELECT ok, error FROM cat_link_evidence ORDER BY probed_at DESC LIMIT 1"
             ).fetchone()
         self.assertEqual(evidence["ok"], 0, "a failed link cannot confirm itself")
+        # Mint once: mint_token embeds the expiry second, so two mints
+        # straddling a second boundary differ and the instance check
+        # (which must equal the request path) flakes. One handle, reused.
+        handle = self.handle(self.public_link_id)
         self.assert_problem(self.post(
-            f"/api/v2/links/{self.handle(self.public_link_id)}/report",
+            f"/api/v2/links/{handle}/report",
             {"event": "buffering"}), code="invalid_params", status=400,
-            instance=f"/api/v2/links/{self.handle(self.public_link_id)}/report")
+            instance=f"/api/v2/links/{handle}/report")
 
         offset = self.post(f"/api/v2/episodes/{self.public_episode_id}/offset",
                            {"offset_seconds": 4921, "chapter_title": "S01E02",
