@@ -233,8 +233,9 @@ class PaparazziPreviewTest {
     }
 
     // Gemini home review (Nov 2026): max one badge per card — a ranked
-    // new-release tile shows the rank only, never a NEW pill beside it.
-    // The year reads off the clock so the fixture stays a new release
+    // tile shows the rank only. (The NEW pill this comment used to name
+    // is gone — video audit issue 30 removed it outright.)
+    // The year reads off the clock so the fixture stays current
     // whenever this runs.
     @Test
     fun posterCardRankedNewReleaseShowsRankOnly() {

@@ -83,10 +83,19 @@ object PosterUrlPolicy {
      * [sizedForTile] then [wsrvFor]: the one composition both load sites use.
      * A non-positive width leaves the URL untouched — a caller that does not
      * know the tile size must not get a resized (or proxied) URL back.
+     *
+     * Video audit issue 10 (Nov 2026): [bypassProxy] skips the wsrv.nl
+     * resize proxy and returns the sized direct URL. Live-TV channel logos
+     * pass true — imgur rate-limits wsrv's fetcher (429), so every imgur
+     * logo paid a ~10 s dead wait on the proxy before the fallback
+     * interceptor retried it direct. A bypassed URL is still the same
+     * sized URL the tile and its prefetch both use, so the prefetch warms
+     * exactly the bytes the tile shows.
      */
-    fun displayUrl(url: String, widthPx: Int): String {
+    fun displayUrl(url: String, widthPx: Int, bypassProxy: Boolean = false): String {
         if (widthPx <= 0) return url
-        return wsrvFor(sizedForTile(url, widthPx), widthPx)
+        val sized = sizedForTile(url, widthPx)
+        return if (bypassProxy) sized else wsrvFor(sized, widthPx)
     }
 
     /** True when [url] is a wsrv.nl proxy URL this policy built. */

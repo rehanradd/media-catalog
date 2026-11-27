@@ -54,7 +54,7 @@ class PosterCardRemoveWithRatingTest {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
                     PosterCard(
                         post = ratedPost(),
-                        modifier = Modifier.width(120.dp),
+                        modifier = Modifier.width(100.dp),
                         onRemove = { removed++ },
                     )
                 }
@@ -78,7 +78,7 @@ class PosterCardRemoveWithRatingTest {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
                     PosterCard(
                         post = ratedPost().copy(imdbRating = null),
-                        modifier = Modifier.width(120.dp),
+                        modifier = Modifier.width(100.dp),
                         onRemove = { removed++ },
                     )
                 }

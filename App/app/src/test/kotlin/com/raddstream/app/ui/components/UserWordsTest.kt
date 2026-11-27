@@ -1,5 +1,6 @@
 package com.raddstream.app.ui.components
 
+import com.raddstream.app.network.models.Post
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -99,6 +100,75 @@ class UserWordsTest {
             listOf("b", "c", "d"), seen, { it },
         )
         assertEquals(listOf("d"), second)
+    }
+
+    // Video audit issue 39 (Nov 2026): of two rows for one work, the
+    // metadata-complete row wins the slot — a tile never reads "2026"
+    // with no star while its twin carries "2026 · ★ 8.6".
+    private fun dedupePost(id: Int, posterUrl: String?, rating: String?) = Post(
+        id = id,
+        title = "Salaar",
+        cleanTitle = "Salaar",
+        year = 2023,
+        posterUrl = posterUrl,
+        imdbRating = rating,
+    )
+
+    @Test
+    fun railDedupePrefersTheMetadataCompleteRow() {
+        val bare = dedupePost(1, null, null)
+        val complete = dedupePost(2, "https://example.test/poster.jpg", "8.6")
+        val (kept, _) = UserWords.dedupeAcrossRails(
+            listOf(bare, complete), emptySet(),
+            keyOf = { "title:salaar:2023" },
+            prefer = UserWords::preferCompletePost,
+        )
+        assertEquals(listOf(complete), kept)
+    }
+
+    @Test
+    fun railDedupeKeepsTheFirstRowOnATie() {
+        val complete = dedupePost(1, "https://example.test/poster.jpg", "8.6")
+        val twin = dedupePost(2, "https://example.test/other.jpg", "8.6")
+        val (kept, _) = UserWords.dedupeAcrossRails(
+            listOf(complete, twin), emptySet(),
+            keyOf = { "title:salaar:2023" },
+            prefer = UserWords::preferCompletePost,
+        )
+        assertEquals(listOf(complete), kept)
+    }
+
+    @Test
+    fun railDedupePrefersAPosterOverARatingAlone() {
+        // Poster-only (score 1) beats rating-only (score 1)? No — a tie
+        // keeps the first row. Only a strictly better row wins the slot.
+        val ratedOnly = dedupePost(1, null, "8.6")
+        val posterOnly = dedupePost(2, "https://example.test/poster.jpg", null)
+        val (kept, _) = UserWords.dedupeAcrossRails(
+            listOf(ratedOnly, posterOnly), emptySet(),
+            keyOf = { "title:salaar:2023" },
+            prefer = UserWords::preferCompletePost,
+        )
+        assertEquals(listOf(ratedOnly), kept)
+    }
+
+    @Test
+    fun railDedupePreferenceNeverCrossesRails() {
+        // A key already seen on an earlier rail drops outright, even when
+        // the later row is the complete one — first rail wins the work.
+        val bare = dedupePost(1, null, null)
+        val (_, seen) = UserWords.dedupeAcrossRails(
+            listOf(bare), emptySet(),
+            keyOf = { "title:salaar:2023" },
+            prefer = UserWords::preferCompletePost,
+        )
+        val complete = dedupePost(2, "https://example.test/poster.jpg", "8.6")
+        val (kept, _) = UserWords.dedupeAcrossRails(
+            listOf(complete), seen,
+            keyOf = { "title:salaar:2023" },
+            prefer = UserWords::preferCompletePost,
+        )
+        assertEquals(emptyList<Post>(), kept)
     }
 
     @Test

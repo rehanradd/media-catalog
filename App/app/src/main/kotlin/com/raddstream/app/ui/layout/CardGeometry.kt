@@ -33,21 +33,16 @@ object CardGeometry {
 
     /**
      * Rail tile width. A rail cell and its placeholder both draw from this one number.
-     * Density (P0-6, 2027 Home fix): the 120 dp baseline shows ~3 tiles per
-     * row on a 360 dp phone (Netflix/Prime run ~105–120 dp); the old 150 dp
-     * showed ~2.1. 150 dp survives only for spotlight rails
-     * ([SPOTLIGHT_RAIL_CARD_WIDTH_DP]): hero-adjacent, Top 10, curated.
-     * Continue Watching stays its own width — it is full-width rows now,
-     * not rail tiles.
+     * Density (video audit, Nov 2026): ONE fixed poster-card size in every
+     * row and screen — no card bigger or smaller. The 100 dp baseline shows
+     * ~3 tiles per row on a 360 dp phone (Netflix/Prime run ~105–120 dp) and
+     * matches the 3-up grids' ~101 dp cells, so rails and grids finally
+     * agree; the old 120 dp rail and the 150 dp spotlight tier are both
+     * gone. Smaller text (12sp titles, see [PosterCard]) rides the same
+     * change, so more content fits per screen. Continue Watching stays its
+     * own width — it is full-width rows now, not rail tiles.
      */
-    const val RAIL_CARD_WIDTH_DP: Int = 120
-
-    /**
-     * Spotlight rail tile width (P0-6): the old 150 dp baseline, kept for
-     * rails that earn it — the hero-adjacent first rail, the Top 10 chart,
-     * curated rails. Every other rail is the [RAIL_CARD_WIDTH_DP] baseline.
-     */
-    const val SPOTLIGHT_RAIL_CARD_WIDTH_DP: Int = 150
+    const val RAIL_CARD_WIDTH_DP: Int = 100
 
     /** Continue Watching rows: the poster's width in the full-width row (mockup,
      * 2026-11-15). At [POSTER_ASPECT] the thumb is 144 dp tall, so the row is
@@ -67,7 +62,7 @@ object CardGeometry {
     const val SEARCH_RESULT_ROW_THUMB_WIDTH_DP: Int = 112
 
     /** The detail header's poster column: the same ratio, a fixed column instead of a rail cell. */
-    const val DETAIL_POSTER_WIDTH_DP: Int = 120
+    const val DETAIL_POSTER_WIDTH_DP: Int = 100
 
     /** The wide art band above a season's episode list: the work's art cropped wide. */
     const val SEASON_ART_ASPECT: Float = 3.2f

@@ -1074,10 +1074,9 @@ internal fun PopularRow(
                     // P1-3 (B-10): same reservation as the grid above —
                     // a badge may land on any tile in this rail.
                     reserveBadgeSlot = true,
-                    // The 3-up cells are too narrow for the full
-                    // "★ 8.6 · 2024 · Series" line — it truncated to
-                    // "S..." on every card. Rating + year only.
-                    compactMeta = true,
+                    // The 3-up cells are too narrow for a three-segment
+                    // line — it truncated to "S..." on every card. The
+                    // meta line is year · rating only now, so it fits.
                     // UI/UX audit Library #2 (Nov 2026): the caption is
                     // one line, so "Salaar: Part 1 – Ceasefire" truncated
                     // mid-word to "Salaar: Part 1 – …" while the in-card

@@ -9,9 +9,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -24,6 +29,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -35,6 +41,7 @@ import coil3.asDrawable
 import coil3.compose.SubcomposeAsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import com.raddstream.app.R
 import com.raddstream.app.data.ServerSettingsRepository
 import com.raddstream.app.images.ArtUrlPolicy
 import com.raddstream.app.images.ImageSizing
@@ -50,6 +57,7 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.delay
 
 /**
  * The ONE place a catalog image turns a stored preference into a Coil request. Home, Browse, Search,
@@ -164,6 +172,34 @@ fun CatalogImage(
      * Defaults to none: every other caller keeps its centred fallback.
      */
     fallbackBottomClearance: Dp = 0.dp,
+    /**
+     * Video audit issue 10 (Nov 2026): skip the wsrv.nl resize proxy
+     * for this load and fetch the sized direct URL instead. Live-TV
+     * channel logos pass true — imgur rate-limits wsrv's fetcher (429),
+     * so a proxied logo paid a ~10 s dead wait before the fallback
+     * interceptor retried it direct. Defaults off: catalog posters keep
+     * the proxy (and its WebP saving).
+     */
+    bypassResizeProxy: Boolean = false,
+    /**
+     * Video audit issue 27 (Nov 2026): the aspect ratio of the slot
+     * this image paints into (2/3 for a poster card), used with
+     * [fitWideArt] to spot source art that is not a poster at all.
+     * Null keeps the old behaviour — the caller does not want the
+     * aspect check.
+     */
+    slotAspect: Float? = null,
+    /**
+     * Video audit issue 27 (Nov 2026): when the decoded bitmap is
+     * meaningfully wider (or taller) than [slotAspect], render it
+     * [ContentScale.Fit] — letterboxed over the jade gradient — instead
+     * of centre-cropping it. A 16:9 backdrop filed as a poster used to
+     * crop to a fragment ("HALL RULE WORLD", a giant "a"); a fitted
+     * image is never a fragment. Defaults off: only poster cards pass
+     * true. The switch happens on the bitmap already in memory, so no
+     * second fetch runs.
+     */
+    fitWideArt: Boolean = false,
 ) {
     val context = LocalContext.current
     // P1 goldens (Nov 2026): Paparazzi/Layoutlib (and @Preview) have no
@@ -221,7 +257,7 @@ fun CatalogImage(
         // 100 real catalog posters; if the proxy fails, the loader's
         // fallback interceptor retries the direct URL once.
         val clean = url?.takeIf { it.isNotBlank() }
-            ?.let { PosterUrlPolicy.displayUrl(it, decision.widthPx) }
+            ?.let { PosterUrlPolicy.displayUrl(it, decision.widthPx, bypassProxy = bypassResizeProxy) }
         val allowed = allowAnyHost || ArtUrlPolicy.isAllowed(clean, serverHost)
         if (clean != null && decision.shouldLoad && allowed) {
             ImageRequest.Builder(context)
@@ -263,11 +299,51 @@ fun CatalogImage(
     // speaks instead. Keyed on the request, so a new URL starts hidden again.
     var loaded by remember(request) { mutableStateOf(false) }
 
+    // Video audit issue 22 (Nov 2026): the delayed-retry budget. The
+    // immediate retries above all fire inside the same bad moment, so a
+    // flaky connection spends them and the tile is stuck on the fallback
+    // for the whole visit even after the network recovers. Once they are
+    // spent the tile is marked failed, and the effect below re-issues one
+    // request 20 s later — long enough for the network to recover,
+    // bounded to one, so a permanently dead URL never re-requests
+    // forever. Keyed on the URL, so a new URL gets a fresh budget. A
+    // frozen-clock Robolectric test never advances the 20 s, so it still
+    // observes the fallback state — the delay parks the effect, it never
+    // fires, and no test hangs on it.
+    var delayedAttempts by remember(url) { mutableIntStateOf(0) }
+    var failed by remember(request) { mutableStateOf(false) }
+    LaunchedEffect(failed, url, delayedAttempts) {
+        if (!failed || !shouldDelayedRetryImage(delayedAttempts)) return@LaunchedEffect
+        delay(DELAYED_IMAGE_RETRY_MS)
+        delayedAttempts++
+        attempt++
+    }
+
+    // Video audit issue 27 (Nov 2026): whether the decoded bitmap is the
+    // wrong shape for this slot. Set on success from the bitmap's own
+    // aspect — the image already in memory re-renders fitted, no refetch.
+    // Keyed on the URL, so a new URL re-checks its own art.
+    var wideArt by remember(url) { mutableStateOf(false) }
+
     SubcomposeAsyncImage(
         model = request,
         contentDescription = contentDescription,
-        modifier = modifier.then(if (loaded) Modifier else Modifier.clearAndSetSemantics { }),
-        contentScale = contentScale,
+        modifier = modifier
+            .then(if (loaded) Modifier else Modifier.clearAndSetSemantics { })
+            .then(
+                // Video audit issue 27: the jade gradient behind a fitted
+                // wide image — the letterbox bars read as brand, not void.
+                if (wideArt) {
+                    Modifier.background(
+                        Brush.verticalGradient(
+                            listOf(RaddHeroPlaceholderHigh, RaddHeroPlaceholderLow),
+                        ),
+                    )
+                } else Modifier
+            ),
+        // Video audit issue 27: a wrongly-shaped bitmap renders fitted,
+        // never centre-cropped into a fragment.
+        contentScale = if (wideArt) ContentScale.Fit else contentScale,
         // A real request in flight paints the branded fallback tile first and
         // sweeps the band-only shimmer over it — or the caller's branded
         // frame, when it passed one (the hero). Loading, error and null-URL
@@ -288,22 +364,25 @@ fun CatalogImage(
                             .background(accentTint.copy(alpha = ACCENT_TINT_ALPHA)),
                     )
                 } else {
-                    ImageFallbackCard(
-                        label = fallbackLabel,
-                        monogram = monogram,
-                        modifier = Modifier.fillMaxSize(),
-                        tone = fallbackTone,
-                        large = fallbackLarge,
-                        bottomClearance = fallbackBottomClearance,
-                    )
+                    // Video audit issue 5 (Nov 2026): the loading slot is
+                    // the welcome poster — jade gradient + mark, never a
+                    // monogram and never a title. A tile whose poster is
+                    // still arriving reads as brand, not as a dark box
+                    // with two letters in it.
+                    WelcomePoster(Modifier.fillMaxSize())
                 }
                 ShimmerBox(Modifier.fillMaxSize(), bandOnly = true)
             }
         },
         // A failed load shows the branded fallback (A3 Proof 3: the slot
-        // itself has no tap-to-retry — a full-size retry clickable there
-        // swallowed the parent card's tap, so a tap on a failed-image
-        // tile belongs to the parent card; see [CatalogImageErrorSlot]).
+        // itself has no full-size tap-to-retry — a full-size retry
+        // clickable there swallowed the parent card's tap, so a tap on a
+        // failed-image tile belongs to the parent card; see
+        // [CatalogImageErrorSlot]). Video audit issue 22: the slot DOES
+        // carry a small corner retry button (48dp is the card's own tap
+        // zone; the button is 40dp in the corner, so a centre tap still
+        // reaches the parent) — except on logo plates, which are too
+        // small for it; those get the delayed retry only.
         error = {
             CatalogImageErrorSlot(
                 fallbackLabel = fallbackLabel,
@@ -311,6 +390,7 @@ fun CatalogImage(
                 tone = fallbackTone,
                 large = fallbackLarge,
                 bottomClearance = fallbackBottomClearance,
+                onRetry = if (fallbackLarge) null else ({ attempt++ }),
             )
         },
         // The artwork-accent hook: only a caller that passed onBitmap pays the
@@ -318,17 +398,32 @@ fun CatalogImage(
         // reports nothing, so the caller keeps its fallback colour.
         onSuccess = { state ->
             loaded = true
-            onBitmap?.invoke(state.result.image.asDrawable(context.resources).toBitmap())
+            failed = false
+            val bitmap = state.result.image.asDrawable(context.resources).toBitmap()
+            onBitmap?.invoke(bitmap)
+            // Video audit issue 27: the bitmap's own aspect decides the
+            // fit. A poster slot is 2:3; art more than 20% wider or taller
+            // than the slot is a backdrop or a banner filed as a poster,
+            // and centre-cropping it would ship a fragment.
+            if (fitWideArt && slotAspect != null && slotAspect > 0f && bitmap.height > 0) {
+                val aspect = bitmap.width.toFloat() / bitmap.height.toFloat()
+                wideArt = aspect > slotAspect * WIDE_ART_FIT_THRESHOLD || aspect < slotAspect / WIDE_ART_FIT_THRESHOLD
+            }
         },
         // A transient failure re-requests at once, bounded by
         // [shouldAutoRetryImage]: one failed fetch must not leave a live
         // poster as a dark initials tile for the whole visit. Once the
-        // bound is spent the error slot stays — the slot has no
+        // bound is spent the error slot stays — and the delayed retry
+        // (issue 22, above) takes over: the tile is marked failed, and
+        // one request goes out 20 s later. The slot has no full-size
         // tap-to-retry (A3 Proof 3), so a tap on the tile belongs to the
         // parent card, and the image is re-requested when the composition
         // is recreated.
         onError = {
-            if (shouldAutoRetryImage(attempt)) attempt++ else loaded = false
+            if (shouldAutoRetryImage(attempt)) attempt++ else {
+                loaded = false
+                failed = true
+            }
         },
     )
 }
@@ -336,14 +431,21 @@ fun CatalogImage(
 /**
  * A3 Proof 3 (Nov 2026): the content of [CatalogImage]'s error slot,
  * extracted so its tap path is testable without Coil. A failed load shows
- * the branded fallback — and the slot deliberately has NO clickable of
- * its own: a full-size tap-to-retry here swallowed the parent card's tap
- * (Discover Pakistan's logo 429s, Robo tapped the card centre twice, and
- * nothing navigated), so a tap on a failed-image tile belongs to the
- * parent card. The bounded auto-retry ([shouldAutoRetryImage]) is the
- * recovery for a transient failure; once it is spent the tile stays on
- * the fallback until the composition is recreated. [CatalogImageErrorTapTest]
+ * the branded fallback — and the slot deliberately has NO full-size
+ * clickable of its own: a full-size retry clickable there swallowed the
+ * parent card's tap (Discover Pakistan's logo 429s, Robo tapped the card
+ * centre twice, and nothing navigated), so a tap on a failed-image tile
+ * belongs to the parent card. The bounded auto-retry ([shouldAutoRetryImage])
+ * is the recovery for a transient failure; once it is spent the tile stays
+ * on the fallback until the composition is recreated. [CatalogImageErrorTapTest]
  * pins this: a centre tap on the slot must reach the parent onClick.
+ *
+ * Video audit issue 22 (Nov 2026): [onRetry] is the exception that proves
+ * the rule — a SMALL corner button (40dp, TopEnd, in a surface disc like
+ * the Live TV star), not a full-size clickable. Tapping it re-issues the
+ * load; a centre tap still falls through to the parent. Null means no
+ * button: logo plates are too small for it ([CatalogImage] passes null
+ * when `fallbackLarge`), and those get the delayed retry only.
  */
 @Composable
 internal fun CatalogImageErrorSlot(
@@ -353,6 +455,7 @@ internal fun CatalogImageErrorSlot(
     large: Boolean,
     modifier: Modifier = Modifier,
     bottomClearance: Dp = 0.dp,
+    onRetry: (() -> Unit)? = null,
 ) {
     Box(modifier.fillMaxSize()) {
         ImageFallbackCard(
@@ -363,6 +466,26 @@ internal fun CatalogImageErrorSlot(
             large = large,
             bottomClearance = bottomClearance,
         )
+        if (onRetry != null && !large) {
+            IconButton(
+                onClick = onRetry,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(40.dp)
+                    .background(
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                        CircleShape,
+                    ),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_action_refresh),
+                    contentDescription = "Retry loading image",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp), // token-exempt: icon size, not spacing
+                )
+            }
+        }
     }
 }
 
@@ -385,6 +508,28 @@ internal const val MAX_IMAGE_AUTO_RETRIES = 2
 
 internal fun shouldAutoRetryImage(attempt: Int, maxAutoRetries: Int = MAX_IMAGE_AUTO_RETRIES): Boolean =
     attempt < maxAutoRetries
+
+/**
+ * Video audit issue 22 (Nov 2026): the delayed retry — one re-request 20 s
+ * after the immediate retries are spent, so a tile that failed in a bad
+ * moment gets a second chance once the network has had time to recover.
+ * Pure so the bound is testable without Coil.
+ */
+internal const val DELAYED_IMAGE_RETRY_MS: Long = 20_000L
+
+internal const val MAX_DELAYED_IMAGE_RETRIES = 1
+
+internal fun shouldDelayedRetryImage(delayedAttempts: Int): Boolean =
+    delayedAttempts < MAX_DELAYED_IMAGE_RETRIES
+
+/**
+ * Video audit issue 27 (Nov 2026): how far a decoded bitmap's aspect may
+ * stray from its slot before the slot fits it instead of cropping it —
+ * 20% either way. A 2:3 slot fits art from 0.56 to 0.80 as a crop; outside
+ * that band the art is a different class (a 16:9 backdrop, a tall banner)
+ * and cropping it ships a fragment.
+ */
+internal const val WIDE_ART_FIT_THRESHOLD = 1.2f
 
 /**
  * A4-F1: the short monogram a wide, short logo plate paints instead of the

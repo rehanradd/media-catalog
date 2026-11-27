@@ -1,5 +1,6 @@
 package com.raddstream.app.ui.components
 
+import com.raddstream.app.network.models.Post
 import java.util.Locale
 
 /**
@@ -260,18 +261,59 @@ object UserWords {
      * the row id, because the same film filed twice has two row ids.
      * Returns the kept items and the grown seen set, so rails filter in
      * order, first rail wins.
+     *
+     * [prefer] (video audit issue 39, Nov 2026): when a later row in the
+     * same rail carries the same key, the winner of
+     * `prefer(kept, candidate)` takes the slot — the position stays the
+     * first row's, the content may be the better row's. A key already in
+     * [seen] from an earlier rail still drops outright: the preference
+     * only ever chooses between rows of this rail.
      */
     fun <T> dedupeAcrossRails(
         items: List<T>,
         seen: Set<String>,
         keyOf: (T) -> String,
+        prefer: ((existing: T, candidate: T) -> T)? = null,
     ): Pair<List<T>, Set<String>> {
         val kept = ArrayList<T>(items.size)
+        val keptIndexByKey = HashMap<String, Int>()
         val next = seen.toMutableSet()
         for (item in items) {
             val key = keyOf(item)
-            if (key.isBlank() || next.add(key)) kept.add(item)
+            if (key.isBlank()) {
+                kept.add(item)
+                continue
+            }
+            val existingIndex = keptIndexByKey[key]
+            if (existingIndex == null && next.add(key)) {
+                keptIndexByKey[key] = kept.size
+                kept.add(item)
+            } else if (existingIndex != null && prefer != null) {
+                kept[existingIndex] = prefer(kept[existingIndex], item)
+            }
         }
         return kept to next
+    }
+
+    /**
+     * Video audit issue 39 (Nov 2026): of two rows for one work, prefer
+     * the metadata-complete one — a poster and a rating beat a bare row,
+     * so a tile never reads "2026" with no star while its twin carries
+     * "2026 · ★ 8.3". The winner keeps the first row's position (the
+     * dedupe owns the order); a tie keeps the existing row, so a complete
+     * first row is never swapped for an identical twin. Pure, so the
+     * choice is assertable without a layout. A rating of "0.0" or an
+     * unparseable one counts as no rating ([displayRating]) — and no
+     * rating is ever invented here: a work with no rating on ANY row
+     * still paints none, and that gap belongs to the catalog data.
+     */
+    fun preferCompletePost(existing: Post, candidate: Post): Post {
+        fun score(post: Post): Int {
+            var score = 0
+            if (!post.posterUrl.isNullOrBlank()) score++
+            if (displayRating(post.imdbRating) != null) score++
+            return score
+        }
+        return if (score(candidate) > score(existing)) candidate else existing
     }
 }

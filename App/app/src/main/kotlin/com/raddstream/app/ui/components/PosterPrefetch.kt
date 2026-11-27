@@ -6,6 +6,7 @@ import coil3.request.ImageRequest
 import com.raddstream.app.images.ArtUrlPolicy
 import com.raddstream.app.images.ImageSizingPolicy
 import com.raddstream.app.images.PosterUrlPolicy
+import com.raddstream.app.network.models.LiveTvChannel
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.viewmodel.HomeSection
@@ -27,11 +28,19 @@ import kotlinx.coroutines.flow.first
  * and a failed one must leave the screen exactly as it was.
  */
 
-/** Home rails: first two posters per visible rail, capped. */
-internal const val HOME_RAIL_PREFETCH_MAX: Int = 20
+/**
+ * Home rails: first four posters per visible rail, capped. A rail shows
+ * ~3 posters across on a 360dp phone, so the old first-two under-covered
+ * the visible row — the third tile still arrived cold. Four covers the
+ * visible row plus one scroll-ahead tile.
+ */
+internal const val HOME_RAIL_PREFETCH_MAX: Int = 32
 
 /** Search: one page's posters per results landing, capped. */
 internal const val SEARCH_PREFETCH_MAX: Int = 20
+
+/** Live TV: the most channel logos one grid landing warms. */
+internal const val LIVE_TV_LOGO_PREFETCH_MAX: Int = 24
 
 /** Detail: backdrop + similar-rail posters, capped. */
 internal const val DETAIL_PREFETCH_MAX: Int = 8
@@ -49,8 +58,16 @@ internal const val SCROLL_AHEAD_PREFETCH_MAX: Int = 24
  * Warm up to [max] poster URLs with the hero's guards. Blanks dropped,
  * duplicates warmed once, order kept. The default cap (20) is the Home
  * rails' budget; callers with a smaller budget pass their own.
+ * [bypassResizeProxy] is the logo path (video audit issue 10): a bypassed
+ * prefetch warms the same sized direct URL the tile itself loads, so the
+ * prefetch is a hit and not a second, proxied copy.
  */
-internal suspend fun prefetchPosterArt(context: Context, urls: List<String>, max: Int = 20) {
+internal suspend fun prefetchPosterArt(
+    context: Context,
+    urls: List<String>,
+    max: Int = 20,
+    bypassResizeProxy: Boolean = false,
+) {
     val clean = urls.mapNotNull { it.takeIf { url -> url.isNotBlank() } }.distinct().take(max)
     if (clean.isEmpty()) return
     runCatching {
@@ -60,7 +77,7 @@ internal suspend fun prefetchPosterArt(context: Context, urls: List<String>, max
         val serverHost = ArtUrlPolicy.hostOf(serverSettingsRepository(context).serverUrl.first())
         val loader = context.imageLoader
         clean.forEach { url ->
-            val sized = PosterUrlPolicy.displayUrl(url, sizing.posterMaxWidthPx)
+            val sized = PosterUrlPolicy.displayUrl(url, sizing.posterMaxWidthPx, bypassProxy = bypassResizeProxy)
             if (!ArtUrlPolicy.isAllowed(sized, serverHost)) return@forEach
             loader.enqueue(
                 ImageRequest.Builder(context)
@@ -73,9 +90,9 @@ internal suspend fun prefetchPosterArt(context: Context, urls: List<String>, max
 }
 
 /**
- * Home rails: the first two posters of every visible rail, in rail order —
+ * Home rails: the first four posters of every visible rail, in rail order —
  * the rows the viewer is about to scroll into, plus the next rail's first
- * row, which is just the next rail's first two. A rail with no rows, or one
+ * row, which is just the next rail's first four. A rail with no rows, or one
  * that failed, contributes nothing. Pure, so the selection is assertable
  * without Coil.
  */
@@ -85,8 +102,25 @@ internal fun homeRailPrefetchUrls(
 ): List<String> =
     sections.filter { it.visible }
         .flatMap { section ->
-            section.items.take(2).mapNotNull { it.posterUrl?.takeIf { url -> url.isNotBlank() } }
+            section.items.take(4).mapNotNull { it.posterUrl?.takeIf { url -> url.isNotBlank() } }
         }
+        .distinct()
+        .take(max)
+
+/**
+ * Live TV (video audit issue 10, Nov 2026): the first logos of the
+ * channel grid, in grid order — the logos the viewer sees on landing,
+ * warmed before the grid paints instead of after. Blanks dropped,
+ * duplicates warmed once. Pure, so the selection is assertable without
+ * Coil. The caller passes `bypassResizeProxy = true` to
+ * [prefetchPosterArt]: a logo's tile loads the sized direct URL (the
+ * wsrv proxy 429s on imgur), so the prefetch must warm that URL.
+ */
+internal fun liveTvLogoPrefetchUrls(
+    channels: List<LiveTvChannel>,
+    max: Int = LIVE_TV_LOGO_PREFETCH_MAX,
+): List<String> =
+    channels.mapNotNull { it.logoUrl.takeIf { url -> url.isNotBlank() } }
         .distinct()
         .take(max)
 

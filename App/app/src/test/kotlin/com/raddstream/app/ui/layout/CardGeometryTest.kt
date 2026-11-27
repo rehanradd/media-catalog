@@ -113,7 +113,7 @@ class CardGeometryTest {
         )
         assertTrue(
             "CardGeometry must still own the rail width, or the dp scan above is vacuous",
-            Regex("""const val RAIL_CARD_WIDTH_DP: Int = 120""").containsMatchIn(sources.getValue(geometryPath)),
+            Regex("""const val RAIL_CARD_WIDTH_DP: Int = 100""").containsMatchIn(sources.getValue(geometryPath)),
         )
     }
 

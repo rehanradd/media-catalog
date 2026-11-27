@@ -135,17 +135,19 @@ class AudioBadgeChipsTest {
 
     /**
      * A4-F2 (OR-15): the My List trending row looked inconsistent — only
-     * Kesariya@100 carried a NEW pill and a "Hindi Dubbed" pill, while
-     * The Penguin and Gen V carried neither. That is the data, not the
-     * render: every card goes through the same [PosterCard] path (NEW from
-     * the year, audio badges from [TileAudioBadges.forPost]), and no screen
-     * hard-codes a badge — a grep for the literals finds only the two
-     * rule sites. Penguin (2024) and Gen V (2023) are past the NEW window
-     * and are English originals in English, so they honestly earn nothing;
-     * Kesariya@100 (2025, Hindi track on a Hollywood-filed row) earns both.
-     * The Hollywood filing itself is the F6 data smell — the app must not
-     * second-guess the row — so this pins the badge outcome the row as
-     * filed produces, not the outcome a corrected row would.
+     * Kesariya@100 carried a "Hindi Dubbed" pill, while The Penguin and
+     * Gen V carried neither. That is the data, not the render: every card
+     * goes through the same [PosterCard] path (audio badges from
+     * [TileAudioBadges.forPost]), and no screen hard-codes a badge — a grep
+     * for the literals finds only the rule site. Penguin (2024) and Gen V
+     * (2023) are English originals in English, so they honestly earn
+     * nothing; Kesariya@100 (2025, Hindi track on a Hollywood-filed row)
+     * earns the dub badge. (The NEW pill the old version of this comment
+     * named is gone — video audit issue 30 removed it, since the
+     * year-only rule put it on everything.) The Hollywood filing itself
+     * is the F6 data smell — the app must not second-guess the row — so
+     * this pins the badge outcome the row as filed produces, not the
+     * outcome a corrected row would.
      */
     @Test
     fun `my-list-trending-badges-follow-the-row-not-the-screen`() {

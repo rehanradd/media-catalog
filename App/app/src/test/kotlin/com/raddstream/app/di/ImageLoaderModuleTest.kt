@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import coil3.annotation.ExperimentalCoilApi
 import coil3.imageLoader
 import coil3.memory.MemoryCache
+import coil3.request.CachePolicy
 import com.raddstream.app.RaddStreamApplication
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -48,6 +49,15 @@ class ImageLoaderModuleTest {
         assertTrue(diskCache != null)
         assertEquals(ImageLoaderModule.IMAGE_DISK_CACHE_MAX_BYTES, diskCache!!.maxSize)
         assertEquals(ImageLoaderModule.IMAGE_DISK_CACHE_DIR_NAME, diskCache.directory.name)
+    }
+
+    @Test
+    fun `disk cache policy is enabled so second launch is instant`() {
+        // Video audit issue 5 (Nov 2026): the 250 MB disk cache is only
+        // worth anything when the loader actually reads it — a disabled
+        // policy would re-fetch every poster on every launch.
+        val loader = ImageLoaderModule.buildImageLoader(context)
+        assertEquals(CachePolicy.ENABLED, loader.diskCachePolicy)
     }
 
     @Test

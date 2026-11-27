@@ -64,11 +64,8 @@ import androidx.compose.ui.unit.sp
 import com.raddstream.app.R
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.WireText
-import com.raddstream.app.network.models.currentCalendarYear
-import com.raddstream.app.network.models.isNewReleaseYear
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.ui.theme.PressHaptics
-import com.raddstream.app.ui.theme.RaddArtScrim
 import com.raddstream.app.ui.theme.RaddMotion
 import com.raddstream.app.ui.theme.RaddTokens
 import com.raddstream.app.ui.theme.RaddStreamTheme
@@ -115,11 +112,13 @@ internal fun sharedPosterModifier(
  * reviewers read the rim as a selected/promoted outline), so the poster paints
  * edge-to-edge at 16dp corners (SE-4, round 2: the brief's 16–20dp card
  * radius, via the `RaddTokens.Radius.Card` token) and the title + meta sit
- * below it on the page background; the NEW pill is a small dark chip,
- * top-left, never covering faces or logos. No quality badge: the list wire
- * carries no quality field (it lives on Detail's RankedPrint), and inventing
- * one would break the honesty rule; that badge waits on a server
- * `best_quality` field.
+ * below it on the page background; the NEW pill is gone (video audit
+ * issue 30, Nov 2026: the year-only rule put it on everything, including
+ * a 1997 title, so the badge meant nothing — it is removed, not repaired,
+ * because the list wire carries no added date to build a true recency
+ * badge from). No quality badge: the list wire carries no quality field
+ * (it lives on Detail's RankedPrint), and inventing one would break the
+ * honesty rule; that badge waits on a server `best_quality` field.
  *
  * Accessibility: the tile leads with one merged sentence — title, year and type, the rating out
  * of ten, and the progress line when the app has one — so the facts arrive in an order that
@@ -155,8 +154,8 @@ fun PosterCard(
      * Pick 3 (home review, Nov 2026): the favourite heart, drawn on the
      * poster's free TopStart corner. Only Pick 3 passes it — the heart IS
      * that card's action, so it rides the art instead of the text row. In
-     * the ranked rail the rank badge owns TopStart and the NEW pill stays
-     * off, so a tile carries either a rank or a heart, never both. Null
+     * the ranked rail the rank badge owns TopStart, so a tile carries
+     * either a rank or a heart, never both. Null
      * everywhere else: everywhere else the tile is a doorway, not a list
      * to edit, and a heart there would be a trap for a slipping thumb.
      */
@@ -200,16 +199,6 @@ fun PosterCard(
      */
     reserveBadgeSlot: Boolean = false,
     /**
-     * My List review (Nov 2026): the compact meta line for the 3-up
-     * starter rail — year and rating only, "2024 · ★ 8.6", no type word.
-     * Three segments truncate to "S..." in a 3-up cell; Home and Search
-     * rails have room and keep the full "2024 · ★ 8.6 · Series" line, so
-     * this stays false everywhere except [PopularRow]. The type stays in
-     * the tile's spoken sentence and on Detail — only the painted rail
-     * line loses it.
-     */
-    compactMeta: Boolean = false,
-    /**
      * REA #2 (Netflix, Nov 2026): the "97% Match" for this tile, from
      * the "For you" row's ranker score. Null everywhere except that row
      * — a % with no ranker score behind it would be invented.
@@ -222,14 +211,6 @@ fun PosterCard(
      * keeps the one-line slot (F7): rails stay uniform.
      */
     titleMaxLines: Int = 1,
-    /**
-     * Screen audit #7 (Nov 2026): the search results grid passes true —
-     * when the meta line is only the bare type word ("Series") it paints
-     * nothing, because the section header already states it. A line with
-     * a rating or year still paints. The type stays in the tile's spoken
-     * sentence — only the painted line is suppressed.
-     */
-    suppressBareTypeMeta: Boolean = false,
     /**
      * Round 6 (motion): the shared-element scopes, passed down from the
      * NavHost's SharedTransitionLayout by the infra branch. Both null by
@@ -257,24 +238,13 @@ fun PosterCard(
         languages = WireText.listOf(post.language),
     )
     val typeLabel = post.typeLabel
-    // M11 (home review, Nov 2026): the tile is a new release when its year
-    // is plausible and within the last two calendar years. The bound is
-    // stricter than [Post.yearLabel]'s — display allows next year's films,
-    // NEW means released — so a mis-parsed 2027 can never earn the badge.
-    val isNewRelease = remember(post.year) {
-        isNewReleaseYear(post.year, currentCalendarYear())
-    }
-    // M3 (home review, Nov 2026): the year comes from [Post.yearLabel], the
-    // guarded choke point — the old inline `takeIf { it > 0 }` let an
-    // impossible year (2027 for a 2024 work, 20215) straight onto the tile.
-    // Mockup (Nov 2026): the meta line carries the rating too — one line,
-    // "2024 · ★ 8.6 · Series" — so the rating badge that used to ride the
+    // Video audit (Nov 2026): the meta line carries the rating too — one
+    // line, "2024 · ★ 8.6" — so the rating badge that used to ride the
     // poster is gone: it would say the same number twice on one tile.
-    val details = posterMetaLine(post, compactMeta, matchPercent)
-    // Screen audit #7: a bare-type meta line ("Series") is redundant under
-    // a section header that already says "Series" — hide it when the
-    // caller asked, and only when it carries nothing else.
-    val showDetails = details.isNotBlank() && !(suppressBareTypeMeta && details == typeLabel)
+    // The type word never paints any more (the card shows poster + title
+    // + rating only); it stays in the spoken sentence and on Detail.
+    val details = posterMetaLine(post, matchPercent)
+    val showDetails = details.isNotBlank()
     // The spoken sentence keeps the old shape — "2024 · Movie" — and the
     // rating arrives once, as "rating 8.6 out of 10" below, so a screen
     // reader never hears the number twice.
@@ -292,7 +262,6 @@ fun PosterCard(
         if (rank != null && rank in 1..10) append("Rank ").append(rank).append(", ")
         append(title)
         if (spokenDetails.isNotBlank()) append(", ").append(spokenDetails)
-        if (isNewRelease) append(", new release")
         post.imdbRating?.let { UserWords.displayRating(it) }?.let { rating ->
             append(", rating ").append(rating).append(" out of 10")
         }
@@ -313,7 +282,10 @@ fun PosterCard(
     // is a floor, not a cap (see the title Text below) — an exact
     // height() is a hair short of the laid-out lines at 1.3x, so the
     // layout collapsed to one line.
-    val titleLineHeight = MaterialTheme.typography.titleSmall.lineHeight
+    // Video audit (Nov 2026): the title rides labelMedium (12sp), not
+    // titleSmall (14sp) — smaller text so more content fits, per the
+    // owner's direction; the slot height follows the same style.
+    val titleLineHeight = MaterialTheme.typography.labelMedium.lineHeight
     val titleSlotHeight = with(LocalDensity.current) {
         // TextUnit has no isSpecified in this Compose version — Unspecified
         // is the sentinel to compare against.
@@ -423,11 +395,14 @@ fun PosterCard(
                 ImageFallbackCard(
                     modifier = Modifier.fillMaxSize()
                         .then(sharedPosterModifier(post, sharedTransitionScope, animatedVisibilityScope)),
-                    // Audit #9: the caption below the poster already
-                    // carries the title — the fallback paints the logo +
-                    // initials only, never the title twice. (F6's full
-                    // title was the duplication the audit caught.)
-                    label = channelMonogram(title),
+                    // Video audit issue 32 (Nov 2026): no monogram here —
+                    // a title with no poster gets the branded placeholder
+                    // (mark only), never a two-letter box. The caption
+                    // below the poster already carries the title, and a
+                    // monogram ("IO", "IC") reads as content that is not
+                    // there. (Audit #9's initials-only rule is superseded
+                    // by this: the mark alone is the placeholder.)
+                    label = null,
                     bottomClearance = rankClearance,
                 )
             } else {
@@ -438,11 +413,14 @@ fun PosterCard(
                         .then(sharedPosterModifier(post, sharedTransitionScope, animatedVisibilityScope)),
                     // A dead poster URL must not look like "no artwork exists" — the
                     // branded fallback says what failed, and keeps the title readable.
-                    // Audit #9: initials only here too — the caption below
-                    // carries the title. Audit #7: the ranked tile clears
-                    // the numeral's zone on a failed load as well.
-                    fallbackLabel = channelMonogram(title),
+                    // Video audit issue 32: no monogram on the error slot
+                    // either — the branded placeholder, never a monogram.
+                    // Video audit issue 27: a backdrop filed as a poster
+                    // renders fitted, never centre-cropped into a fragment.
+                    fallbackLabel = null,
                     fallbackBottomClearance = rankClearance,
+                    slotAspect = CardGeometry.POSTER_ASPECT,
+                    fitWideArt = true,
                     onBitmap = { posterBitmap = it },
                     accentTint = posterAccent,
                 )
@@ -513,8 +491,7 @@ fun PosterCard(
             // scrim, with a hard shadow so it reads over any artwork — the
             // Netflix shape, kept inside this tile (no layout change to the
             // rail). Paint-only: the tile's one spoken sentence already says
-            // "Rank N". The NEW pill still never rides with a rank (see
-            // below), so a ranked tile shows the numeral only.
+            // "Rank N".
             if (rank != null && rank in 1..10) {
                 Text(
                     text = "$rank",
@@ -534,46 +511,18 @@ fun PosterCard(
                 )
             }
 
-            // Review redesign (Nov 2026): the NEW pill is a small dark
-            // chip — scrim plate, jade text — never a neon sticker over
-            // the art. It rides TopStart, where the eye lands first;
-            // the Pick 3 heart owns TopStart in its rail, so there it
-            // falls back to TopEnd instead. It never rides with a rank
-            // numeral — a ranked tile shows the numeral only (Gemini home
-            // review, Nov 2026: max one badge per card — #1 + NEW on a
-            // narrow poster crowded the art). Paint-only, the tile's
-            // one spoken sentence already says "new release".
-            if (isNewRelease && rank == null) {
-                val newAlignment =
-                    if (onToggleFavorite != null) Alignment.TopEnd else Alignment.TopStart
-                Box(
-                    modifier = Modifier
-                        .align(newAlignment)
-                        .padding(RaddTokens.Space.Xxs)
-                        // P2-1 (B-12): the NEW pill is a true pill — the
-                        // same Shape.Pill geometry as the Downloaded badge,
-                        // not the 16dp card radius (two badge shapes side
-                        // by side read as two design languages).
-                        .clip(RaddTokens.Shape.Pill)
-                        .background(RaddArtScrim)
-                        .padding(horizontal = RaddTokens.Space.Sm, vertical = RaddTokens.Space.Micro)
-                        .clearAndSetSemantics { },
-                ) {
-                    Text(
-                        text = "NEW",
-                        color = MaterialTheme.colorScheme.primary,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                }
-            }
+            // Video audit issue 30 (Nov 2026): the NEW pill is gone — the
+            // year-only rule put it on everything, including a 1997
+            // title, so it meant nothing. Do not re-add a recency badge
+            // from the year: a true one needs a server `date_added` on
+            // the list projection. The rank numeral below is the only
+            // overlay a ranked tile carries.
 
             // Pick 3: the heart on the poster — the card's whole point
-            // is tapping it. A 48dp touch target in a scrimmed circle,
+            // is tapping it. A 40dp touch target in a scrimmed circle,
             // so it reads as a control and never as part of the art; the
             // button eats its own tap, so it never also opens the title
-            // (same as the remove × below). TopStart: the NEW pill falls
-            // back to TopEnd when the heart is here, and a rank numeral
+            // (same as the remove × below). TopStart: a rank numeral
             // would own BottomStart — the two never meet on one tile (see
             // the parameter docs).
             if (onToggleFavorite != null) {
@@ -583,7 +532,7 @@ fun PosterCard(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(RaddTokens.Space.Xs)
-                        .size(48.dp)
+                        .size(40.dp)
                         .background(
                             MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f),
                             CircleShape,
@@ -613,7 +562,7 @@ fun PosterCard(
             }
 
             // Home fix (Nov 2026): direct play — the play affordance on
-            // the tile. A 48dp play button in a scrimmed circle at the
+            // the tile. A 40dp play button in a scrimmed circle at the
             // poster's bottom-right, opposite the rank numeral; it eats
             // its own tap, so it never also opens the title (same as the
             // heart above). Only Home rails pass onPlayClick, so only
@@ -625,7 +574,7 @@ fun PosterCard(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(RaddTokens.Space.Xs)
-                        .size(48.dp)
+                        .size(40.dp)
                         .background(
                             MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f),
                             CircleShape,
@@ -674,7 +623,7 @@ fun PosterCard(
                 Text(
                     text = displayTitle,
                     color = MaterialTheme.colorScheme.onSurface,
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
                     maxLines = titleMaxLines,
                     overflow = TextOverflow.Ellipsis,
@@ -704,7 +653,7 @@ fun PosterCard(
                     // S2: width-aware meta line (see metaLineForWidth) —
                     // the tile drops segments before Compose ellipsizes.
                     BoxWithConstraints(Modifier.fillMaxWidth()) {
-                        val narrowLine = metaLineForWidth(post, compactMeta, matchPercent, maxWidth)
+                        val narrowLine = metaLineForWidth(post, matchPercent, maxWidth)
                         var displayDetails by remember(narrowLine) { mutableStateOf(narrowLine) }
                         Text(
                             text = displayDetails,
@@ -739,10 +688,10 @@ fun PosterCard(
                 // motion the change is instant, never animated.
                 // L2 (round 2): the badge slot — the download badge rides
                 // here, ahead of the audio badges, so it never competes
-                // with the NEW pill, the heart or the play button on the
-                // poster (max one badge per card on the art). Overlaying
-                // these badges on the art would break that rule, so the
-                // slot collapses instead of moving.
+                // with the heart or the play button on the poster (max one
+                // badge per card on the art). Overlaying these badges on
+                // the art would break that rule, so the slot collapses
+                // instead of moving.
                 AnimatedVisibility(
                     visible = isDownloaded || tileBadges.isNotEmpty() || reserveBadgeSlot,
                     enter = fadeIn(
@@ -803,7 +752,7 @@ fun PosterCard(
                 IconButton(
                     onClick = onRemove,
                     modifier = Modifier
-                        .size(48.dp)
+                        .size(40.dp)
                         .background(
                             MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
                             CircleShape,
@@ -828,39 +777,37 @@ fun PosterCard(
 private const val TILE_PRESS_SCALE = 0.96f
 
 /**
- * S2 thresholds: the tile widths (dp) below which the meta line drops a
- * segment — type below 140dp, year below 100dp. Named constants, not
- * spacing literals, so the spacing gate does not read them as layout.
+ * S2 thresholds: the tile width (dp) below which the meta line drops a
+ * segment — year below 100dp. Named constants, not spacing literals, so
+ * the spacing gate does not read them as layout.
  */
-private const val META_DROP_TYPE_BELOW_DP = 140f
 private const val META_DROP_YEAR_BELOW_DP = 100f
 
 /**
  * S2 (2027 Home fix): the priority-dropped meta line. Segments paint in
- * priority order — match, year, rating, type — and the narrow tile drops
- * the lowest-priority segment first: below 140dp the type word goes
- * ("2023 · ★ 7.0"), below 100dp the year goes too ("★ 7.0"). Rating and
- * match never drop — they are the reason the tile is on screen. Pure, so
- * the gate test asserts it without a layout.
+ * priority order — match, year, rating — and the narrow tile drops the
+ * lowest-priority segment first: below 100dp the year goes ("★ 7.0").
+ * Rating and match never drop — they are the reason the tile is on
+ * screen. The type word never paints (video audit, Nov 2026: the card
+ * shows poster + title + rating only); it stays in the tile's spoken
+ * sentence and on Detail. Pure, so the gate test asserts it without a
+ * layout.
  *
- * S2 (2027 Home fix, round 2): the year leads the line — the brief's
- * year•duration•quality, as far as the list wire honestly reaches.
- * Duration and quality are NOT on the list wire ([Post] carries neither
- * field — duration lives only on Detail's [PostDetail.runtimeMinutes],
- * quality only on Detail's RankedPrint), so those segments are omitted,
- * never invented; the line is year • rating • type from the fields the
- * row actually has. A server `best_quality` + duration on the list
- * projection would complete the brief's line.
+ * The brief's year • duration • quality line is still unbuildable from
+ * the list wire ([Post] carries neither a duration nor a quality —
+ * duration lives only on Detail's [PostDetail.runtimeMinutes], quality
+ * only on Detail's RankedPrint), so those segments are omitted, never
+ * invented; the line is year • rating from the fields the row actually
+ * has. A server `best_quality` + duration on the list projection would
+ * complete the brief's line.
  */
-internal fun metaLineForWidth(post: Post, compact: Boolean, matchPercent: Int? = null, width: Dp): String {
-    val dropType = compact || width < META_DROP_TYPE_BELOW_DP.dp
+internal fun metaLineForWidth(post: Post, matchPercent: Int? = null, width: Dp): String {
     val dropYear = width < META_DROP_YEAR_BELOW_DP.dp
     val match = matchPercent?.let { "$it% Match" }
     return listOfNotNull(
         match,
         if (dropYear) null else post.yearLabel,
         UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
-        if (dropType) null else post.typeLabel,
     ).joinToString(" · ")
 }
 
@@ -892,65 +839,33 @@ internal fun progressLabelForFontScale(label: String, fontScale: Float): String 
     if (fontScale > 1.0f) label.removeSuffix(" left") else label
 
 /**
- * S2 (round 2, decided then blocked on data): the brief's meta line is
- * year • duration • quality — but the list wire carries neither a
- * duration nor a quality (Post has no such field; PostDetail carries
- * runtime_minutes, but the list row never carries it, and quality lives
- * on Detail's RankedPrint). The line stays rating • year • type — the
- * honest data the wire carries — until the server sends duration and
- * best_quality on the list row, when the segments below gain them; the
- * header comment records the same wait for the quality badge.
+ * The rail meta line, as one pure function so the form is assertable
+ * without a layout. The line is "2024 · ★ 8.6" — year and rating only,
+ * no type word (video audit, Nov 2026: the card shows poster + title +
+ * rating only). The type stays in the tile's spoken sentence and on
+ * Detail; only the painted rail line loses it. An absent rating or year
+ * simply leaves its slot out — never an invented value.
  *
- * My List review (Nov 2026): the rail meta line, as one pure function so
- * the compact form is assertable without a layout. Full form is
- * "2024 · ★ 8.6 · Series"; the compact form (the 3-up starter rail, where
- * three segments truncate to "S...") drops the type word — "2024 · ★ 8.6".
- * Both join with a middle dot (Gemini home review, Nov 2026: one separator
- * everywhere — the hero, the spoken sentence and the cards all use · now).
- * The type stays in the tile's spoken sentence
- * and on Detail; only the painted rail line loses it. An absent rating or
- * year simply leaves its slot out — never an invented value.
- *
- * S2 META (round 2, decided-then-blocked, 25 Nov 2026): the brief's
- * year•duration•quality line was DECIDED for this meta line and then
- * verified unbuildable from the list wire — the list [Post] carries no
- * `runtime_minutes` (only [PostDetail] does, from the work row the server
- * matched) and no quality field at all (quality is per-print, on Detail's
- * RankedPrint). Painting a duration or a quality here would invent data,
- * so the line stays rating•year•type until the server sends
+ * Duration and quality are NOT on the list wire ([Post] carries neither
+ * field — duration lives only on Detail's [PostDetail.runtimeMinutes],
+ * quality only on Detail's RankedPrint), so those segments are omitted,
+ * never invented; the line stays year • rating until the server sends
  * `runtime_minutes` on the list projection and a per-post best-quality
  * field — a backend change, not an app one. Do not re-attempt this in an
  * app branch.
  *
  * REA #2 (Netflix, Nov 2026): [matchPercent] paints first — "97% Match ·
- * 2024 · ★ 8.6 · Series" — and alone when nothing else paints ("97%
- * Match", never "97% Match · " with a dangling separator). Null means no
- * match to paint: the line is exactly as before.
- *
- * S2 (round 2, Nov 2026): the brief's year · duration · quality
- * convention is adopted on the Detail hero meta ([detailMetaParts]),
- * NOT here. [Post] carries no duration and no quality — a card cannot
- * paint either without inventing it, and a meta line must never read an
- * invented value. If the server projection ever carries duration and
- * quality per post, this line can gain them (backend follow-up, not
- * this round); until then rating · year · type stands.
+ * 2024 · ★ 8.6" — and alone when nothing else paints ("97% Match",
+ * never "97% Match · " with a dangling separator). Null means no match
+ * to paint: the line is exactly as before.
  */
-internal fun posterMetaLine(post: Post, compact: Boolean, matchPercent: Int? = null): String {
+internal fun posterMetaLine(post: Post, matchPercent: Int? = null): String {
     val match = matchPercent?.let { "$it% Match" }
-    return if (compact) {
-        listOfNotNull(
-            match,
-            post.yearLabel,
-            UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
-        ).joinToString(" · ")
-    } else {
-        listOfNotNull(
-            match,
-            post.yearLabel,
-            UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
-            post.typeLabel,
-        ).joinToString(" · ")
-    }
+    return listOfNotNull(
+        match,
+        post.yearLabel,
+        UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
+    ).joinToString(" · ")
 }
 
 /**

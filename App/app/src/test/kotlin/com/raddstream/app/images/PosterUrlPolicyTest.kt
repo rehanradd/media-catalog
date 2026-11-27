@@ -109,6 +109,22 @@ class PosterUrlPolicyTest {
         assertEquals(random, PosterUrlPolicy.displayUrl(random, 500))
     }
 
+    // Video audit issue 10 (Nov 2026): live-TV logos bypass the proxy —
+    // imgur rate-limits wsrv's fetcher (429), so a proxied logo paid a
+    // ~10 s dead wait before the fallback interceptor retried it direct.
+    @Test
+    fun `displayUrl with bypassProxy returns the sized direct url`() {
+        val imgur = "https://i.imgur.com/abc123.jpg"
+        assertEquals(imgur, PosterUrlPolicy.displayUrl(imgur, 500, bypassProxy = true))
+        // A TMDB original is still right-sized, just not proxied.
+        assertEquals(
+            "https://image.tmdb.org/t/p/w780/y9Be0IePdacy1M8FNsIDBz7AdEQ.jpg",
+            PosterUrlPolicy.displayUrl(original, 640, bypassProxy = true),
+        )
+        // And the default stays proxied.
+        assertTrue(PosterUrlPolicy.isWsrvUrl(PosterUrlPolicy.displayUrl(imgur, 500)))
+    }
+
     @Test
     fun `displayUrl leaves a non-positive width untouched`() {
         assertEquals(original, PosterUrlPolicy.displayUrl(original, 0))

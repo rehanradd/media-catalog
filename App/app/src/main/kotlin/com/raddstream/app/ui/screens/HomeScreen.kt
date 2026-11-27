@@ -499,9 +499,6 @@ internal fun HomeContent(
     // cards — the 120dp phone card leaves a tablet rail mostly empty.
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     val railCardWidthDp = if (screenWidthDp >= 840) 180 else CardGeometry.RAIL_CARD_WIDTH_DP
-    // P0-6: spotlight rails (the hero-adjacent first rail, the Top 10
-    // chart) keep the old 150dp card; every other rail is the baseline.
-    val spotlightRailWidthDp = if (screenWidthDp >= 840) 180 else CardGeometry.SPOTLIGHT_RAIL_CARD_WIDTH_DP
 
     // The feed's shared facts, computed once per state/filter — not per
     // item, and not inside the lazy list (a LaunchedEffect inside a lazy
@@ -549,7 +546,12 @@ internal fun HomeContent(
             val (kept, next) = UserWords.dedupeAcrossRails(
                 section.items,
                 seenWorks,
-            ) { post -> UserWords.workKey(post.workRef, post.displayTitle, post.year) }
+                keyOf = { post -> UserWords.workKey(post.workRef, post.displayTitle, post.year) },
+                // Video audit issue 39: of two rows for one work, the
+                // metadata-complete row wins the slot — a tile never reads
+                // "2026" with no star while its twin carries a rating.
+                prefer = UserWords::preferCompletePost,
+            )
             seenWorks = next
             section.copy(items = kept)
         }
@@ -860,7 +862,7 @@ internal fun HomeContent(
                         index = 0,
                         onPostClick = onPostClick,
                         onPlayClick = onPlayClick,
-                        itemWidthDp = spotlightRailWidthDp,
+                        itemWidthDp = railCardWidthDp,
                         // P2-12 (audit B-43): the rail's entered set —
                         // the My List pattern. The key is already in the
                         // set when the rail scrolls back, so the stagger
@@ -950,7 +952,7 @@ internal fun HomeContent(
                         index = index,
                         onPostClick = onPostClick,
                         onPlayClick = onPlayClick,
-                        itemWidthDp = if (section.sort == "trending") spotlightRailWidthDp else railCardWidthDp,
+                        itemWidthDp = railCardWidthDp,
                         // P2-12 (audit B-43): see rail 1 above.
                         enteredIds = enteredRailKeys,
                         onEntered = { enteredRailKeys = enteredRailKeys + it },
@@ -1521,11 +1523,11 @@ internal fun MyListStrip(
                     onPlayClick = { onPlayClick(post) },
                     sharedTransitionScope = sharedTransitionScope,
                     animatedVisibilityScope = animatedVisibilityScope,
-                    // Audit #8: the compact line (year · rating) fits the
-                    // 120dp rail card; the type stays in the tile's spoken
-                    // sentence and on Detail. Two title lines, like the
-                    // rails, so long titles do not truncate mid-word.
-                    compactMeta = true,
+                    // Audit #8: the meta line is year · rating only (the
+                    // type never paints now), so it fits the 100dp rail
+                    // card; the type stays in the tile's spoken sentence
+                    // and on Detail. Two title lines, like the rails, so
+                    // long titles do not truncate mid-word.
                     titleMaxLines = 2,
                     progressFraction = match?.progressFraction,
                     progressLabel = match?.resumeLabel,
@@ -2317,13 +2319,12 @@ private fun HomeRailSection(
                         rank = if (isRanked && itemIndex < 10) itemIndex + 1 else null,
                         // Audit #8: the full "2023 · ★ 7.0 · Movie" line
                         // truncates the type word mid-word ("Mo…") on a
-                        // 120dp rail card — the compact line drops it, so
-                        // year · rating fits. The type stays in the tile's
+                        // 100dp rail card — the meta line is year · rating
+                        // only now, so it fits. The type stays in the tile's
                         // spoken sentence and on Detail. Two title lines
                         // for the same reason: one line truncates long
                         // titles mid-word, and the slot stays uniform
                         // because every tile in the rail gets two.
-                        compactMeta = true,
                         titleMaxLines = 2,
                         // REA #2: the "For you" row's Match % rides its
                         // tiles; every other rail carries no scores, so

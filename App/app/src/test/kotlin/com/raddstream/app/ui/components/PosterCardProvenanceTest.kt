@@ -26,7 +26,7 @@ import org.robolectric.RobolectricTestRunner
  * hosts lives in app/build.gradle.kts rather than here — an in-test Assume is too late to help.
  *
  * **The tile is given the width the app actually gives it, and that is not a workaround.** Every
- * catalog grid hands a [PosterCard] a `GridCells.Adaptive(minSize = 120.dp)` cell
+ * catalog grid hands a [PosterCard] a `GridCells.Adaptive(minSize = 100.dp)` cell
  * (`CatalogGridColumns`), but Robolectric composes into its own default 320dp-wide window, so an
  * unconstrained `fillMaxWidth` card here gets a 320dp-wide artwork — at the tile's 0.68 aspect
  * ratio that alone is ~470dp tall, i.e. the entire window — and the tile lands below the fold.
@@ -61,7 +61,7 @@ class PosterCardProvenanceTest {
         compose.setContent {
             RaddStreamTheme(darkTheme = true) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
-                    PosterCard(post = post, modifier = Modifier.width(120.dp))
+                    PosterCard(post = post, modifier = Modifier.width(100.dp))
                 }
             }
         }

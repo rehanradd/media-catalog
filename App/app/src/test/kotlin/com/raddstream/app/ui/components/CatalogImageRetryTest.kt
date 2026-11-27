@@ -34,4 +34,17 @@ class CatalogImageRetryTest {
         assertFalse(shouldAutoRetryImage(attempt = 1, maxAutoRetries = 1))
         assertFalse(shouldAutoRetryImage(attempt = 0, maxAutoRetries = 0))
     }
+
+    // ── Video audit issue 22 (Nov 2026): the delayed retry ────────────
+
+    @Test
+    fun delayedRetryFiresOnce() {
+        assertTrue(shouldDelayedRetryImage(delayedAttempts = 0))
+    }
+
+    @Test
+    fun delayedRetryStopsAfterTheOne() {
+        assertFalse(shouldDelayedRetryImage(delayedAttempts = 1))
+        assertFalse(shouldDelayedRetryImage(delayedAttempts = 99))
+    }
 }

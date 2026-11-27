@@ -28,11 +28,11 @@ import org.robolectric.RobolectricTestRunner
  * that sentence: it starts with the painted title, so a suffixed title
  * can never hide behind a matching sentence.
  *
- * Runs on the JVM under Robolectric. The tile is given the 120dp grid cell
- * the catalog grid actually hands it (see PosterCardNewBadgeTest for why
+ * Runs on the JVM under Robolectric. The tile is given the 100dp grid cell
+ * the catalog grid actually hands it (see PosterCardNoNewBadgeTest for why
  * an unconstrained tile lands below the fold in Robolectric's 320dp window).
- * The years here are all safely old, so no case earns the NEW pill and its
- * ", new release" tail.
+ * The years here are all safely old, and the NEW pill is gone outright
+ * (video audit issue 30), so no case earns a ", new release" tail.
  */
 @RunWith(RobolectricTestRunner::class)
 class PosterCardTitleCleanupTest {
@@ -61,7 +61,7 @@ class PosterCardTitleCleanupTest {
         compose.setContent {
             RaddStreamTheme(darkTheme = true) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
-                    PosterCard(post = post, modifier = Modifier.width(120.dp))
+                    PosterCard(post = post, modifier = Modifier.width(100.dp))
                 }
             }
         }

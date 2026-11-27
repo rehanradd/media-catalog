@@ -31,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -40,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -60,9 +62,11 @@ import com.raddstream.app.ui.components.ErrorState
 import com.raddstream.app.ui.components.LiveTvLoadingSkeleton
 import com.raddstream.app.ui.components.RaddChip
 import com.raddstream.app.ui.components.ScrollingChipRow
-import com.raddstream.app.ui.components.rememberDelayedVisible
 import com.raddstream.app.ui.components.channelMonogram
 import com.raddstream.app.ui.components.isKnownLanguage
+import com.raddstream.app.ui.components.liveTvLogoPrefetchUrls
+import com.raddstream.app.ui.components.prefetchPosterArt
+import com.raddstream.app.ui.components.rememberDelayedVisible
 import com.raddstream.app.ui.components.raddFilterChipColors
 import com.raddstream.app.ui.layout.CardGeometry
 import com.raddstream.app.viewmodel.LiveTvViewModel
@@ -438,6 +442,15 @@ internal fun LiveTvChannelGrid(
 ) {
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
+    // Video audit issue 10 (Nov 2026): warm the grid's logos the moment
+    // the channel list is known — a logo that 429s on the wsrv proxy used
+    // to arrive ~10 s late, after the grid had already painted its
+    // fallback. The prefetch bypasses the proxy, like the tile itself.
+    val prefetchContext = LocalContext.current
+    LaunchedEffect(channels) {
+        val urls = liveTvLogoPrefetchUrls(channels)
+        if (urls.isNotEmpty()) prefetchPosterArt(prefetchContext, urls, bypassResizeProxy = true)
+    }
     val showBackToTop by remember {
         derivedStateOf {
             gridState.firstVisibleItemIndex > 0 || gridState.firstVisibleItemScrollOffset > 0
@@ -740,19 +753,32 @@ internal fun LiveTvChannelCard(
                     // channel registry, not the catalog — their hosts are the
                     // registry's own, and the art policy does not vet them.
                     allowAnyHost = true,
+                    // Video audit issue 10 (Nov 2026): bypass the wsrv.nl
+                    // resize proxy for logos — imgur rate-limits wsrv's
+                    // fetcher (429), so a proxied logo paid a ~10 s dead
+                    // wait before the fallback interceptor retried it
+                    // direct. The prefetch warms this same direct URL.
+                    bypassResizeProxy = true,
                     contentScale = ContentScale.Fit,
                     // Live TV review (Nov 2026): the logo lives in a centred
-                    // safe zone, 60% of the plate in each dimension — a wide
-                    // logo can no longer reach the corner where the LIVE
-                    // badge sits, and a white-background asset reads as a
-                    // badge, not a pasted rectangle.
+                    // safe zone — a wide logo can no longer reach the corner
+                    // where the LIVE badge sits, and a white-background asset
+                    // reads as a badge, not a pasted rectangle.
+                    // Video audit issue 10: the zone shrank to 50% and
+                    // anchors to the plate's bottom, so the logo's top
+                    // edge clears the LIVE badge (edge-to-edge art like
+                    // ABC News had its worm under the badge, and the
+                    // wordmark's tail under the star). The 48dp star disc
+                    // still overlaps the logo's top-right corner — full
+                    // clearance needs the star moved or a taller plate,
+                    // which belong to the Live TV tile batch, not this one.
                     fallbackLarge = true,
                     // A4-F1: the short monogram beside the mark — the full
                     // name under a 48dp mark overflowed the ~64dp-tall
                     // plate, so the Robo capture showed the mark with no
                     // text at all. The card below already prints the name.
                     monogram = channelMonogram(channel.name),
-                    modifier = Modifier.fillMaxSize(0.6f),
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxSize(0.5f),
                 )
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

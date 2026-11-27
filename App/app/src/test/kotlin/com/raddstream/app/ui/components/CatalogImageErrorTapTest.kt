@@ -6,12 +6,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.ui.theme.RaddStreamTheme
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -83,5 +87,76 @@ class CatalogImageErrorTapTest {
             "centre tap on a failed-image tile did not reach the parent onClick",
             clicked,
         )
+    }
+
+    // ── Video audit issue 22 (Nov 2026): the corner retry button ───────
+    //
+    // The small 40dp TopEnd button is the exception that proves A3 Proof
+    // 3: it re-issues the load without stealing the card tap, because it
+    // is a corner control, not a full-size clickable. Logo plates are too
+    // small for it and carry none.
+
+    private fun showSlotWithRetry(
+        onTileClick: () -> Unit,
+        onRetry: (() -> Unit)?,
+        large: Boolean = false,
+    ) {
+        compose.setContent {
+            RaddStreamTheme {
+                Box(
+                    Modifier
+                        .size(200.dp)
+                        .testTag("tile")
+                        .clickable { onTileClick() },
+                ) {
+                    CatalogImageErrorSlot(
+                        fallbackLabel = "DP",
+                        monogram = null,
+                        tone = FallbackTone.Tile,
+                        large = large,
+                        modifier = Modifier.fillMaxSize(),
+                        onRetry = onRetry,
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun retryButtonTapCallsOnRetryAndNotTheParent() {
+        var clicked = false
+        var retried = false
+        showSlotWithRetry(onTileClick = { clicked = true }, onRetry = { retried = true })
+        compose.onNodeWithContentDescription("Retry loading image")
+            .assertExists()
+            .performClick()
+        assertTrue("retry button tap did not call onRetry", retried)
+        assertFalse("retry button tap reached the parent onClick", clicked)
+    }
+
+    @Test
+    fun centreTapStillReachesParentWhenRetryButtonIsPresent() {
+        var clicked = false
+        showSlotWithRetry(onTileClick = { clicked = true }, onRetry = {})
+        compose.onNodeWithTag("tile").assertExists()
+        compose.onNodeWithTag("tile").performTouchInput { click() }
+        assertTrue(
+            "centre tap on a failed-image tile with a retry button did not reach the parent onClick",
+            clicked,
+        )
+    }
+
+    @Test
+    fun logoPlatesCarryNoRetryButton() {
+        var retried = false
+        showSlotWithRetry(onTileClick = {}, onRetry = { retried = true }, large = true)
+        compose.onNodeWithContentDescription("Retry loading image").assertDoesNotExist()
+        assertFalse("a logo plate must not offer a retry button", retried)
+    }
+
+    @Test
+    fun slotWithoutRetryCarriesNoRetryButton() {
+        showSlotWithRetry(onTileClick = {}, onRetry = null)
+        compose.onNodeWithContentDescription("Retry loading image").assertDoesNotExist()
     }
 }

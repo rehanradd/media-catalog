@@ -17,18 +17,22 @@ import org.robolectric.RobolectricTestRunner
 
 /**
  * Screen audit #7 (Nov 2026): the search results grid's tiles get two
- * title lines and no bare-type meta — a long title reads whole under the
- * "Series" header, and the "Series" line under it no longer restates the
- * header. The tile's painted texts are cleared from semantics (one spoken
+ * title lines — a long title reads whole under the "Series" header.
+ * The tile's painted texts are cleared from semantics (one spoken
  * sentence per tile), so these tests pin geometry, not words: the title
- * slot is a fixed height per line, and a suppressed meta line removes a
+ * slot is a fixed height per line, and a missing meta line removes a
  * whole line from the card. Two cards with the same shape but different
  * titles are rendered side by side so the heights compare under one
  * density and one theme; the titles differ only so each card's spoken
  * sentence finds its own node.
  *
- * Runs on the JVM under Robolectric. The years here are safely old, so no
- * case earns the NEW pill and its ", new release" tail.
+ * Video audit (Nov 2026): the meta line is year · rating only — the
+ * type word never paints, so there is no bare-type line to suppress any
+ * more; a tile with no year and no rating paints no meta line at all.
+ *
+ * Runs on the JVM under Robolectric. The tile is given the 100dp cell
+ * the catalog grid actually hands it (see PosterCardProvenanceTest for why
+ * an unconstrained tile lands below the fold in Robolectric's 320dp window).
  */
 @RunWith(RobolectricTestRunner::class)
 class PosterCardSearchGridTest {
@@ -55,7 +59,7 @@ class PosterCardSearchGridTest {
     )
 
     /**
-     * Renders two tiles side by side in 120dp cells (the width the
+     * Renders two tiles side by side in 100dp cells (the width the
      * catalog grid hands a tile) and returns their heights in pixels, in
      * composition order. The two titles must differ so each tile's spoken
      * sentence matches exactly one node.
@@ -63,25 +67,21 @@ class PosterCardSearchGridTest {
     private fun twoCardHeights(
         first: Post,
         firstTitleMaxLines: Int = 1,
-        firstSuppressBareTypeMeta: Boolean = false,
         second: Post,
         secondTitleMaxLines: Int = 1,
-        secondSuppressBareTypeMeta: Boolean = false,
     ): Pair<Float, Float> {
         compose.setContent {
             RaddStreamTheme(darkTheme = true) {
                 Row {
                     PosterCard(
                         post = first,
-                        modifier = Modifier.width(120.dp),
+                        modifier = Modifier.width(100.dp),
                         titleMaxLines = firstTitleMaxLines,
-                        suppressBareTypeMeta = firstSuppressBareTypeMeta,
                     )
                     PosterCard(
                         post = second,
-                        modifier = Modifier.width(120.dp),
+                        modifier = Modifier.width(100.dp),
                         titleMaxLines = secondTitleMaxLines,
-                        suppressBareTypeMeta = secondSuppressBareTypeMeta,
                     )
                 }
             }
@@ -106,28 +106,24 @@ class PosterCardSearchGridTest {
     }
 
     @Test
-    fun bareTypeMetaIsSuppressedWithTheFlag() {
-        // No rating, no year: the meta line is only the bare type word
-        // ("Series"), so the flag removes the whole line and the card
-        // comes out shorter by that line.
-        val (shown, suppressed) = twoCardHeights(
+    fun tileWithNoYearAndNoRatingPaintsNoMetaLine() {
+        // No rating, no year: the meta line is empty, so the tile comes
+        // out shorter by that line than a tile carrying a year.
+        val (noMeta, withYear) = twoCardHeights(
             first = post("Alpha Title", contentType = "series"),
-            second = post("Beta Title", contentType = "series"),
-            secondSuppressBareTypeMeta = true,
+            second = post("Beta Title", year = 2023, contentType = "series"),
         )
-        assertTrue("suppressed bare meta ($suppressed px) is not shorter than shown ($shown px)", suppressed < shown)
+        assertTrue("no-meta tile ($noMeta px) is not shorter than year tile ($withYear px)", noMeta < withYear)
     }
 
     @Test
-    fun richMetaStillPaintsWithTheFlag() {
-        // A rating and a year mean the meta line carries more than the
-        // type word, so the flag leaves it alone — the two cards are the
-        // same height to the pixel.
-        val (shown, flagged) = twoCardHeights(
-            first = post("Alpha Title", year = 2023, contentType = "series", imdbRating = "8.6"),
+    fun richMetaIsOneLineLikeAYearOnlyMeta() {
+        // A rating and a year mean the meta line carries "2023 · ★ 8.6" —
+        // still one line, so the two cards are the same height to the pixel.
+        val (yearOnly, rich) = twoCardHeights(
+            first = post("Alpha Title", year = 2023, contentType = "series"),
             second = post("Beta Title", year = 2023, contentType = "series", imdbRating = "8.6"),
-            secondSuppressBareTypeMeta = true,
         )
-        assertEquals("rich meta changed height with the flag", shown, flagged, 0.01f)
+        assertEquals("rich meta changed height", yearOnly, rich, 0.01f)
     }
 }

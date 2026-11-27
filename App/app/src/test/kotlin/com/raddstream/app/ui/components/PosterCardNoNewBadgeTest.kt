@@ -7,6 +7,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
 import com.raddstream.app.network.models.Post
@@ -18,18 +19,18 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
 /**
- * M11 (home review, Nov 2026): the NEW pill on a recent release. The pill
- * itself is paint-only (its semantics are cleared, like the rank badge), so
- * the test pins the tile's one spoken sentence: a 2026 title says
- * "new release", a 2024 title does not. The year rule itself is pure and
- * pinned in IsNewReleaseYearTest; this pins the wiring.
+ * Video audit issue 30 (Nov 2026): the NEW pill is REMOVED. The old
+ * year-only rule put it on everything, including a 1997 title, so the
+ * badge meant nothing — and the list wire carries no added date to build
+ * a true recency badge from. This test pins the removal: a current-year
+ * title says nothing about "new release", and no NEW pill paints.
  *
- * Runs on the JVM under Robolectric. The tile is given the 120dp grid cell
+ * Runs on the JVM under Robolectric. The tile is given the 100dp cell
  * the catalog grid actually hands it (see PosterCardProvenanceTest for why
  * an unconstrained tile lands below the fold in Robolectric's 320dp window).
  */
 @RunWith(RobolectricTestRunner::class)
-class PosterCardNewBadgeTest {
+class PosterCardNoNewBadgeTest {
 
     @get:Rule
     val compose = createComposeRule()
@@ -46,7 +47,7 @@ class PosterCardNewBadgeTest {
         compose.setContent {
             RaddStreamTheme(darkTheme = true) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
-                    PosterCard(post = post, modifier = Modifier.width(120.dp))
+                    PosterCard(post = post, modifier = Modifier.width(100.dp))
                 }
             }
         }
@@ -58,19 +59,21 @@ class PosterCardNewBadgeTest {
     private val thisYear = currentCalendarYear()
 
     @Test
-    fun `a current-year title says new release`() {
+    fun `a current-year title says nothing about new`() {
         showTile(post(year = thisYear))
         compose.onNode(
-            hasContentDescription("Inception, $thisYear · Movie, new release", substring = false)
+            hasContentDescription("Inception, $thisYear · Movie", substring = false)
         ).assertIsDisplayed()
+        compose.onNode(hasText("NEW")).assertDoesNotExist()
     }
 
     @Test
-    fun `an older title says nothing about new`() {
+    fun `an older title says the same shape`() {
         val oldYear = thisYear - 3
         showTile(post(year = oldYear))
         compose.onNode(
             hasContentDescription("Inception, $oldYear · Movie", substring = false)
         ).assertIsDisplayed()
+        compose.onNode(hasText("NEW")).assertDoesNotExist()
     }
 }

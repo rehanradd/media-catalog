@@ -292,7 +292,6 @@ class MyListMockupScreenTest {
                             PosterCard(
                                 post = tile,
                                 onClick = {},
-                                compactMeta = true,
                                 modifier = Modifier.weight(1f),
                             )
                         }

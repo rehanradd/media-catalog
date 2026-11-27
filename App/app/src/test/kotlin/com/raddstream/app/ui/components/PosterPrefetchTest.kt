@@ -1,5 +1,6 @@
 package com.raddstream.app.ui.components
 
+import com.raddstream.app.network.models.LiveTvChannel
 import com.raddstream.app.network.models.Post
 import com.raddstream.app.network.models.PostDetail
 import com.raddstream.app.viewmodel.HomeSection
@@ -32,9 +33,14 @@ class PosterPrefetchTest {
     // ── Home rails ───────────────────────────────────────────────────
 
     @Test
-    fun `home takes the first two posters per visible rail in order`() {
+    fun `home takes the first four posters per visible rail in order`() {
         assertEquals(
-            listOf("https://example.test/a.jpg", "https://example.test/b.jpg", "https://example.test/c.jpg"),
+            listOf(
+                "https://example.test/a.jpg",
+                "https://example.test/b.jpg",
+                "https://example.test/d.jpg",
+                "https://example.test/c.jpg",
+            ),
             homeRailPrefetchUrls(
                 listOf(
                     section("recent", post(1, "https://example.test/a.jpg"), post(2, "https://example.test/b.jpg"), post(3, "https://example.test/d.jpg")),
@@ -45,11 +51,17 @@ class PosterPrefetchTest {
     }
 
     @Test
-    fun `home caps at twenty`() {
-        val sections = (1..11).map { n ->
-            section("rail$n", post(n * 2 - 1, "https://example.test/$n-a.jpg"), post(n * 2, "https://example.test/$n-b.jpg"))
+    fun `home caps at thirty-two`() {
+        val sections = (1..9).map { n ->
+            section(
+                "rail$n",
+                post(n * 4 - 3, "https://example.test/$n-a.jpg"),
+                post(n * 4 - 2, "https://example.test/$n-b.jpg"),
+                post(n * 4 - 1, "https://example.test/$n-c.jpg"),
+                post(n * 4, "https://example.test/$n-d.jpg"),
+            )
         }
-        assertEquals(20, homeRailPrefetchUrls(sections).size)
+        assertEquals(32, homeRailPrefetchUrls(sections).size)
     }
 
     @Test
@@ -247,6 +259,41 @@ class PosterPrefetchTest {
         assertEquals(
             listOf("https://example.test/s1.jpg"),
             detailPrefetchUrls(null, listOf(post(2, "https://example.test/s1.jpg"))),
+        )
+    }
+
+    // ── Live TV logos (video audit issue 10) ─────────────────────────
+
+    private fun channel(id: Int, logoUrl: String) = LiveTvChannel(
+        id = id,
+        name = "Channel $id",
+        category = "News",
+        country = "Pakistan",
+        language = "Urdu",
+        logoUrl = logoUrl,
+        streamId = "s$id",
+    )
+
+    @Test
+    fun `live tv warms the first logos in grid order and caps at twenty-four`() {
+        val channels = (1..30).map { channel(it, "https://example.test/logo$it.png") }
+        val urls = liveTvLogoPrefetchUrls(channels)
+        assertEquals(24, urls.size)
+        assertEquals("https://example.test/logo1.png", urls.first())
+        assertEquals("https://example.test/logo24.png", urls.last())
+    }
+
+    @Test
+    fun `live tv drops blanks and duplicates`() {
+        assertEquals(
+            listOf("https://example.test/a.png"),
+            liveTvLogoPrefetchUrls(
+                listOf(
+                    channel(1, "https://example.test/a.png"),
+                    channel(2, "   "),
+                    channel(3, "https://example.test/a.png"),
+                ),
+            ),
         )
     }
 }

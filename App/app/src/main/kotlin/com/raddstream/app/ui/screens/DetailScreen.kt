@@ -1895,6 +1895,11 @@ private fun PosterHeader(
                     // block beside the poster already carries the title.
                     fallbackLabel = channelMonogram(detailDisplayTitle(post)),
                     onBitmap = { posterBitmap = it },
+                    // Video audit issue 27 (Nov 2026): a backdrop filed
+                    // as a poster renders fitted in this 2:3 slot, never
+                    // centre-cropped into a fragment.
+                    slotAspect = CardGeometry.POSTER_ASPECT,
+                    fitWideArt = true,
                     // S5: the loading slot paints in the poster's own
                     // accent, like the rail tiles — the accent is already
                     // sampled here for the border.
