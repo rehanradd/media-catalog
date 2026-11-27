@@ -902,12 +902,12 @@ internal fun HomeContent(
                     )
                 }
             }
-            // Gap A6: the first-run card — one-shot, after first browse,
-            // only when CW + favorites are empty (see showPickThree). The
-            // visit latch clears when the card leaves composition: the
-            // viewer left Home, or scrolled the card out of the feed.
-            // Either way the visit is over, and the persisted shown flag
-            // keeps the card away on the next visit.
+            // Gap A6: the first-run card — one-shot, on the first Home
+            // visit only (see showPickThree). The visit latch clears when
+            // the card leaves composition: the viewer left Home, or
+            // scrolled the card out of the feed. Either way the visit is
+            // over, and the persisted shown flag keeps the card away on
+            // the next visit.
             if (state.showPickThree) {
                 item(key = "pickThree") {
                     DisposableEffect(Unit) {
@@ -1818,6 +1818,14 @@ internal fun PickThreeCard(
                         onClick = { onPostClick(post) },
                         isFavorite = isFavorite(post),
                         onToggleFavorite = { onToggleFavorite(post) },
+                        // Video audit #11: three posters share one row, so
+                        // each tile is ~100dp wide — one title line cut
+                        // "The Iceblade Sorcerer…" down to a bare "The…".
+                        // Two lines show the full title on nearly every
+                        // pick; the last line still ellipsizes, but the
+                        // word-boundary trim never leaves a stub (see
+                        // UserWords.trimToWordBoundary).
+                        titleMaxLines = 2,
                     )
                 }
             }

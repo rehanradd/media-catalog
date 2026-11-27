@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -246,7 +247,7 @@ class MainActivity : ComponentActivity() {
             // answer stays null, so the sheet asks again on the next launch.
             // Without this flag a skip would re-show the sheet on the next
             // recomposition, since null is still the "never asked" state.
-            var consentSkippedThisLaunch by remember { mutableStateOf(false) }
+            var consentSkippedThisLaunch by rememberSaveable { mutableStateOf(false) }
             LaunchedEffect(Unit) {
                 serverSettingsRepository.analyticsConsent.collect { answer ->
                     analyticsConsent = answer
@@ -302,6 +303,24 @@ class MainActivity : ComponentActivity() {
                         if (!underMaintenance) changingServer = false
                     }
                     val destination = startDestination
+                    // First-run (video audit #4): the disclaimer is the
+                    // first thing a new viewer meets, alone. Until it is
+                    // settled, the nav graph is held back — on a first
+                    // install the graph's first route is the Content
+                    // Preference (Region) screen, and composing the graph
+                    // under the dialog is exactly the overlap the audit
+                    // caught: disclaimer text colliding with the
+                    // preference cards, "I understand" over "Done"/"Skip".
+                    // The branded loading screen is the only backdrop
+                    // while the dialog is up, so nothing can collide
+                    // with it; accepting the disclaimer releases the
+                    // graph, which then opens on Region as before. A
+                    // null stored version (not yet read) is not
+                    // unsettled — the graph opens as it does today, and
+                    // the dialog lands when the read arrives — so a
+                    // store that cannot answer never becomes a wall.
+                    val disclaimerUnsettled = disclaimerSeenVersion != null &&
+                        disclaimerSeenVersion != effectiveDisclaimer.version
                     when {
                         // The notice outranks routing — but it must not outrank the address field.
                         // The inventory (M-MON-06) asks for navigation blocked "except Settings",
@@ -321,7 +340,7 @@ class MainActivity : ComponentActivity() {
                         // a bare spinner on black, which on a slow first install
                         // reads as a dead app. Branded loading screen instead:
                         // the mark, the name, the spinner.
-                        destination == null -> Column(
+                        destination == null || disclaimerUnsettled -> Column(
                             modifier = Modifier.fillMaxSize(),
                             verticalArrangement = Arrangement.Center,
                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -351,6 +370,18 @@ class MainActivity : ComponentActivity() {
                             theme = operatorTheme,
                             autoplayPreviews = autoplayPreviews,
                             kidsMode = kidsModeActive,
+                            // First-run (video audit #11): leaving Home
+                            // closes the onboarding window, so the Pick 3
+                            // card can only ever appear on the first Home
+                            // visit. Persisted, so a relaunch after leaving
+                            // Home keeps the window closed.
+                            onLeaveHome = {
+                                activityScope.launch {
+                                    runCatching {
+                                        serverSettingsRepository.setOnboardingSeen(true)
+                                    }
+                                }
+                            },
                             openRequest = pendingLocalOpen,
                             onOpenConsumed = { pendingLocalOpen = null },
                             deepLinkRequest = pendingDeepLink,

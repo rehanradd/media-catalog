@@ -8,9 +8,14 @@ import org.junit.Test
 
 /**
  * Gap A6: the "Pick 3 you like" card shows only to a brand-new viewer, and
- * only once a rail can offer three real titles. B5: and only after the
- * first browse or play — a viewer who has not looked at anything yet never
- * sees the card, however full the rails are.
+ * only once a rail can offer three real titles. First-run (video audit
+ * #11, Nov 2026): and only while the onboarding window is still open —
+ * the viewer has not left Home yet. The old B5 rule made the card wait
+ * for the first browse or play, so it could only ever appear AFTER the
+ * viewer had left Home and come back — the mid-session pop-in the audit
+ * caught, right after Live TV. The wait is gone: the card offers itself
+ * on the first Home visit, as soon as the rails can offer three titles,
+ * and leaving Home retires it unshown rather than deferring it.
  *
  * Pick 3 (home review, Nov 2026): the picks never repeat the hero — the
  * hero shows its section's first six slides, so the candidates are the
@@ -42,7 +47,7 @@ class PickThreeTest {
         pickThreeDone: Boolean = false,
         pickThreeShown: Boolean = false,
         pickThreeShownThisVisit: Boolean = false,
-        firstBrowseDone: Boolean = true,
+        onboardingSeen: Boolean = false,
     ) = HomeUiState(
         sections = sections,
         continueWatching = continueWatching,
@@ -50,11 +55,11 @@ class PickThreeTest {
         pickThreeDone = pickThreeDone,
         pickThreeShown = pickThreeShown,
         pickThreeShownThisVisit = pickThreeShownThisVisit,
-        firstBrowseDone = firstBrowseDone,
+        onboardingSeen = onboardingSeen,
     )
 
     @Test
-    fun `viewer who has browsed once with a full rail sees the card with the three after the hero`() {
+    fun `brand-new viewer on the first Home visit sees the card with the three after the hero`() {
         val s = state()
 
         assertTrue(s.showPickThree)
@@ -84,10 +89,25 @@ class PickThreeTest {
     }
 
     @Test
-    fun `card waits until the first browse or play`() {
-        val s = state(firstBrowseDone = false)
+    fun `card needs no browse first — it offers itself on the first Home visit`() {
+        // Video audit #11: the old B5 wait-for-browse is what pushed the
+        // card to mid-session — it could only appear after the viewer had
+        // left Home and come back. A brand-new viewer with full rails sees
+        // it at onboarding, before any browse or play.
+        val s = state()
 
-        // The titles are ready — the card is gated, not empty.
+        assertEquals(listOf(7, 8, 9), s.pickThreeCandidates.map { it.id })
+        assertTrue(s.showPickThree)
+    }
+
+    @Test
+    fun `leaving Home closes the onboarding window so the card never interrupts later`() {
+        // Video audit #11, the exact video shape: the viewer left Home
+        // for Live TV and came back to full rails. The card must not pop
+        // in on the return — the window closed when they left, even
+        // though the card never appeared on the first visit.
+        val s = state(onboardingSeen = true)
+
         assertEquals(listOf(7, 8, 9), s.pickThreeCandidates.map { it.id })
         assertFalse(s.showPickThree)
     }

@@ -96,15 +96,25 @@ object UserWords {
      * back off to the previous word boundary and append "…" — so the cut
      * lands between words. Returns the input unchanged when the cut is
      * already at a boundary, or when there is no earlier boundary to back
-     * off to (one long word fills the line). Pure string work, so the
-     * boundary rule is assertable without a layout.
+     * off to (one long word fills the line). Video audit #11: also returns
+     * the input unchanged when backing off would leave a bare stub — a
+     * single short word ("The…", "A…") — because a stub says less than
+     * the mid-word cut it replaced ("The Icebl…"). A kept fragment of two
+     * or more words, or one word of eight or more letters, is a real
+     * fragment and still trims. Pure string work, so the boundary rule is
+     * assertable without a layout.
      */
     fun trimToWordBoundary(text: String, cutIndex: Int): String {
         if (cutIndex <= 0 || cutIndex >= text.length) return text
         if (text[cutIndex].isWhitespace() || text[cutIndex - 1].isWhitespace()) return text
         val boundary = text.lastIndexOf(' ', cutIndex - 1)
         if (boundary <= 0) return text
-        return text.substring(0, boundary) + "…"
+        val kept = text.substring(0, boundary)
+        // A stub is a lone short word: "The", "A", "It" — the cut backed
+        // off past the only word that fit. Keep the layout's own cut
+        // instead; the mid-word ellipsis shows strictly more of the title.
+        if (!kept.contains(' ') && kept.length < 8) return text
+        return "$kept…"
     }
 
     /**

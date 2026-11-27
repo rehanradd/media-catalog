@@ -80,7 +80,6 @@ class PickThreeVisitTest {
                 items = (1..9).map { Post(id = it, title = "Title $it") },
             ),
         ),
-        firstBrowseDone = true,
     )
 
     private fun setHome(

@@ -360,11 +360,15 @@ data class HomeUiState(
      */
     val pickThreeShownThisVisit: Boolean = false,
     /**
-     * B5: true once the viewer has opened a title detail or started a
-     * playback — the first browse or play. The Pick 3 card waits for it, so
-     * first open is the catalog, not a chore.
+     * First-run (video audit #11, Nov 2026): true once the viewer has left
+     * Home for the first time. The Pick 3 card is an onboarding offer — it
+     * may only appear while this is false. Leaving Home closes the
+     * onboarding window for good: a card that never appeared on the first
+     * Home visit (slow rails, viewer left early) is gone, not deferred,
+     * because a deferred card is the mid-session interruption the audit
+     * caught — it popped up only after the viewer came back from Live TV.
      */
-    val firstBrowseDone: Boolean = false,
+    val onboardingSeen: Boolean = false,
     /**
      * The browse jump-off chips from GET /api/v1/facets (genres, languages,
      * industries, types, each with the count its tap delivers). Null until
@@ -449,9 +453,15 @@ data class HomeUiState(
     /**
      * Gap A6: the card shows only to a brand-new viewer — nothing
      * continued, nothing saved, card not done — and only once a rail can
-     * offer three real titles to pick from. B5: and only after the first
-     * browse or play, so the card never greets a viewer who has not looked
-     * at anything yet — first open is the catalog, the card comes later.
+     * offer three real titles to pick from. First-run (video audit #11,
+     * Nov 2026): and only while the onboarding window is still open — the
+     * viewer has not left Home yet ([onboardingSeen] false). The old B5
+     * rule made the card wait for the first browse or play, so it could
+     * only ever appear AFTER the viewer had left Home and come back —
+     * the mid-session pop-in the audit caught, right after Live TV. The
+     * wait is gone: the card offers itself on the first Home visit, as
+     * soon as the rails can offer three titles, and leaving Home retires
+     * it unshown rather than deferring it.
      * Pick 3 (fixed 2026-11-15): and only once — but the once is a whole
      * Home visit. The visit latch ([pickThreeShownThisVisit]) keeps the
      * card up while it is showing, even after the persisted shown flag
@@ -462,8 +472,8 @@ data class HomeUiState(
      * flag then keeps the card away.
      */
     val showPickThree: Boolean
-        get() = !kidsMode && !pickThreeDone && (pickThreeShownThisVisit ||
-            (!pickThreeShown && firstBrowseDone && continueWatching.isEmpty() &&
+        get() = !kidsMode && !pickThreeDone && !onboardingSeen && (pickThreeShownThisVisit ||
+            (!pickThreeShown && continueWatching.isEmpty() &&
                 favoriteIds.isEmpty() && pickThreeCandidates.size >= 3))
 
     /**
@@ -805,7 +815,7 @@ class HomeViewModel @Inject constructor(
         observeTrialNote()
         observePickThreeDone()
         observePickThreeShown()
-        observeFirstBrowseDone()
+        observeOnboardingSeen()
         observeKidsMode()
         _uiState.update { it.copy(sections = initialHomeSections() + regionalHomeSections()) }
         // Feel-instant S8: warm the connection at Home first paint, once
@@ -1121,13 +1131,14 @@ class HomeViewModel @Inject constructor(
     }
 
     /**
-     * B5: the first browse/play flag, persisted so one browse unlocks the
-     * Pick 3 card for good. Same shape as [observePickThreeDone].
+     * First-run (video audit #11, Nov 2026): the onboarding window, from
+     * DataStore — true once the viewer has left Home for the first time.
+     * Same shape as [observePickThreeDone].
      */
-    private fun observeFirstBrowseDone() {
+    private fun observeOnboardingSeen() {
         viewModelScope.launch {
-            settingsRepository.firstBrowseDone.collect { done ->
-                _uiState.update { it.copy(firstBrowseDone = done) }
+            settingsRepository.onboardingSeen.collect { seen ->
+                _uiState.update { it.copy(onboardingSeen = seen) }
             }
         }
     }

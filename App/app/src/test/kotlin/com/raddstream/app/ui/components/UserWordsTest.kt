@@ -123,6 +123,37 @@ class UserWordsTest {
     }
 
     @Test
+    fun trimToWordBoundaryNeverLeavesABareStub() {
+        // Video audit #11: the Pick 3 card's first title rendered as a
+        // bare "The…" — the layout cut inside "Iceblade" and the trim
+        // backed off past the only word that fit. A lone short word is a
+        // stub, not a fragment: the layout's own mid-word cut stays, and
+        // shows strictly more of the title.
+        val title = "The Iceblade Sorcerer Shall Rule the World"
+        assertEquals(title, UserWords.trimToWordBoundary(title, 8))
+        assertEquals("A Beautiful Mind", UserWords.trimToWordBoundary("A Beautiful Mind", 5))
+        assertEquals("It Follows", UserWords.trimToWordBoundary("It Follows", 5))
+    }
+
+    @Test
+    fun trimToWordBoundaryStillTrimsARealFragment() {
+        // The M2 rule survives the stub guard: two or more words, or one
+        // long word, still trim to a clean boundary.
+        assertEquals(
+            "Strange New…",
+            UserWords.trimToWordBoundary("Strange New World", 13),
+        )
+        assertEquals(
+            "Stranger…",
+            UserWords.trimToWordBoundary("Stranger Things", 10),
+        )
+        assertEquals(
+            "My Fair…",
+            UserWords.trimToWordBoundary("My Fair Lady", 10),
+        )
+    }
+
+    @Test
     fun detailTitleStripsYearLanguageAndTypeSuffix() {
         // The live post 21013 shape: the clean title carries all three
         // suffixes the meta line already states.

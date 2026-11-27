@@ -451,9 +451,38 @@ fun RaddStreamNavGraph(
      *  app it was — the flag changes nothing. */
     kidsMode: Boolean = false,
     kidsLockViewModel: KidsLockViewModel = hiltViewModel(),
+    /**
+     * First-run (video audit #11, Nov 2026): fired once, the first time
+     * the viewer navigates away from Home. Leaving Home closes the
+     * first-run onboarding window (the Pick 3 card may only appear while
+     * it is open), so this is the signal that retires the card unshown.
+     * The initial destination never fires it — a first install starts on
+     * Region or Home, and Region → Home is still onboarding — and a
+     * rotation never fires it either, because the route does not change.
+     * The caller persists the flag; this graph only reports the move.
+     */
+    onLeaveHome: () -> Unit = {},
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
+
+    // First-run (video audit #11): leaving Home ends onboarding. The
+    // previous route is tracked, not just the current one — Region →
+    // Home is still onboarding, and only Home → anything else closes
+    // the window. The callback fires once per graph lifetime (the
+    // persisted flag is the memory across launches; a later return to
+    // Home cannot reopen the window).
+    var previousRoute by remember { mutableStateOf<String?>(null) }
+    var leaveHomeReported by remember { mutableStateOf(false) }
+    LaunchedEffect(currentRoute) {
+        if (!leaveHomeReported && previousRoute == Screen.Home.route &&
+            currentRoute != Screen.Home.route
+        ) {
+            leaveHomeReported = true
+            onLeaveHome()
+        }
+        previousRoute = currentRoute
+    }
 
     // APP-13: record navigation for the debug-only diagnostics timeline.
     // The record call itself no-ops in release; the listener costs one

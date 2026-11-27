@@ -407,14 +407,37 @@ class ServerSettingsRepository @Inject constructor(
     }
 
     /**
+     * First-run (video audit #11, Nov 2026): true once the viewer has left
+     * Home for the first time — navigated to any other destination. The
+     * first-run "Pick 3 you like" card is an onboarding offer, so it may
+     * only appear while this is false: once the viewer has moved past the
+     * first Home screen, the onboarding window is closed and the card must
+     * never interrupt a later visit or a later launch. Set from the nav
+     * graph's leave-Home callback, never from Home alone, so a rotation
+     * (same route) or a slow first load (still on Home) cannot close the
+     * window early. Same shape as [pickThreeDone].
+     */
+    val onboardingSeen: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[ONBOARDING_SEEN_KEY] ?: false
+    }
+
+    suspend fun setOnboardingSeen(seen: Boolean) {
+        dataStore.edit { preferences ->
+            if (seen) preferences[ONBOARDING_SEEN_KEY] = true
+            else preferences.remove(ONBOARDING_SEEN_KEY)
+        }
+    }
+
+    /**
      * B5: true once this viewer has opened a title detail or started a
      * playback — the first browse or play. The first-run "Pick 3 you like"
-     * card waits for it, so a brand-new viewer meets the catalog first and
-     * the card only after they have looked at something. Persisted, so one
-     * browse unlocks the card for good; the card's own done flag still
-     * retires it afterwards. Set from the detail and player choke points
-     * (every detail open, every bundle start), never from Home alone, so a
-     * first browse from Search or a first play from Live TV counts too.
+     * card used to wait for it, so a brand-new viewer met the catalog
+     * first and the card only after they had looked at something — but
+     * that wait is exactly what pushed the card to mid-session (video
+     * audit #11: it appeared only after the viewer came back from Live
+     * TV). The card no longer reads this flag; it is kept as the
+     * first-browse signal itself, written from the detail and player
+     * choke points. Persisted, so one browse records it for good.
      */
     val firstBrowseDone: Flow<Boolean> = dataStore.data.map { preferences ->
         preferences[FIRST_BROWSE_DONE_KEY] ?: false
@@ -1248,6 +1271,7 @@ class ServerSettingsRepository @Inject constructor(
         private val HOME_CACHE_JSON_KEY = stringPreferencesKey("home_cache_json")
         private val PICK_THREE_DONE_KEY = booleanPreferencesKey("pick_three_done")
         private val PICK_THREE_SHOWN_KEY = booleanPreferencesKey("pick_three_shown")
+        private val ONBOARDING_SEEN_KEY = booleanPreferencesKey("onboarding_seen")
         private val FIRST_BROWSE_DONE_KEY = booleanPreferencesKey("first_browse_done")
         private val AUTOPLAY_NEXT_KEY = booleanPreferencesKey("player_autoplay_next")
         private val AUTO_PIP_KEY = booleanPreferencesKey("player_auto_pip")

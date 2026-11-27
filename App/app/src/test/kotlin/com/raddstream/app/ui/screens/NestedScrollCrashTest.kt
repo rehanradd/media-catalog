@@ -141,12 +141,10 @@ class NestedScrollCrashTest {
         sections: List<HomeSection>,
         continueWatching: List<ResumeTile> = emptyList(),
         pickThreeDone: Boolean = true,
-        firstBrowseDone: Boolean = true,
     ) = HomeUiState(
         sections = sections,
         continueWatching = continueWatching,
         pickThreeDone = pickThreeDone,
-        firstBrowseDone = firstBrowseDone,
         facets = FacetsResponse(
             genres = listOf(FacetEntry("action", "Action", 42)),
             languages = listOf(FacetEntry("hindi", "Hindi", 120)),
