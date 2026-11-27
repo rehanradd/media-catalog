@@ -457,14 +457,17 @@ internal fun LiveTvChannelGrid(
         }
     }
     Box(modifier = modifier.fillMaxSize()) {
+        // Video-audit #24/#36 (Nov 2026): the columns are the shared
+        // [CatalogGridColumns] rule — [CatalogGridRuleTest] owns the one
+        // column rule, and a Live-TV-local adaptive rule is a
+        // second answer to how many posters fit. Readability comes from
+        // the card, not the column count: two-line names at 12sp read
+        // "Al Jazeera" / "English" where one line cut to "Al Jazeer…",
+        // and the meta is one short line ("News · Urdu").
+        // Kept above the call on purpose: CatalogGridRuleTest only reads
+        // the 220 chars after LazyVerticalGrid(, so the columns argument
+        // must follow the call directly.
         LazyVerticalGrid(
-            // Video-audit #24/#36 (Nov 2026): the columns are the shared
-            // [CatalogGridColumns] rule — [CatalogGridRuleTest] owns the one
-            // column rule, and a Live-TV-local adaptive rule is a
-            // second answer to how many posters fit. Readability comes from
-            // the card, not the column count: two-line names at 12sp read
-            // "Al Jazeera" / "English" where one line cut to "Al Jazeer…",
-            // and the meta is one short line ("News · Urdu").
             columns = CatalogGridColumns,
             state = gridState,
             modifier = Modifier.fillMaxSize().testTag("liveTv_grid"),
