@@ -94,6 +94,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -592,6 +593,9 @@ fun SearchScreen(
                                             suggestion.yearLabel?.let {
                                                 "${suggestion.title} ($it)"
                                             } ?: suggestion.title,
+                                            // Design direction (Nov 2026): chip
+                                            // labels read one step smaller.
+                                            style = MaterialTheme.typography.labelMedium,
                                         )
                                     },
                                 )
@@ -772,7 +776,10 @@ internal fun SearchField(
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .semantics { contentDescription = label },
         singleLine = true,
-        placeholder = { Text(label) },
+        // Design direction (Nov 2026): smaller text everywhere — the field
+        // reads at bodyMedium, not the TextField default bodyLarge.
+        textStyle = MaterialTheme.typography.bodyMedium,
+        placeholder = { Text(label, style = MaterialTheme.typography.bodyMedium) },
         leadingIcon = { Icon(painterResource(R.drawable.ic_tab_search), contentDescription = null) },
         trailingIcon = {
             AnimatedContent(
@@ -971,19 +978,19 @@ internal fun CategoryTabs(
             Tab(
                 selected = selectedTab == SearchCategoryTab.GENRE,
                 onClick = { selectedTab = SearchCategoryTab.GENRE },
-                text = { Text("Genre") },
+                text = { Text("Genre", style = MaterialTheme.typography.labelMedium) },
                 modifier = Modifier.testTag(CategoryTabGenreTag),
             )
             Tab(
                 selected = selectedTab == SearchCategoryTab.LANGUAGE,
                 onClick = { selectedTab = SearchCategoryTab.LANGUAGE },
-                text = { Text("Language") },
+                text = { Text("Language", style = MaterialTheme.typography.labelMedium) },
                 modifier = Modifier.testTag(CategoryTabLanguageTag),
             )
             Tab(
                 selected = selectedTab == SearchCategoryTab.YEAR,
                 onClick = { selectedTab = SearchCategoryTab.YEAR },
-                text = { Text("Year") },
+                text = { Text("Year", style = MaterialTheme.typography.labelMedium) },
                 modifier = Modifier.testTag(CategoryTabYearTag),
             )
         }
@@ -1032,7 +1039,7 @@ internal fun CategoryTabs(
                                     onClick = {
                                         onSelectGenre(if (state.filters.genre == genre) GenreFilter.ALL else genre)
                                     },
-                                    label = { Text(genre.label) },
+                                    label = { Text(genre.label, style = MaterialTheme.typography.labelMedium) },
                                 )
                             }
                         }
@@ -1048,7 +1055,7 @@ internal fun CategoryTabs(
                                     onClick = {
                                         onSelectLanguage(if (state.filters.language == language) LanguageFilter.ALL else language)
                                     },
-                                    label = { Text(displayLanguageName(language.label)) },
+                                    label = { Text(displayLanguageName(language.label), style = MaterialTheme.typography.labelMedium) },
                                 )
                             }
                         }
@@ -1069,7 +1076,7 @@ internal fun CategoryTabs(
                                         if (selected) onSetYearRange(null, null)
                                         else onSetYearRange(range.first, range.second)
                                     },
-                                    label = { Text(label) },
+                                    label = { Text(label, style = MaterialTheme.typography.labelMedium) },
                                 )
                             }
                         }
@@ -1166,7 +1173,7 @@ private fun DirectVideoRow(url: String, title: String, onPlay: () -> Unit) {
         Column(Modifier.weight(1f)) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1180,7 +1187,7 @@ private fun DirectVideoRow(url: String, title: String, onPlay: () -> Unit) {
             )
         }
         Button(onClick = onPlay, shape = RaddTokens.Shape.Pill) {
-            Text("Play")
+            Text("Play", style = MaterialTheme.typography.labelMedium)
         }
     }
 }
@@ -1284,6 +1291,21 @@ internal fun FilterRail(
             itemStart < start -> listState.animateScrollBy((itemStart - start).toFloat())
             itemEnd > end -> listState.animateScrollBy((itemEnd - end).toFloat())
         }
+        // Video audit #33 (Nov 2026): the reveal scroll is programmatic,
+        // so the snap fling behaviour never runs for it — it can leave
+        // the row resting with the leading chip as a one-letter sliver
+        // ("s" of Series). Settle the leading edge on a chip start: if
+        // the first visible chip is cut at the start, scroll just past
+        // it so the next chip sits flush. The selected chip stays fully
+        // visible — it sits at or after the second chip's start, which
+        // is at least the scrolled distance from the edge.
+        withFrameNanos { }
+        val settled = listState.layoutInfo
+        val first = settled.visibleItemsInfo.firstOrNull()
+        if (first != null && first.offset < settled.viewportStartOffset) {
+            val cut = settled.viewportStartOffset - first.offset
+            listState.animateScrollBy((first.size - cut).toFloat())
+        }
     }
     val activeFilterCount = listOf(
         state.filters.industry != IndustryFilter.ALL,
@@ -1360,7 +1382,7 @@ internal fun FilterRail(
                 ) {
                     // S8 (round 2): the house sliders glyph, not the Material default Tune icon.
                     Icon(painterResource(R.drawable.ic_action_sliders), contentDescription = null, modifier = Modifier.size(18.dp))
-                    Text(filtersLabel)
+                    Text(filtersLabel, style = MaterialTheme.typography.labelMedium)
                 }
             },
             // P2-chip2027: the 24dp pill stays — this chip is an action
@@ -1409,6 +1431,9 @@ internal fun FilterRail(
                         Text(
                             label,
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                            // Design direction (Nov 2026): chip labels
+                            // read one step smaller.
+                            style = MaterialTheme.typography.labelMedium,
                         )
                     },
                     // P2-chip2027: no explicit shape — these are filter
@@ -1441,7 +1466,7 @@ internal fun FilterRail(
                 RaddChip(
                     selected = true,
                     onClick = { chipTick(); active.onClear() },
-                    label = { Text(active.label) },
+                    label = { Text(active.label, style = MaterialTheme.typography.labelMedium) },
                     trailingIcon = {
                         Icon(
                             painterResource(R.drawable.ic_action_close),
@@ -1492,6 +1517,7 @@ internal fun RecentsList(
         SectionHeader(
             title = "Recent searches",
             modifier = Modifier.padding(top = 8.dp),
+            titleStyle = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
         )
         recents.forEach { recent ->
             Row(
@@ -1559,6 +1585,7 @@ internal fun LocalSearchResults(
         SectionHeader(
             title = "On this device",
             modifier = Modifier.padding(top = 8.dp),
+            titleStyle = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
         )
         Spacer(Modifier.height(8.dp))
         results.forEach { result ->
@@ -1614,6 +1641,17 @@ internal fun LocalSearchResults(
 internal const val SearchDiscoverySkeletonTag = "search-discovery-skeleton"
 
 /**
+ * Design direction (Nov 2026): one poster-card size on the Search screen —
+ * the rail and the 3-up grids share a width, so a card never changes size
+ * between rows. The width is the 3-up grid's cell: the screen minus the
+ * outer 16dp gutters and the two 12dp gaps, in three. The Trending rail
+ * used to be the 120dp rail width while the grids were this cell — the same
+ * poster at two sizes on one screen. Pure, so a test can pin it without a
+ * composition.
+ */
+internal fun searchPosterCardWidthDp(screenWidthDp: Int): Int = (screenWidthDp - 56) / 3
+
+/**
  * Search review (Nov 2026), fix 4: the discovery page's loading stand-in —
  * a Continue Watching row skeleton, a "Trending now" rail skeleton and a
  * "For you" grid skeleton in the same slots the real sections take, so
@@ -1627,6 +1665,9 @@ internal const val SearchDiscoverySkeletonTag = "search-discovery-skeleton"
  */
 @Composable
 internal fun SearchDiscoverySkeleton(modifier: Modifier = Modifier) {
+    // Design direction (Nov 2026): the skeleton cells are the settled
+    // cards' width, so nothing reflows when the data lands.
+    val cardWidthDp = searchPosterCardWidthDp(LocalConfiguration.current.screenWidthDp)
     Column(
         modifier
             .fillMaxSize()
@@ -1679,7 +1720,7 @@ internal fun SearchDiscoverySkeleton(modifier: Modifier = Modifier) {
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             repeat(4) {
-                PosterCellSkeleton(Modifier.width(CardGeometry.RAIL_CARD_WIDTH_DP.dp))
+                PosterCellSkeleton(Modifier.width(cardWidthDp.dp))
             }
         }
         Box(Modifier.fillMaxWidth().padding(top = 20.dp).padding(vertical = 8.dp)) {
@@ -1695,7 +1736,7 @@ internal fun SearchDiscoverySkeleton(modifier: Modifier = Modifier) {
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 repeat(3) {
-                    PosterCellSkeleton(Modifier.weight(1f))
+                    PosterCellSkeleton(Modifier.width(cardWidthDp.dp))
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -1725,6 +1766,9 @@ internal fun SearchDiscoveryContent(
     // instead; the hint waits for the settle, so it only ever means "the
     // catalog really has nothing to show". A section that already has data
     // (recents are local and land first) shows its data, never the skeleton.
+    // Design direction (Nov 2026): one poster-card size on this screen —
+    // the rail and the grids share [searchPosterCardWidthDp].
+    val cardWidthDp = searchPosterCardWidthDp(LocalConfiguration.current.screenWidthDp)
     if (state.discoveryLoading && state.visibleContinueWatching.isEmpty() && state.visibleTrending.isEmpty() && state.visibleRecents.isEmpty() && state.visibleRecommended.isEmpty()) {
         SearchDiscoverySkeleton(modifier)
         return
@@ -1752,13 +1796,17 @@ internal fun SearchDiscoveryContent(
                 title = "Trending now",
                 modifier = Modifier.padding(top = 16.dp),
                 action = { SeeAllButton(onClick = onSeeAllTrending, tag = SeeAllTrendingTag) },
+                titleStyle = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
             )
             Spacer(Modifier.height(8.dp))
             // The outer column already pads 16dp: the rail starts at 0 and
             // keeps 16dp at the end, so the last card never sits flush
             // against the screen edge when fully scrolled.
-            MediaRail(items = state.visibleTrending, key = { it.id }, contentPadding = PaddingValues(start = 0.dp, end = 16.dp)) { post ->
-                PosterCard(post = post, onClick = { onPostClick(post) })
+            MediaRail(items = state.visibleTrending, key = { it.id }, contentPadding = PaddingValues(start = 0.dp, end = 16.dp), itemWidthDp = cardWidthDp) { post ->
+                // Design direction (Nov 2026): a card shows poster + title
+                // + rating only — the compact meta line drops the type word
+                // ("2024 · ★ 8.6", no "· Series").
+                PosterCard(post = post, onClick = { onPostClick(post) }, compactMeta = true)
             }
         }
         if (state.visibleRecommended.isNotEmpty()) {
@@ -1766,6 +1814,7 @@ internal fun SearchDiscoveryContent(
                 title = "For you",
                 modifier = Modifier.padding(top = 20.dp),
                 action = { SeeAllButton(onClick = onSeeAllRecommended, tag = SeeAllRecommendedTag) },
+                titleStyle = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
             )
             Spacer(Modifier.height(8.dp))
             state.visibleRecommended.chunked(3).forEach { trio ->
@@ -1774,11 +1823,11 @@ internal fun SearchDiscoveryContent(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     trio.forEach { post ->
-                        PosterCard(post = post, onClick = { onPostClick(post) }, modifier = Modifier.weight(1f))
+                        PosterCard(post = post, onClick = { onPostClick(post) }, modifier = Modifier.width(cardWidthDp.dp), compactMeta = true)
                     }
                     // An incomplete last row keeps the grid's columns —
                     // spacers hold the width the missing cards would take.
-                    repeat(3 - trio.size) { Spacer(Modifier.weight(1f)) }
+                    repeat(3 - trio.size) { Spacer(Modifier.width(cardWidthDp.dp)) }
                 }
                 Spacer(Modifier.height(12.dp))
             }
@@ -1799,7 +1848,7 @@ internal fun SearchDiscoveryContent(
             // bare hint.
             Text(
                 text = "Search for a show, movie, or genre",
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
@@ -1823,7 +1872,7 @@ internal fun SearchDiscoveryContent(
                         colors = raddFilterChipColors(),
                         selected = false,
                         onClick = { onSelectGenre(genre) },
-                        label = { Text(genre.label) },
+                        label = { Text(genre.label, style = MaterialTheme.typography.labelMedium) },
                     )
                 }
             }
@@ -1849,6 +1898,7 @@ internal fun SearchContinueWatchingSection(
         SectionHeader(
             title = "Continue watching",
             modifier = Modifier.padding(top = 16.dp),
+            titleStyle = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
         )
         Spacer(Modifier.height(8.dp))
         tiles.take(3).forEach { tile ->
@@ -2097,7 +2147,7 @@ internal fun SearchNoResultsContent(
         Spacer(Modifier.height(16.dp))
         Text(
             text = "No matches",
-            style = MaterialTheme.typography.headlineSmall,
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
@@ -2150,14 +2200,14 @@ internal fun SearchNoResultsContent(
                 onClick = { onQueryChanged("") },
                 modifier = Modifier.heightIn(min = 48.dp),
             ) {
-                Text("Search another title")
+                Text("Search another title", style = MaterialTheme.typography.labelMedium)
             }
             if (state.hasActiveFilters) {
                 OutlinedButton(
                     onClick = onResetFilters,
                     modifier = Modifier.heightIn(min = 48.dp),
                 ) {
-                    Text("Clear filters")
+                    Text("Clear filters", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -2166,9 +2216,10 @@ internal fun SearchNoResultsContent(
                 title = "Trending now",
                 modifier = Modifier.padding(top = 24.dp),
                 action = { SeeAllButton(onClick = onSeeAllTrending, tag = SeeAllTrendingTag) },
+                titleStyle = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
             )
-            MediaRail(items = state.visibleTrending, key = { it.id }, contentPadding = PaddingValues(start = 0.dp, end = 16.dp)) { post ->
-                PosterCard(post = post, onClick = { onPostClick(post) })
+            MediaRail(items = state.visibleTrending, key = { it.id }, contentPadding = PaddingValues(start = 0.dp, end = 16.dp), itemWidthDp = cardWidthDp) { post ->
+                PosterCard(post = post, onClick = { onPostClick(post) }, compactMeta = true)
             }
         } else {
             Spacer(Modifier.height(8.dp))
@@ -2176,7 +2227,7 @@ internal fun SearchNoResultsContent(
                 onClick = onSeeAllTrending,
                 modifier = Modifier.heightIn(min = 48.dp).testTag(NoResultsBrowseTrendingTag),
             ) {
-                Text("Browse trending")
+                Text("Browse trending", style = MaterialTheme.typography.labelMedium)
             }
         }
         Spacer(Modifier.height(24.dp))
@@ -2216,6 +2267,9 @@ internal fun SearchContent(
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
+    // Design direction (Nov 2026): one poster-card size on this screen —
+    // the rail and the 3-up grids share [searchPosterCardWidthDp].
+    val cardWidthDp = searchPosterCardWidthDp(LocalConfiguration.current.screenWidthDp)
     // Session 121 (P-12): scrolling the results dismisses the keyboard — the open
     // keyboard covering the top row was the other half of the complaint (the first
     // half was submit, handled at the field). Hoisted here so the list state is
@@ -2317,7 +2371,7 @@ internal fun SearchContent(
             // S8 (round 2): the house search glyph, not the Material default Search icon.
             icon = { Icon(painterResource(R.drawable.ic_tab_search), contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp)) },
             action = {
-                OutlinedButton(onClick = onShowCloseMatches) { Text("Show close matches") }
+                OutlinedButton(onClick = onShowCloseMatches) { Text("Show close matches", style = MaterialTheme.typography.labelMedium) }
             },
         )
         else -> {
@@ -2388,6 +2442,7 @@ internal fun SearchContent(
                         SectionHeader(
                             title = group.label,
                             modifier = Modifier.padding(horizontal = 0.dp),
+                            titleStyle = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                         )
                     }
                     // P0-6 (2027 Home fix): results are a scannable vertical grid, three posters
@@ -2445,7 +2500,7 @@ internal fun SearchContent(
                                         // scopes come from the NavHost (via
                                         // SearchContent params); the infra helper
                                         // no-ops when either is null.
-                                        val posterModifier = Modifier.weight(1f).posterSharedElement(
+                                        val posterModifier = Modifier.width(cardWidthDp.dp).posterSharedElement(
                                             key = "poster-${post.workId ?: post.id}",
                                             sharedTransitionScope = sharedTransitionScope,
                                             animatedVisibilityScope = animatedVisibilityScope,
@@ -2456,12 +2511,13 @@ internal fun SearchContent(
                                             modifier = posterModifier,
                                             titleMaxLines = 2,
                                             suppressBareTypeMeta = true,
+                                            compactMeta = true,
                                         )
                                     }
                                     // A short last row holds its width: empty
                                     // cells keep the row's posters at grid
                                     // width instead of stretching to fill it.
-                                    repeat(3 - trio.size) { Spacer(Modifier.weight(1f)) }
+                                    repeat(3 - trio.size) { Spacer(Modifier.width(cardWidthDp.dp)) }
                                 }
                             }
                             Spacer(Modifier.height(12.dp))
@@ -2631,7 +2687,7 @@ internal fun FilterSheetBody(
                 Column(Modifier.weight(1f)) {
                     Text(
                         "Complete series only",
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.clearAndSetSemantics { },
                     )
@@ -2717,7 +2773,7 @@ internal fun FilterSheetBody(
                         colors = raddFilterChipColors(),
                         selected = state.filters.includedOnly,
                         onClick = { onSetIncludedOnly(!state.filters.includedOnly) },
-                        label = { Text("Included in my plan") },
+                        label = { Text("Included in my plan", style = MaterialTheme.typography.labelMedium) },
                         // P2-chip2027: the selected check, as on every
                         // other selected filter chip.
                         leadingIcon = if (state.filters.includedOnly) ({ SelectedCheckIcon() }) else null,
@@ -2773,7 +2829,26 @@ internal fun FilterSheetBody(
             enabled = state.hasActiveFilters && savedFilters.size < MaxSavedFilters,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(top = 8.dp),
         ) {
-            Text("Save this filter")
+            Text("Save this filter", style = MaterialTheme.typography.labelMedium)
+        }
+        // Video audit #37 (Nov 2026): the greyed-out Save said nothing
+        // about why — the viewer could not tell "nothing to save" from
+        // "no room left". The reason rides under the button, only while
+        // it is disabled, in the words the viewer needs.
+        if (!state.hasActiveFilters) {
+            Text(
+                "Choose a filter first — there is nothing to save yet.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            )
+        } else if (savedFilters.size >= MaxSavedFilters) {
+            Text(
+                "You already saved $MaxSavedFilters filters. Remove one to save another.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            )
         }
         Row(
             modifier = Modifier
@@ -2789,14 +2864,14 @@ internal fun FilterSheetBody(
                 onClick = onResetFilters,
                 modifier = Modifier.heightIn(min = 48.dp),
             ) {
-                Text("Reset")
+                Text("Reset", style = MaterialTheme.typography.labelMedium)
             }
             Button(
                 shape = RaddTokens.Shape.Pill,
                 onClick = onDone,
                 modifier = Modifier.heightIn(min = 48.dp),
             ) {
-                Text("Apply")
+                Text("Apply", style = MaterialTheme.typography.labelMedium)
             }
         }
     }
@@ -2842,7 +2917,7 @@ internal fun SortOptionRow(
     ) {
         RadioButton(selected = selected, onClick = null)
         Spacer(Modifier.width(8.dp))
-        Text(sort.label)
+        Text(sort.label, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -2879,7 +2954,7 @@ private fun <T> FacetChips(
                 colors = raddFilterChipColors(),
                 selected = isSelected(option),
                 onClick = { onSelect(option) },
-                label = { Text(label(option)) },
+                label = { Text(label(option), style = MaterialTheme.typography.labelMedium) },
                 // P2-chip2027: the selected check — the M3 Expressive
                 // mark, the same one RaddChip shows.
                 leadingIcon = if (isSelected(option)) ({ SelectedCheckIcon() }) else null,
@@ -2914,7 +2989,7 @@ private fun FacetHeader(title: String, @DrawableRes icon: Int?) {
             )
             Spacer(Modifier.width(8.dp))
         }
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+        Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 

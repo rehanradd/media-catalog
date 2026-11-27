@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -272,5 +273,36 @@ class SearchFilterRailTest {
         }
         compose.onNodeWithTag("${ActiveFilterChipTagPrefix}genre").assertDoesNotExist()
         compose.onNodeWithTag("${ActiveFilterChipTagPrefix}sort").assertDoesNotExist()
+    }
+
+    @Test
+    fun selectedChipRevealLeavesNoSliverAtTheStartEdge() {
+        // Video audit #33 (Nov 2026): with Anime selected, the reveal
+        // scroll left the Series chip as a one-letter sliver ("s") at the
+        // row's start edge — a programmatic scroll never runs the snap
+        // fling, so the row can rest mid-chip. After the reveal the
+        // leading edge must sit on a chip start: Series is either fully
+        // in view or fully scrolled off, never a sliver.
+        compose.setContent {
+            RaddStreamTheme {
+                Box(Modifier.size(width = 360.dp, height = 120.dp)) {
+                    FilterRail(
+                        state = SearchUiState(filters = SearchFilters(type = "anime")),
+                        onSelectType = {},
+                        onOpenFilters = {},
+                    )
+                }
+            }
+        }
+        compose.waitForIdle()
+        val nodes = compose.onAllNodesWithText("Series").fetchSemanticsNodes()
+        with(compose.density) {
+            nodes.forEach { node ->
+                assertTrue(
+                    "Series chip left as a sliver at the start edge",
+                    node.boundsInRoot.left.toDp() >= 0.dp,
+                )
+            }
+        }
     }
 }

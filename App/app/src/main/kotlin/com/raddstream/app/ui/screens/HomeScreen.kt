@@ -141,7 +141,7 @@ import com.raddstream.app.viewmodel.LiveTvViewModel
 import com.raddstream.app.viewmodel.ResumeTile
 import com.raddstream.app.viewmodel.HomeViewModel
 import com.raddstream.app.viewmodel.continueWatchingMatchFor
-import com.raddstream.app.viewmodel.homeFilterMatches
+import com.raddstream.app.viewmodel.filteredHomeSections
 import com.raddstream.app.viewmodel.homeSyncLine
 import com.raddstream.app.viewmodel.selectHeroSection
 import com.raddstream.app.viewmodel.visibleHomeRows
@@ -540,7 +540,10 @@ internal fun HomeContent(
     // Mockup (Nov 2026): the filter chips hide non-matching rails in
     // place — the hero, Continue Watching, Pick 3 and the library
     // above are not rails and are never filtered, only these rows.
-    val renderedRows = shownRows.filter { homeFilterMatches(it, filter) }
+    // Video audit #31 (Nov 2026): Anime/K-pop narrow a rail to its
+    // matching titles instead of hiding every rail — anime is a
+    // post-level flag, not a rail type, so no rail matches it by type.
+    val renderedRows = filteredHomeSections(shownRows, filter)
         .filter { it.visible || it.loading || it.error != null }
         .map { section ->
             val (kept, next) = UserWords.dedupeAcrossRails(

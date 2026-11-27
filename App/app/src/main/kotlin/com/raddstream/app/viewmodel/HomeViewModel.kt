@@ -88,6 +88,10 @@ const val MAX_HOME_ROWS = 10
  * "Complete series" is series content, so it rides SERIES. The hero,
  * Continue Watching, Pick 3 and the library are not rails and are never
  * filtered — only the content rails below them.
+ * Anime and K-pop are the exception (video audit #31, Nov 2026): neither
+ * has a rail of its own — anime is a post-level flag, not a rail type —
+ * so those two chips narrow a rail to its matching titles instead (see
+ * [filteredHomeSections]); a rail with no matching title hides.
  */
 enum class HomeFilter(val label: String) {
     All("ALL"),
@@ -121,6 +125,59 @@ internal fun homeFilterMatches(section: HomeSection, filter: HomeFilter): Boolea
         // Unreachable: ALL returns true above. It stays so the `when` is
         // exhaustive without an `else` that would silently swallow a new chip.
         HomeFilter.All -> true
+    }
+}
+
+/**
+ * Video audit #31 (Nov 2026): whether this post is anime, on the
+ * server's own definition. Animation is not a `content_type` (the values
+ * are only movie/series/complete_season/ongoing_season) — it is the
+ * [Post.isAnimated] flag, and the server's `type=anime` answers from
+ * `(is_animated = 1 OR industry LIKE '%anime%')` (verified live:
+ * 10,739 rows). This is the same fragment, over the fields the list row
+ * carries — so the chip and the server can never disagree about what
+ * anime is again. A null flag reads as "we do not know", never as
+ * animated: only a set flag or an anime industry claims the title.
+ */
+internal fun isAnimePost(post: Post): Boolean =
+    post.isAnimated == true || post.industry?.contains("anime", ignoreCase = true) == true
+
+/**
+ * Video audit #31: whether this post is K-pop. K-pop has no server
+ * taxonomy at all (`type=kpop` answers zero rows, verified live) — the
+ * only K-pop in the catalog is what a title search for "kpop" finds (2
+ * titles live: "KPop Demon Hunters" and one more). The predicate mirrors
+ * that search over the loaded rows: the title or a genre naming K-pop,
+ * hyphen- and space-blind, so "K-pop", "KPop" and "K Pop" all match.
+ */
+internal fun isKpopPost(post: Post): Boolean {
+    fun key(text: String?) = text?.lowercase()?.replace("-", "")?.replace(" ", "") ?: ""
+    return "kpop" in key(post.displayTitle) || "kpop" in key(post.genres)
+}
+
+/**
+ * Video audit #31: the Home filter chips over the rails, with the
+ * post-level fallback for Anime and K-pop. Movies and Series keep the
+ * rail-level match — their rails ARE the type. Anime and K-pop have no
+ * rail of their own, so a rail survives when it holds a matching title —
+ * and shows only those titles. A rail that already matches by type/key
+ * (e.g. a panel "anime" rail) passes through whole, un-narrowed. A rail
+ * with no matching title drops, so the empty message stays honest.
+ * Pure, so the chip filter is testable.
+ */
+internal fun filteredHomeSections(sections: List<HomeSection>, filter: HomeFilter): List<HomeSection> {
+    if (filter == HomeFilter.All) return sections
+    return when (filter) {
+        HomeFilter.Movies, HomeFilter.Series -> sections.filter { homeFilterMatches(it, filter) }
+        HomeFilter.Anime -> sections.mapNotNull { section ->
+            if (homeFilterMatches(section, filter)) section
+            else section.copy(items = section.items.filter(::isAnimePost)).takeIf { it.items.isNotEmpty() }
+        }
+        HomeFilter.Kpop -> sections.mapNotNull { section ->
+            if (homeFilterMatches(section, filter)) section
+            else section.copy(items = section.items.filter(::isKpopPost)).takeIf { it.items.isNotEmpty() }
+        }
+        HomeFilter.All -> sections
     }
 }
 

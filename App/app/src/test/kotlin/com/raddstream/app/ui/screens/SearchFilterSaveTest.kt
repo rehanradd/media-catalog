@@ -3,6 +3,7 @@ package com.raddstream.app.ui.screens
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -82,6 +83,9 @@ class SearchFilterSaveTest {
         setSheet(state = SearchUiState())
         compose.onNodeWithText("Save this filter").assertIsDisplayed()
         compose.onNodeWithText("Save this filter").assertIsNotEnabled()
+        // Video audit #37 (Nov 2026): a greyed-out Save with no reason
+        // reads as broken. The reason rides under the button.
+        compose.onNodeWithText("Choose a filter first — there is nothing to save yet.").assertIsDisplayed()
     }
 
     @Test
@@ -94,5 +98,16 @@ class SearchFilterSaveTest {
             savedFilters = atCap,
         )
         compose.onNodeWithText("Save this filter").assertIsNotEnabled()
+        // Video audit #37: the cap gets its own reason — "nothing to
+        // save" would be the wrong words here.
+        compose.onNodeWithText("You already saved $MaxSavedFilters filters. Remove one to save another.").assertIsDisplayed()
+    }
+
+    @Test
+    fun saveButtonShowsNoReasonWhileEnabled() {
+        setSheet(state = SearchUiState(filters = SearchFilters(genre = GenreFilter.ACTION)))
+        compose.onNodeWithText("Save this filter").assertIsEnabled()
+        compose.onNodeWithText("Choose a filter first — there is nothing to save yet.").assertDoesNotExist()
+        compose.onNodeWithText("You already saved $MaxSavedFilters filters. Remove one to save another.").assertDoesNotExist()
     }
 }

@@ -64,6 +64,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import android.os.SystemClock
 import android.provider.Settings
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -271,6 +272,13 @@ fun SectionHeader(
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     action: (@Composable () -> Unit)? = null,
+    /**
+     * Design direction (Nov 2026): the Search screen's heads run one step
+     * smaller so more content fits — callers pass their smaller style
+     * here. The default is the standing section head, so every other
+     * screen is untouched.
+     */
+    titleStyle: TextStyle = RaddEmphasized.titleMedium,
 ) {
     Row(
         modifier = modifier
@@ -290,7 +298,7 @@ fun SectionHeader(
             // strip as having no screen-reader label at all.
             Text(
                 text = title,
-                style = RaddEmphasized.titleMedium,
+                style = titleStyle,
                 color = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.semantics { heading() },
             )

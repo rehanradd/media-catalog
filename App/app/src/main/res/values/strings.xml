@@ -317,7 +317,7 @@
          November UI reviews flagged (F1). One short sentence each, no
          implementation words. Named languages_*/search_* so they stay
          outside the player_* copy rules in PlayerChromeCopyTest. -->
-    <string name="search_filters_help">Filters narrow the whole catalog — only the year range applies to the titles already loaded.</string>
+    <string name="search_filters_help">Filters search the whole catalog. The year range only narrows the titles already shown.</string>
     <string name="embed_load_failed_unknown">This page couldn\'t be opened. Try another version.</string>
     <!-- ═══ MY LIST (review, 2026-11-16) ═══
          The starter rail's old title ("Most copies" / "Well-stocked catalog
