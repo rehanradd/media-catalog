@@ -105,10 +105,14 @@ class LiveTvViewModel @Inject constructor(
         // at once, then refresh behind it. The skeleton only runs when
         // there is nothing at all to show; the 45 s budget and the one
         // silent retry stay untouched.
+        // Video-audit #9 (Nov 2026): the served list is de-duplicated
+        // before it is shown, so a channel the registry files twice can
+        // never paint twice — the cached list is de-duplicated too, so a
+        // stale cache cannot resurrect a duplicate the fresh fetch removed.
         loadCache()?.let { cached ->
             _uiState.update {
                 it.copy(
-                    channels = cached.channels,
+                    channels = deduplicateLiveTvChannels(cached.channels),
                     categories = cached.categories,
                     showingCached = true,
                     cachedAtMillis = cached.savedAtMillis,
@@ -133,7 +137,7 @@ class LiveTvViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        channels = response.channels,
+                        channels = deduplicateLiveTvChannels(response.channels),
                         categories = response.categories,
                         error = null,
                         showingCached = false,
@@ -150,7 +154,7 @@ class LiveTvViewModel @Inject constructor(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            channels = cached.channels,
+                            channels = deduplicateLiveTvChannels(cached.channels),
                             categories = cached.categories,
                             error = LIVE_TV_TROUBLE,
                             showingCached = true,
@@ -294,6 +298,28 @@ class LiveTvViewModel @Inject constructor(
         // The tap stages the live flag next to the MIME; the ticker ORs
         // it with `isCurrentMediaItemLive`.
         PlayerSessionStore.Instance.stageLiveChannel(streamId)
+    }
+}
+
+/**
+ * Video-audit #9 (Nov 2026): the registry can file one channel twice, and
+ * the grid then shows it twice. A repeat row is the same channel id, or —
+ * when the id itself is missing — the same name in the same language:
+ * "Al Jazeera English" and "Al Jazeera Arabic" are two channels that share
+ * a prefix and a logo, so the name is never a dedup key on its own (the
+ * pair must survive; see [LiveTvChannelCard]'s two-line name). The first
+ * row wins, so the order the server sent is kept. Pure, so the fixture
+ * pins it in a unit test.
+ */
+internal fun deduplicateLiveTvChannels(channels: List<LiveTvChannel>): List<LiveTvChannel> {
+    val seenIds = mutableSetOf<Int>()
+    val seenNameless = mutableSetOf<String>()
+    return channels.filter { channel ->
+        if (channel.id != 0) {
+            seenIds.add(channel.id)
+        } else {
+            seenNameless.add("${channel.name.trim().lowercase()}|${channel.language.trim().lowercase()}")
+        }
     }
 }
 

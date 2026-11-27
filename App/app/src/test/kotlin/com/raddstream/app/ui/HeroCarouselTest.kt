@@ -130,6 +130,35 @@ class HeroCarouselTest {
     }
 
     @Test
+    fun heroTitleMetaAndArtAllBelongToTheSamePost() {
+        // Video-audit #8 (Nov 2026): the video's Ranma slide showed Season 2
+        // art with "Season 1" text — art and text that do not belong to the
+        // same item. A slide reads all three from the one Post it is given
+        // (title, meta line, first backdrop), so a settled slide can never
+        // mix two items' facts; this pins that contract on the Ranma shape
+        // itself (seasons "Season 1 - 3", Animation first genre, one
+        // backdrop). The carousel half is the pager reset in HeroCarousel:
+        // a re-dealt hero list restarts at page 0 instead of holding a
+        // stale page index.
+        val ranma = post(
+            seasons = "Season 1 - 3",
+            genres = "Animation, Action",
+            year = 2024,
+        ).copy(
+            title = "Ranma ½ (2024) S1-S3",
+            cleanTitle = "Ranma ½ (2024) S1-S3",
+            posterUrl = "https://image.tmdb.org/t/p/w500/ranma-poster.jpg",
+            backdropUrls = "[\"https://image.tmdb.org/t/p/original/ranma-s2-backdrop.jpg\"]",
+        )
+        assertEquals("Ranma ½", heroTitle(ranma))
+        assertEquals("2024 · Season 1–3 · Animation", heroMetaLine(ranma))
+        assertEquals(
+            "https://image.tmdb.org/t/p/original/ranma-s2-backdrop.jpg",
+            ranma.heroArtUrl,
+        )
+    }
+
+    @Test
     fun metaLineIsNullWhenNothingToSay() {
         assertNull(heroMetaLine(post(year = 0)))
         assertNull(heroMetaLine(post(genres = "  ", year = 0)))

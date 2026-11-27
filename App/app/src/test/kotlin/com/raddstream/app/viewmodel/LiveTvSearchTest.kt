@@ -82,4 +82,37 @@ class LiveTvSearchTest {
         assertEquals("2 days ago", formatCacheAge(now - 2 * 86_400_000L, now))
         assertEquals("more than a week ago", formatCacheAge(now - 8 * 86_400_000L, now))
     }
+
+    @Test
+    fun deduplicateDropsARepeatedChannelIdAndKeepsOrder() {
+        // Video-audit #9 (Nov 2026): a channel the registry files twice
+        // painted twice. The first row wins, the server's order is kept.
+        val channels = loadPayload().channels
+        val doubled = listOf(channels[0]) + channels
+        val deduped = deduplicateLiveTvChannels(doubled)
+        assertEquals(channels.size, deduped.size)
+        assertEquals(channels.map { it.id }, deduped.map { it.id })
+    }
+
+    @Test
+    fun deduplicateKeepsSameNameDifferentLanguageChannels() {
+        // Video-audit #9, the other half: "Al Jazeera English" and
+        // "Al Jazeera Arabic" share a prefix and a logo and read as one
+        // duplicated card — but they are two channels (ids 26 and 27 in
+        // the live list), so the dedup must keep both. The visible fix
+        // for the pair is the card's two-line name, not the dedup.
+        val english = loadPayload().channels.first { it.name == "Al Jazeera English" }
+        val arabic = loadPayload().channels.first { it.name == "Al Jazeera Arabic" }
+        val deduped = deduplicateLiveTvChannels(listOf(arabic, english, arabic))
+        assertEquals(listOf(arabic, english), deduped)
+    }
+
+    @Test
+    fun realPayloadHasNoDuplicates() {
+        // The 759-channel fixture the server served 2026-11-16 carries no
+        // repeated id — the dedup is a guard for a registry that files a
+        // channel twice, not a repair for this payload.
+        val channels = loadPayload().channels
+        assertEquals(channels.size, deduplicateLiveTvChannels(channels).size)
+    }
 }

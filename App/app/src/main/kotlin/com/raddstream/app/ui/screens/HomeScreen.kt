@@ -72,6 +72,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -612,8 +613,14 @@ internal fun HomeContent(
         // bumped Compose BOM 2025.11.01). The Box owns the nested scroll
         // and the spinner; isRefreshing comes from the ViewModel and
         // onRefresh is the pull gesture's refresh signal.
+        // Video-audit #16 (Nov 2026): ONE loading state, not two. The
+        // ViewModel sets isRefreshing for the initial load too, so the
+        // Box's centre spinner painted over the hero + rail skeletons on
+        // first paint (video 0:06–0:07). The spinner shows only once some
+        // content has arrived — a refresh of loaded rows — while the
+        // first load is skeletons alone.
         PullToRefreshBox(
-            isRefreshing = state.isRefreshing,
+            isRefreshing = state.isRefreshing && state.visibleSections.any { it.items.isNotEmpty() },
             onRefresh = onRefresh,
             modifier = Modifier.weight(1f),
         ) {
@@ -1346,8 +1353,19 @@ internal fun HomeFilterRow(
     onSelect: (HomeFilter) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Video-audit #14 (Nov 2026): the last chip must clear the screen
+    // edge. The row is scrollable by design — five chips cannot fit a
+    // 360dp phone at rest, so a partial ANIME is the standard scroll hint
+    // (the audit's own note) — but when the row is scrolled to the end the
+    // last chip (KPOP) must sit fully visible with breathing room, not
+    // hard against the edge. The default content padding ends at the
+    // gutter (16dp); this row ends a spacing unit further out (24dp).
     ScrollingChipRow(
         modifier = modifier,
+        contentPadding = PaddingValues(
+            start = RaddTokens.Space.Gutter,
+            end = RaddTokens.Space.Gutter + RaddTokens.Space.Sm,
+        ),
         rowTestTag = HomeFilterRowTag,
     ) {
         items(HomeFilter.entries) { filter ->
@@ -2230,6 +2248,14 @@ private fun HomeRailSection(
     }
     AnimatedVisibility(
         visible = isEntered || inInspectionMode,
+        // Video-audit #7 (Nov 2026): clip the entrance to the rail's own
+        // bounds. The slide starts 1/4-height down and rises into place;
+        // unclipped, the sliding titles painted over the rail below (and
+        // the rail below's titles over this one) while the staggered rails
+        // entered on load and on scroll — the "titles render twice /
+        // overlap" the video shows at 0:08, 0:13–0:14 and 0:35. Settled
+        // frames are unchanged: the offset is zero once entered.
+        modifier = Modifier.clipToBounds(),
         enter = fadeIn(
             animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
         ) + if (reduceMotion) {

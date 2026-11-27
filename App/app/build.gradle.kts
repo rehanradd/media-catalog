@@ -290,6 +290,12 @@ android {
         // launcher name comes from brand.properties, not res/values/strings.xml.
         resValue("string", "brand_app_name", brand("identity.name", "RADD Stream"))
         resValue("string", "brand_app_name_short", brand("identity.name.short", brand("identity.name", "RADD Stream")))
+        // Video-audit #13 (Nov 2026): the launcher label is the short
+        // launcher name, not the full name — "RADD Stream" truncates to
+        // "RADD Str..." on the Tecno launcher grid. Falls back to the
+        // short name, then the full name, so a re-skin without a launcher
+        // key still names the app.
+        resValue("string", "brand_app_name_launcher", brand("identity.name.launcher", brand("identity.name.short", brand("identity.name", "RADD Stream"))))
         resValue("string", "brand_wordmark_first", brand("identity.name.wordmark.first", "Radd"))
         resValue("string", "brand_wordmark_second", brand("identity.name.wordmark.second", "Stream"))
         resValue("string", "brand_tagline", brand("identity.tagline", ""))

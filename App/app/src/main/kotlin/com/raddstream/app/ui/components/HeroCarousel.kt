@@ -219,6 +219,23 @@ fun HeroCarousel(
         watchNowPressed = false
         lastChangeMs = SystemClock.uptimeMillis()
     }
+    // Video-audit #8 (Nov 2026): the pager index must not outlive the list
+    // it was paging. The hero list is re-dealt when the hero section
+    // changes (a stale panel hero loses the slot to "Recently added", a
+    // refresh re-picks the rails), and the remembered pager kept its page —
+    // so the slide in view sat at the old list's position, not the new
+    // list's item. That is the shape the video's Ranma slide takes: art
+    // and text that do not belong to the same item. A new list identity
+    // restarts the carousel at its first item, so the art and the text on
+    // screen always belong to the one item in view; the clock restarts
+    // too, so the new first slide gets its full interval. The key is the
+    // ids, not the list instance: a recomposition that hands the same
+    // titles back does not restart the carousel.
+    val heroIds = posts.map { it.id }
+    LaunchedEffect(heroIds) {
+        if (pagerState.currentPage != 0) pagerState.scrollToPage(0)
+        lastChangeMs = SystemClock.uptimeMillis()
+    }
 
     LaunchedEffect(posts.size, reduceMotion, autoplay, intervalMs) {
         if (!autoplay || posts.size < 2 || reduceMotion) return@LaunchedEffect
@@ -262,6 +279,11 @@ fun HeroCarousel(
     Column(modifier.fillMaxWidth()) {
     AnimatedVisibility(
         visible = heroVisible,
+        // Video-audit #7 (Nov 2026): clip the hero's entrance to its own
+        // bounds, like the rails — the slide starts 1/4-height down and
+        // would otherwise paint over the filter chips below it while
+        // entering. Settled frames are unchanged.
+        modifier = Modifier.clipToBounds(),
         enter = fadeIn(
             animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
         ) + if (reduceMotion) {
