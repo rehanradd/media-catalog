@@ -450,10 +450,10 @@ fun SkeletonBox(
  * The text column under a poster tile, exactly as [PosterCard] draws it — the
  * one shared shape for every rail cell and grid cell, so a tile and its
  * placeholder are the same height:
- * - title slot: titleSmall's own line height (20dp), one line — the old
+ * - title slot: labelMedium's own line height (16dp), one line — the old
  *   skeleton drew two 16dp bars for the two-line title the F7 redesign
  *   removed, so every rail and grid shrank ~20dp when its cards landed;
- * - details line ("2023 · Movie"): labelSmall's 16dp line;
+ * - details line (the language): labelSmall's 16dp line;
  * - badge slot: always 24dp, whether or not this title carries a badge.
  * No side padding and no bottom padding: the real card's text sits flush
  * with the poster edges on the page background — the old 8dp sides and
@@ -461,15 +461,15 @@ fun SkeletonBox(
  * ~10dp of jump. Both line heights come from the typography tokens, the
  * same source PosterCard reads, so a token change moves both together.
  * ([SkeletonPlaceholderTest.railCellsMatchPosterCardHeight] pins the cell
- * at 295dp: 225dp poster + 6dp gap + this 64dp column.)
+ * at 216dp: 150dp poster + 6dp gap + this 60dp column.)
  */
 @Composable
 private fun PosterCellTextSkeleton() {
     val titleSlotHeight = with(LocalDensity.current) {
         // TextUnit has no isSpecified in this Compose version — Unspecified
         // is the sentinel to compare against (the same read PosterCard does).
-        val lineHeight = MaterialTheme.typography.titleSmall.lineHeight
-        if (lineHeight != TextUnit.Unspecified) lineHeight.value.sp.toDp() else 20.dp
+        val lineHeight = MaterialTheme.typography.labelMedium.lineHeight
+        if (lineHeight != TextUnit.Unspecified) lineHeight.value.sp.toDp() else 16.dp
     }
     val detailsHeight = with(LocalDensity.current) {
         val lineHeight = MaterialTheme.typography.labelSmall.lineHeight

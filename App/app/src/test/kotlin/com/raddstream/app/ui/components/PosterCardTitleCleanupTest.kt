@@ -127,18 +127,19 @@ class PosterCardTitleCleanupTest {
 
     // UI/UX audit Library #1 / Home #9 (Nov 2026): the fallback poster
     // printed the title twice — in the fallback card and in the caption
-    // below it. The fallback paints the logo + initials only now, so the
-    // full title appears exactly once on the tile (the caption carries
-    // it). channelMonogram("Jawan") is "JA" — the first two letters of a
-    // one-word title — so the tile's fallback node says "JA" and the
-    // caption is the tile's only "Jawan" text node. (An earlier draft of
-    // this test asserted "JW" and failed on both the tile and the card:
-    // "JW" is not the monogram — it was the test's error, not the code's.
-    // The fallback text is findable; the string was wrong.)
+    // below it. Video audit issue 32 (Nov 2026): the fallback paints no
+    // initials at all any more — the branded placeholder (mark only),
+    // never a two-letter box that reads as content that is not there.
+    // The full title appears exactly once on the tile (the caption
+    // carries it). channelMonogram("Jawan") is "JA" — the first two
+    // letters of a one-word title — so the tile must NOT have a "JA"
+    // node any more. (An earlier draft of this test asserted "JW" and
+    // failed on both the tile and the card: "JW" is not the monogram —
+    // it was the test's error, not the code's.)
     @Test
-    fun `the fallback paints initials, the caption carries the title`() {
+    fun `the fallback paints no initials, the caption carries the title`() {
         showTile(post(title = "Jawan", cleanTitle = "Jawan", year = 2023, contentType = "movie"))
-        compose.onNodeWithText("JA", useUnmergedTree = true).assertExists()
+        compose.onNodeWithText("JA", useUnmergedTree = true).assertDoesNotExist()
         val titleNodes = compose.onAllNodesWithText("Jawan", useUnmergedTree = true)
             .fetchSemanticsNodes()
         assertEquals("the title is painted twice on the tile", 1, titleNodes.size)

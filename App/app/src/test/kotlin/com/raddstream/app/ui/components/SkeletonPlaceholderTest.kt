@@ -84,17 +84,21 @@ class SkeletonPlaceholderTest {
 
     /**
      * A rail cell must be the same height as the [PosterCard] that replaces
-     * it, or the rail grows when its rows arrive. The card is a 120dp poster
-     * (180dp tall at 2:3) over a 64dp text column — 6dp gap, a 20dp title
-     * slot (titleSmall's own line height, one line), 2dp, a 16dp details
-     * line (labelSmall), 2dp, the always-24dp badge slot — 250dp in all.
-     * The old skeleton drew two 16dp title bars for the two-line title the
-     * F7 redesign removed, plus the retired footer box's 8dp sides and
-     * 10dp bottom padding: 325dp against the card's 250dp, a ~75dp jump
-     * per rail (and per grid row) when the cards landed.
+     * it, or the rail grows when its rows arrive. The card is a 100dp poster
+     * (150dp tall at 2:3) over a 60dp text column — 6dp gap, a 16dp title
+     * slot (labelMedium's own line height, one line), 2dp, a 16dp details
+     * line (labelSmall, the language), 2dp, the always-24dp badge slot —
+     * 216dp in all. The old skeleton drew two 16dp title bars for the
+     * two-line title the F7 redesign removed, plus the retired footer box's
+     * 8dp sides and 10dp bottom padding: 325dp against the card's 250dp, a
+     * ~75dp jump per rail (and per grid row) when the cards landed.
      *
-     * P0-6 (Nov 2026): the rail card shrank 150dp → 120dp, so the cell is
-     * 250dp now; the text column under it did not move.
+     * Video audit (Nov 2026): the rail card shrank 120dp → 100dp, and the
+     * title rides labelMedium (16dp) instead of titleSmall (20dp), so the
+     * cell is 216dp now; the text column under it did not move otherwise.
+     * The skeleton reserves the badge slot, so it matches the badged card
+     * exactly — an unbadged card is 24dp tighter, the same asymmetry the
+     * 250dp cell already had.
      *
      * The assertion is on the first cell, not the rail Row: a rail rendered
      * as the test's root content is measured EXACTLY at window height, so
@@ -113,7 +117,7 @@ class SkeletonPlaceholderTest {
         // B-42 (P2-11): the skeleton mounts only after the 200 ms delay
         // gate — advance past it before measuring.
         compose.mainClock.advanceTimeBy(SKELETON_DELAY_MS + 50)
-        compose.onNodeWithTag("posterRailCell").assertHeightIsEqualTo(250.dp)
+        compose.onNodeWithTag("posterRailCell").assertHeightIsEqualTo(216.dp)
     }
 
     /**

@@ -103,8 +103,10 @@ class UserWordsTest {
     }
 
     // Video audit issue 39 (Nov 2026): of two rows for one work, the
-    // metadata-complete row wins the slot — a tile never reads "2026"
-    // with no star while its twin carries "2026 · ★ 8.6".
+    // metadata-complete row wins the slot — a tile never reads a bare
+    // row while its twin carries a poster and a rating (the rating
+    // lives on Detail now; the card itself paints poster + title +
+    // language).
     private fun dedupePost(id: Int, posterUrl: String?, rating: String?) = Post(
         id = id,
         title = "Salaar",

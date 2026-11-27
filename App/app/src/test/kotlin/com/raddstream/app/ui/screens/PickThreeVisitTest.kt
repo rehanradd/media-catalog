@@ -89,7 +89,7 @@ class PickThreeVisitTest {
     ) {
         compose.setContent {
             RaddStreamTheme {
-                // P1-5: pin a short viewport (400dp) for the scroll-out
+                // P1-5: pin a short viewport (320dp) for the scroll-out
                 // test. The hero item lost its below-card dots row (~52dp)
                 // when the dots moved on the art, so the card's top crossed
                 // the default Robolectric viewport edge at scroll 0 and
@@ -97,7 +97,11 @@ class PickThreeVisitTest {
                 // ended (Android CI 45779270124, 1 failed of 3233). A
                 // pinned viewport makes scroll-out disposal independent
                 // of hero height instead of balanced on the viewport edge.
-                Box(Modifier.height(400.dp)) { // token-exempt: test viewport height, not UI spacing
+                // Video audit (Nov 2026): the rail cards shrank 120dp →
+                // 100dp, so the first rail lost ~34dp and the card's top
+                // crossed the old 400dp edge the same way — the viewport
+                // moves to 320dp to keep the margin, not the edge.
+                Box(Modifier.height(320.dp)) { // token-exempt: test viewport height, not UI spacing
                     HomeContent(
                         state = state,
                         heroAutoplay = false,

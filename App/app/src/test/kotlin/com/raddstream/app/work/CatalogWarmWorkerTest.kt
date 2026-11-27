@@ -53,7 +53,7 @@ class CatalogWarmWorkerTest {
         }
 
     @Test
-    fun `warm fetches every warmable rail and prefetches two posters per rail`() = runBlocking {
+    fun `warm fetches every warmable rail and prefetches four posters per rail`() = runBlocking {
         val catalog = FakeCatalog(
             railPages = mapOf(
                 "recent" to posts("recent", 18),
@@ -70,8 +70,10 @@ class CatalogWarmWorkerTest {
         assertEquals(7 * 18, warmed)
         assertEquals(7, catalog.railCalls.size)
         assertEquals(1, prefetched.size)
-        // First two posters per rail, 7 rails → 14 urls, under the 20 cap.
-        assertEquals(14, prefetched.single().size)
+        // Video audit issue 5 (Nov 2026): first four posters per rail — a
+        // rail shows ~3 across, so first-two under-covered the visible
+        // row — 7 rails → 28 urls, under the 32 cap.
+        assertEquals(28, prefetched.single().size)
         assertTrue(prefetched.single().all { it.startsWith("https://example.com/") })
     }
 

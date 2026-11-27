@@ -47,12 +47,12 @@ class MyListLargeFontPaparazziTest {
     )
 
     // Round 3: the fixture posts carry the same ratings as the 1.0x
-    // fixtures (Jawan 7.0, Salaar 6.5, McLintock 7.0). Without a rating
-    // the meta line legitimately reads year-only ("2023") — an absent
-    // rating leaves its slot out, never an invented value — and the
-    // round-3 re-rate misread that fixture gap as a 1.3x rendering
-    // defect. With ratings, this shot proves the full "2023 · ★ 7.0"
-    // line survives large font.
+    // fixtures (Jawan 7.0, Salaar 6.5, McLintock 7.0) — and a language,
+    // because the meta line is the language now (video audit, refined
+    // direction 21:51 PKT 27 Nov 2026): without one the line legitimately
+    // paints nothing, and the round-3 re-rate misread that fixture gap
+    // as a 1.3x rendering defect. With a language, this shot proves the
+    // "Hindi" line survives large font.
     private fun post(id: Int, title: String, contentType: String = "movie", rating: String? = null) = Post(
         id = id,
         title = title,
@@ -61,6 +61,7 @@ class MyListLargeFontPaparazziTest {
         contentType = contentType,
         posterUrl = null,
         imdbRating = rating,
+        language = "Hindi",
     )
 
     @Test

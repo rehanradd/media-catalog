@@ -26,9 +26,14 @@ import org.robolectric.RobolectricTestRunner
  * density and one theme; the titles differ only so each card's spoken
  * sentence finds its own node.
  *
- * Video audit (Nov 2026): the meta line is year · rating only — the
- * type word never paints, so there is no bare-type line to suppress any
- * more; a tile with no year and no rating paints no meta line at all.
+ * Video audit (Nov 2026), refined direction 21:51 PKT 27 Nov: the meta
+ * line is the language only — the year and rating are off the card, so
+ * a tile with no language paints no meta line at all. (The two-line
+ * title-slot test is gone with the old search design: the refined
+ * direction takes PosterCard out of search entirely — YouTube-style
+ * rich rows, the search batch's job — so a search-grid slot pin has no
+ * subject any more. The grid still passes titleMaxLines = 2 until that
+ * batch lands, and long titles still wrap to two lines.)
  *
  * Runs on the JVM under Robolectric. The tile is given the 100dp cell
  * the catalog grid actually hands it (see PosterCardProvenanceTest for why
@@ -45,6 +50,7 @@ class PosterCardSearchGridTest {
         year: Int? = null,
         contentType: String? = null,
         imdbRating: String? = null,
+        language: String? = null,
     ) = Post(
         // Distinct ids: two tiles in one composition must not share one.
         id = title.hashCode(),
@@ -53,6 +59,7 @@ class PosterCardSearchGridTest {
         year = year,
         contentType = contentType,
         imdbRating = imdbRating,
+        language = language,
         // No poster URL: the card renders the branded fallback, so no image
         // load runs in the test.
         posterUrl = null,
@@ -66,9 +73,7 @@ class PosterCardSearchGridTest {
      */
     private fun twoCardHeights(
         first: Post,
-        firstTitleMaxLines: Int = 1,
         second: Post,
-        secondTitleMaxLines: Int = 1,
     ): Pair<Float, Float> {
         compose.setContent {
             RaddStreamTheme(darkTheme = true) {
@@ -76,12 +81,10 @@ class PosterCardSearchGridTest {
                     PosterCard(
                         post = first,
                         modifier = Modifier.width(100.dp),
-                        titleMaxLines = firstTitleMaxLines,
                     )
                     PosterCard(
                         post = second,
                         modifier = Modifier.width(100.dp),
-                        titleMaxLines = secondTitleMaxLines,
                     )
                 }
             }
@@ -93,37 +96,25 @@ class PosterCardSearchGridTest {
     }
 
     @Test
-    fun twoLineTitleSlotIsTallerThanOneLineSlot() {
-        // The slot is a fixed height per line, so a two-line tile is
-        // taller than the same tile with one line — by exactly one title
-        // line — even for a title short enough to fit on one line.
-        val (oneLine, twoLines) = twoCardHeights(
-            first = post("Alpha Title", year = 2023, contentType = "movie"),
-            second = post("Beta Title", year = 2023, contentType = "movie"),
-            secondTitleMaxLines = 2,
+    fun tileWithNoLanguagePaintsNoMetaLine() {
+        // No language: the meta line is empty, so the tile comes out
+        // shorter by that line than a tile carrying one.
+        val (noMeta, withLanguage) = twoCardHeights(
+            first = post("Alpha Title", year = 2023, contentType = "series", imdbRating = "8.6"),
+            second = post("Beta Title", year = 2023, contentType = "series", imdbRating = "8.6", language = "Hindi"),
         )
-        assertTrue("two-line slot ($twoLines px) is not taller than one-line ($oneLine px)", twoLines > oneLine)
+        assertTrue("no-meta tile ($noMeta px) is not shorter than language tile ($withLanguage px)", noMeta < withLanguage)
     }
 
     @Test
-    fun tileWithNoYearAndNoRatingPaintsNoMetaLine() {
-        // No rating, no year: the meta line is empty, so the tile comes
-        // out shorter by that line than a tile carrying a year.
-        val (noMeta, withYear) = twoCardHeights(
-            first = post("Alpha Title", contentType = "series"),
-            second = post("Beta Title", year = 2023, contentType = "series"),
+    fun languageMetaIsOneLineLikeAnyOtherLanguage() {
+        // A language meta line is one line whatever the language —
+        // "Hindi" and "English" are the same height to the pixel, and a
+        // year or a rating beside it changes nothing (neither paints).
+        val (hindi, english) = twoCardHeights(
+            first = post("Alpha Title", year = 2023, contentType = "series", imdbRating = "8.6", language = "Hindi"),
+            second = post("Beta Title", year = 2023, contentType = "series", language = "English"),
         )
-        assertTrue("no-meta tile ($noMeta px) is not shorter than year tile ($withYear px)", noMeta < withYear)
-    }
-
-    @Test
-    fun richMetaIsOneLineLikeAYearOnlyMeta() {
-        // A rating and a year mean the meta line carries "2023 · ★ 8.6" —
-        // still one line, so the two cards are the same height to the pixel.
-        val (yearOnly, rich) = twoCardHeights(
-            first = post("Alpha Title", year = 2023, contentType = "series"),
-            second = post("Beta Title", year = 2023, contentType = "series", imdbRating = "8.6"),
-        )
-        assertEquals("rich meta changed height", yearOnly, rich, 0.01f)
+        assertEquals("language meta changed height", hindi, english, 0.01f)
     }
 }

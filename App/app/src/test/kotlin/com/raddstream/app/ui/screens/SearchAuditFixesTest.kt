@@ -128,10 +128,10 @@ class SearchAuditFixesTest {
         }
     }
 
-    // ── Audit #2: the fallback poster shows initials, the caption the title ──
+    // ── Audit #2: the fallback poster shows no monogram, the caption the title ──
 
     @Test
-    fun fallbackPosterShowsMonogramOnceCaptionCarriesTitle() {
+    fun fallbackPosterShowsNoMonogramCaptionCarriesTitle() {
         compose.setContent {
             RaddStreamTheme {
                 PosterCard(
@@ -145,8 +145,9 @@ class SearchAuditFixesTest {
         val titleNodes = compose.onAllNodesWithText("Jawan", useUnmergedTree = true)
             .fetchSemanticsNodes()
         assertEquals("Title must appear once (caption only)", 1, titleNodes.size)
-        // The fallback itself paints the monogram, not the title.
-        compose.onNodeWithText("JA", useUnmergedTree = true).assertExists()
+        // Video audit issue 32 (Nov 2026): the fallback paints no monogram
+        // any more — the branded placeholder (mark only), never "JA".
+        compose.onNodeWithText("JA", useUnmergedTree = true).assertDoesNotExist()
     }
 
     // ── Audit #3: the error state names Settings in plain words and opens it ──

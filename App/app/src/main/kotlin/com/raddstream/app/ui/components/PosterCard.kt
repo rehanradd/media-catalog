@@ -19,7 +19,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
@@ -57,7 +56,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -225,10 +223,10 @@ fun PosterCard(
     // Rail-title cleanup (Nov 2026): the tile paints the same clean title
     // Detail and the hero paint ([UserWords.detailTitle] — the server's
     // display title first, then the clean title, then the raw title, each
-    // stripped of the year/language/type/season suffixes the meta line
-    // already states), so a rail card can never show "(2023) English
-    // Movie" under a meta line that already reads "2023 · Movie". The
-    // title data itself is untouched — only what is painted.
+    // stripped of the year/language/type/season suffixes), so a rail card
+    // can never show "(2023) English Movie" under a meta line that
+    // already reads "English". The title data itself is untouched —
+    // only what is painted.
     val title = UserWords.detailTitle(
         displayTitle = post.displayTitleWire,
         cleanTitle = post.cleanTitle,
@@ -238,11 +236,12 @@ fun PosterCard(
         languages = WireText.listOf(post.language),
     )
     val typeLabel = post.typeLabel
-    // Video audit (Nov 2026): the meta line carries the rating too — one
-    // line, "2024 · ★ 8.6" — so the rating badge that used to ride the
-    // poster is gone: it would say the same number twice on one tile.
-    // The type word never paints any more (the card shows poster + title
-    // + rating only); it stays in the spoken sentence and on Detail.
+    // Video audit (Nov 2026), refined direction 21:51 PKT 27 Nov: the
+    // meta line is the LANGUAGE only — "Hindi" — so the card shows
+    // poster + title + language and nothing else. Year and rating are
+    // OFF home cards (they live on Detail, and rating in Search too);
+    // the type word never paints either. It stays in the spoken
+    // sentence and on Detail.
     val details = posterMetaLine(post, matchPercent)
     val showDetails = details.isNotBlank()
     // The spoken sentence keeps the old shape — "2024 · Movie" — and the
@@ -479,8 +478,8 @@ fun PosterCard(
             }
 
             // Mockup (Nov 2026): no rating badge on the poster any more —
-            // the rating lives in the meta line under the poster ("2024 ·
-            // ★ 8.6 · Series"), and a badge here would say the same number
+            // the rating lives on Detail (and in Search), not on the
+            // card at all, and a badge here would say the same number
             // twice. The scrim stays: the 3dp progress bar below still
             // needs contrast against bright artwork.
 
@@ -519,12 +518,14 @@ fun PosterCard(
             // overlay a ranked tile carries.
 
             // Pick 3: the heart on the poster — the card's whole point
-            // is tapping it. A 40dp touch target in a scrimmed circle,
-            // so it reads as a control and never as part of the art; the
-            // button eats its own tap, so it never also opens the title
-            // (same as the remove × below). TopStart: a rank numeral
-            // would own BottomStart — the two never meet on one tile (see
-            // the parameter docs).
+            // is tapping it. The touch target stays 48dp (the a11y pin
+            // in PickThreeCardTest) while the scrimmed disc reads 40dp,
+            // per the owner's smaller-buttons direction: the disc is
+            // TopStart-aligned inside the 48dp button, so it sits
+            // exactly where the 40dp button sat. The button eats its own
+            // tap, so it never also opens the title (same as the remove
+            // × below). TopStart: a rank numeral would own BottomStart
+            // — the two never meet on one tile (see the parameter docs).
             if (onToggleFavorite != null) {
                 IconButton(
                     onClick = onToggleFavorite,
@@ -532,32 +533,43 @@ fun PosterCard(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(RaddTokens.Space.Xs)
-                        .size(40.dp)
-                        .background(
-                            MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f),
-                            CircleShape,
-                        ),
+                        .size(48.dp),
                 ) {
-                    Icon(
-                        painter = painterResource(if (isFavorite) R.drawable.ic_action_favorite_filled else R.drawable.ic_tab_my_list),
-                        contentDescription = if (isFavorite) {
-                            "Remove $title from My List"
-                        } else {
-                            "Save $title to My List"
-                        },
-                        tint = if (isFavorite) {
-                            // My List review (Nov 2026): a saved heart is
-                            // jade, the brand primary. The coral secondary
-                            // read as an error state next to the jade My
-                            // List tab — and the empty-state heart is jade
-                            // too, so a saved tile and the empty state
-                            // finally agree on what "saved" looks like.
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        },
-                        modifier = Modifier.size(24.dp), // token-exempt: icon size, not spacing
-                    )
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.TopStart,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp) // token-exempt: on-poster button size, fixed component geometry
+                                .background(
+                                    MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f),
+                                    CircleShape,
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                painter = painterResource(if (isFavorite) R.drawable.ic_action_favorite_filled else R.drawable.ic_tab_my_list),
+                                contentDescription = if (isFavorite) {
+                                    "Remove $title from My List"
+                                } else {
+                                    "Save $title to My List"
+                                },
+                                tint = if (isFavorite) {
+                                    // My List review (Nov 2026): a saved heart is
+                                    // jade, the brand primary. The coral secondary
+                                    // read as an error state next to the jade My
+                                    // List tab — and the empty-state heart is jade
+                                    // too, so a saved tile and the empty state
+                                    // finally agree on what "saved" looks like.
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                                modifier = Modifier.size(24.dp), // token-exempt: icon size, not spacing
+                            )
+                        }
+                    }
                 }
             }
 
@@ -574,7 +586,7 @@ fun PosterCard(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(RaddTokens.Space.Xs)
-                        .size(40.dp)
+                        .size(40.dp) // token-exempt: on-poster button size, fixed component geometry
                         .background(
                             MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f),
                             CircleShape,
@@ -650,31 +662,30 @@ fun PosterCard(
                     modifier = Modifier.heightIn(min = titleSlotHeight * titleMaxLines),
                 )
                 if (showDetails) {
-                    // S2: width-aware meta line (see metaLineForWidth) —
-                    // the tile drops segments before Compose ellipsizes.
-                    BoxWithConstraints(Modifier.fillMaxWidth()) {
-                        val narrowLine = metaLineForWidth(post, matchPercent, maxWidth)
-                        var displayDetails by remember(narrowLine) { mutableStateOf(narrowLine) }
-                        Text(
-                            text = displayDetails,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.labelSmall,
-                            // F7 (Batch B): one line, not two — year + type
-                            // never needs a second line, and the second line
-                            // was the other half of the uneven card heights.
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            onTextLayout = { result ->
-                                if (result.lineCount > 0 && result.isLineEllipsized(0)) {
-                                    val trimmed = trimMetaLineToWordBoundary(
-                                        displayDetails,
-                                        result.getLineEnd(0, visibleEnd = true),
-                                    )
-                                    if (trimmed != displayDetails) displayDetails = trimmed
-                                }
-                            },
-                        )
-                    }
+                    // Video audit, refined direction (Nov 2026): the meta
+                    // line is one short word — the language, or "97%
+                    // Match · Hindi" — so there is nothing width-aware to
+                    // drop any more and no BoxWithConstraints: the line
+                    // paints exactly as [posterMetaLine] computed it.
+                    var displayDetails by remember(details) { mutableStateOf(details) }
+                    Text(
+                        text = displayDetails,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall,
+                        // F7 (Batch B): one line, not two — a second line
+                        // was the other half of the uneven card heights.
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        onTextLayout = { result ->
+                            if (result.lineCount > 0 && result.isLineEllipsized(0)) {
+                                val trimmed = trimMetaLineToWordBoundary(
+                                    displayDetails,
+                                    result.getLineEnd(0, visibleEnd = true),
+                                )
+                                if (trimmed != displayDetails) displayDetails = trimmed
+                            }
+                        },
+                    )
                 }
                 // P1-3 (B-10): the badge slot collapses when the tile has
                 // no badges — the old always-24 dp slot bought uniform
@@ -752,7 +763,7 @@ fun PosterCard(
                 IconButton(
                     onClick = onRemove,
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(40.dp) // token-exempt: on-poster button size, fixed component geometry
                         .background(
                             MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
                             CircleShape,
@@ -777,51 +788,16 @@ fun PosterCard(
 private const val TILE_PRESS_SCALE = 0.96f
 
 /**
- * S2 thresholds: the tile width (dp) below which the meta line drops a
- * segment — year below 100dp. Named constants, not spacing literals, so
- * the spacing gate does not read them as layout.
- */
-private const val META_DROP_YEAR_BELOW_DP = 100f
-
-/**
- * S2 (2027 Home fix): the priority-dropped meta line. Segments paint in
- * priority order — match, year, rating — and the narrow tile drops the
- * lowest-priority segment first: below 100dp the year goes ("★ 7.0").
- * Rating and match never drop — they are the reason the tile is on
- * screen. The type word never paints (video audit, Nov 2026: the card
- * shows poster + title + rating only); it stays in the tile's spoken
- * sentence and on Detail. Pure, so the gate test asserts it without a
- * layout.
- *
- * The brief's year • duration • quality line is still unbuildable from
- * the list wire ([Post] carries neither a duration nor a quality —
- * duration lives only on Detail's [PostDetail.runtimeMinutes], quality
- * only on Detail's RankedPrint), so those segments are omitted, never
- * invented; the line is year • rating from the fields the row actually
- * has. A server `best_quality` + duration on the list projection would
- * complete the brief's line.
- */
-internal fun metaLineForWidth(post: Post, matchPercent: Int? = null, width: Dp): String {
-    val dropYear = width < META_DROP_YEAR_BELOW_DP.dp
-    val match = matchPercent?.let { "$it% Match" }
-    return listOfNotNull(
-        match,
-        if (dropYear) null else post.yearLabel,
-        UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
-    ).joinToString(" · ")
-}
-
-/**
  * S2 (2027 Home fix): word-safe trim for the meta line. When the line
- * still ellipsizes after priority dropping, back off to the previous word
- * boundary and strip a dangling separator ("★ 7.0 · …" → "★ 7.0 …").
+ * still ellipsizes, back off to the previous word boundary and strip a
+ * dangling separator ("97% Match · …" → "97% Match…").
  * Mirrors the title's [UserWords.trimToWordBoundary] for the meta line.
  */
 internal fun trimMetaLineToWordBoundary(text: String, cutIndex: Int): String {
     val trimmed = UserWords.trimToWordBoundary(text, cutIndex)
     // trimToWordBoundary appends "…" after the boundary — if the boundary
-    // fell just after a separator ("★ 7.0 · …"), drop the separator first
-    // so the line never ends on a dangling "·".
+    // fell just after a separator ("97% Match · …"), drop the separator
+    // first so the line never ends on a dangling "·".
     return trimmed.removeSuffix("·…").let { if (it != trimmed) "${it.trimEnd()}…" else trimmed }
 }
 
@@ -840,22 +816,18 @@ internal fun progressLabelForFontScale(label: String, fontScale: Float): String 
 
 /**
  * The rail meta line, as one pure function so the form is assertable
- * without a layout. The line is "2024 · ★ 8.6" — year and rating only,
- * no type word (video audit, Nov 2026: the card shows poster + title +
- * rating only). The type stays in the tile's spoken sentence and on
- * Detail; only the painted rail line loses it. An absent rating or year
- * simply leaves its slot out — never an invented value.
- *
- * Duration and quality are NOT on the list wire ([Post] carries neither
- * field — duration lives only on Detail's [PostDetail.runtimeMinutes],
- * quality only on Detail's RankedPrint), so those segments are omitted,
- * never invented; the line stays year • rating until the server sends
- * `runtime_minutes` on the list projection and a per-post best-quality
- * field — a backend change, not an app one. Do not re-attempt this in an
- * app branch.
+ * without a layout. Video audit, refined direction (21:51 PKT 27 Nov
+ * 2026): the card shows poster + title + LANGUAGE only — the line is
+ * the first language the wire carries ("Hindi"), never the year, the
+ * rating or the type word. Those live in the tile's spoken sentence
+ * and on Detail (rating also in Search); only the painted rail line
+ * loses them. A row with no language paints no meta line at all — never
+ * an invented value. The wire's language column holds a list as text
+ * ("Hindi + English + Japanese"), so the first item is the one glance
+ * the card gets; Detail carries the full list.
  *
  * REA #2 (Netflix, Nov 2026): [matchPercent] paints first — "97% Match ·
- * 2024 · ★ 8.6" — and alone when nothing else paints ("97% Match",
+ * Hindi" — and alone when nothing else paints ("97% Match",
  * never "97% Match · " with a dangling separator). Null means no match
  * to paint: the line is exactly as before.
  */
@@ -863,8 +835,7 @@ internal fun posterMetaLine(post: Post, matchPercent: Int? = null): String {
     val match = matchPercent?.let { "$it% Match" }
     return listOfNotNull(
         match,
-        post.yearLabel,
-        UserWords.displayRating(post.imdbRating)?.let { "★ $it" },
+        WireText.listOf(post.language).firstOrNull(),
     ).joinToString(" · ")
 }
 
