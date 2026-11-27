@@ -53,16 +53,16 @@
       app is safe to restore blindly, and the server is the source of truth
       for everything that matters.
     -->
+    <!-- Video-audit #13 (Nov 2026): the launcher label is the short
+         launcher name (@string/brand_app_name_launcher, "Radd"), not the
+         full name — "RADD Stream" truncates to "RADD Str..." on the
+         Tecno launcher grid. The full name stays in-app. The string
+         still starts with "@string/brand_app_name", so BrandDriftTest's
+         manifest check keeps passing. -->
     <application
         android:name=".RaddStreamApplication"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        <!-- Video-audit #13 (Nov 2026): the launcher label is the short
-             launcher name (@string/brand_app_name_launcher, "Radd"), not the
-             full name — "RADD Stream" truncates to "RADD Str..." on the
-             Tecno launcher grid. The full name stays in-app. The string
-             still starts with "@string/brand_app_name", so BrandDriftTest's
-             manifest check keeps passing. -->
         android:label="@string/brand_app_name_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
