@@ -168,7 +168,7 @@ class LiveTvMockupTest {
     }
 
     @Test
-    fun categoryRowChipsAre48dpTall() {
+    fun categoryRowChipsAre36dpTall() {
         compose.setContent {
             RaddStreamTheme {
                 LiveTvCategoryRow(
@@ -178,10 +178,11 @@ class LiveTvMockupTest {
                 )
             }
         }
-        // Live TV review (Nov 2026): the chip itself is 48dp tall, not
+        // Live TV review (Nov 2026): the chip itself is 36dp tall, not
         // just its touch target — the 32dp visible chip read as shallow
-        // next to the search pill.
-        val expectedPx = with(compose.density) { 48.dp.toPx() }
+        // next to the search pill. Video-audit #38 shrank the floor from
+        // 48dp to 36dp; the chip still carries its own height.
+        val expectedPx = with(compose.density) { 36.dp.toPx() }
         val allHeight = compose.onNodeWithTag("liveTv_chip_all")
             .fetchSemanticsNode().boundsInRoot.height
         val newsHeight = compose.onNodeWithTag("liveTv_chip_news")

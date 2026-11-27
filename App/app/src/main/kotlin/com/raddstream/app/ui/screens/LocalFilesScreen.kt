@@ -66,6 +66,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.raddstream.app.R
 import com.raddstream.app.data.local.LocalVideoFile
 import com.raddstream.app.data.local.LocalVideoFolder
+import com.raddstream.app.data.local.localVideoDistinguisher
 import com.raddstream.app.player.QualityOption
 import com.raddstream.app.ui.components.EmptyState
 import com.raddstream.app.ui.components.rememberDelayedVisible
@@ -417,14 +418,23 @@ internal fun LocalVideoRow(file: LocalVideoFile, onPlay: () -> Unit) {
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                // Video-audit #40 (Nov 2026): the title is two lines, not
+                // one — at one line, "River of No Return (2026) Episode 15"
+                // and "… Episode 16" both read "River of No Return (2…".
+                // Two lines show the episode; the details line below leads
+                // with it too, so the pair differs even where the title
+                // still cuts. The title is bodyMedium (14sp) now, the
+                // user's smaller-text direction — it also fits more of the
+                // name per line.
                 Text(
                     text = file.title,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 val details = listOfNotNull(
+                    localVideoDistinguisher(file.title),
                     file.durationMs.takeIf { it > 0 }?.formatTime(),
                     file.sizeBytes.takeIf { it > 0 }?.let { QualityOption.formatBytes(it) },
                 ).joinToString(" · ")

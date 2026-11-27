@@ -1,6 +1,7 @@
 package com.raddstream.app.ui
 
 import com.raddstream.app.network.models.Post
+import com.raddstream.app.ui.components.HERO_BUTTON_HEIGHT_DP
 import com.raddstream.app.ui.components.clampHeroPage
 import com.raddstream.app.ui.components.heroMetaLine
 import com.raddstream.app.ui.components.heroSeasonsLabel
@@ -8,6 +9,7 @@ import com.raddstream.app.ui.components.heroTitle
 import com.raddstream.app.ui.components.isKnownLanguage
 import com.raddstream.app.ui.components.nextHeroPage
 import com.raddstream.app.ui.components.shouldAdvanceHero
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -253,5 +255,31 @@ class HeroCarouselTest {
     @Test
     fun holdsWhilePaused() {
         assertFalse(shouldAdvanceHero(nowMs = 20_000L, lastChangeMs = 0L, intervalMs = 8_000L, isScrolling = false, watchNowPressed = false, paused = true))
+    }
+
+    @Test
+    fun heroButtonsAreTheSmallButtonHeight() {
+        // Video-audit #28 (Nov 2026) + the user's standing direction
+        // (smaller buttons): the hero's Watch now / My list buttons are
+        // M3's 40dp small button, not the 48dp floor the review had set.
+        assertEquals(40f, HERO_BUTTON_HEIGHT_DP)
+    }
+
+    @Test
+    fun heroButtonsShareTheRowEqually() {
+        // Video-audit #28 (Nov 2026): the split used to be 2f/1f —
+        // "Watch now" took two thirds and "My list" was squeezed to one
+        // third, its pill running to the screen edge on a 360dp phone.
+        // Both buttons are 1f now, equal halves. The two weight(1f)
+        // calls in this file are exactly those two buttons (a text scan
+        // in the SkeletonParityTest style — the layout equality itself
+        // is also visible in the Paparazzi home golden).
+        val source = File("src/main/kotlin/com/raddstream/app/ui/components/HeroCarousel.kt").readText()
+        assertFalse("no hero button may take a 2f share", "weight(2f)" in source)
+        assertEquals(
+            "Watch now and My list must each take weight(1f)",
+            2,
+            "weight(1f)".toRegex().findAll(source).count(),
+        )
     }
 }

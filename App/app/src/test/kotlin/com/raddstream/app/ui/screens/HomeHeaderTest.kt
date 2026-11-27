@@ -144,7 +144,7 @@ class HomeHeaderTest {
     }
 
     @Test
-    fun filterChipsShowAllFiveAndAre48dpTall() {
+    fun filterChipsShowAllFiveAndAre36dpTall() {
         compose.setContent {
             RaddStreamTheme { HomeContent(state = filterState(), heroAutoplay = false) }
         }
@@ -154,7 +154,7 @@ class HomeHeaderTest {
         }
         val bounds = compose.onNodeWithTag("filterChip_All").fetchSemanticsNode().boundsInRoot
         with(compose.density) {
-            assertTrue("ALL chip below 48dp touch height", bounds.height.toDp() >= 48.dp)
+            assertTrue("ALL chip below 36dp chip height", bounds.height.toDp() >= 36.dp)
         }
     }
 

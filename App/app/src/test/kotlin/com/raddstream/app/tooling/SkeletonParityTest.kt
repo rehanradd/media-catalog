@@ -16,8 +16,7 @@ import org.junit.Test
  *   real [PrimaryActions] Play button carries (`heightIn(min = 48.dp)`).
  *   The old skeleton drew 44dp — a 4dp jump on every detail load.
  * - Hero title: the skeleton's title bar must be the hero title's own line
- *   height (32dp — the 28sp copy, not displaySmall's 44dp token), not a
- *   guessed number.
+ *   height (28dp — the 24sp copy, video-audit #29), not a guessed number.
  */
 class SkeletonParityTest {
 
@@ -57,8 +56,8 @@ class SkeletonParityTest {
     @Test
     fun `hero skeleton title bar is the hero title line height`() {
         val hero = mainSource("com/raddstream/app/ui/components/HeroCarousel.kt")
-        // The real title is displaySmall copied to 28sp/32sp (Gemini home
-        // review, Nov 2026) — the skeleton must match the copy, not the token.
+        // The real title is displaySmall copied to 24sp/28sp (video-audit
+        // #29, Nov 2026) — the skeleton must match the copy, not the token.
         // The sizes ride brandSp (BrandDriftTest bans raw .sp literals).
         // Audit #2 (Nov 2026): the no-art branch is gone — every slide
         // carries the same BottomStart title column, so the anchor is the
@@ -66,7 +65,7 @@ class SkeletonParityTest {
         val slide = bodyOf(hero, "fun HeroSlide(")
         val lineHeight = Regex("""lineHeight = brandSp\((\d+)\)""")
             .find(slide)?.groupValues?.get(1)
-        assertEquals("the hero title must carry its 32sp line height", "32", lineHeight)
+        assertEquals("the hero title must carry its 28sp line height", "28", lineHeight)
 
         val skeleton = bodyOf(hero, "fun HeroSkeleton(")
         val titleHeight = Regex("""\.height\((\d+)\.dp\)\.testTag\("heroTitleSkeleton"\)""")

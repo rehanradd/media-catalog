@@ -104,6 +104,42 @@ private val SOURCE_SITE_TAGS = setOf(
 )
 
 /**
+ * Video-audit #40 (Nov 2026): the detail that tells two same-named files
+ * apart, pulled out of the cleaned title so the row can show it where the
+ * truncated title cannot. Two files called "River of No Return (2026)
+ * Episode 15 …" and "… Episode 16 …" both read "River of No Return (2…"
+ * at one line — the episode is the difference, and it sits past the cut.
+ * The episode wins; a part number is next; a quality tag ("720p", "4K")
+ * follows either, so the same episode in two qualities still differs.
+ * Null when the name carries none of those — the row then shows the old
+ * duration · size line unchanged.
+ */
+private val EPISODE_SEASON_REGEX = Regex("""(?i)\bS(\d{1,2})E(\d{1,3})\b""")
+private val EPISODE_WORD_REGEX = Regex("""(?i)\b(?:episode|ep)\.?\s*(\d{1,3})\b""")
+private val EPISODE_BARE_REGEX = Regex("""(?i)\bE(\d{1,3})\b""")
+private val PART_REGEX = Regex("""(?i)\bpart\s*(\d{1,2})\b""")
+private val QUALITY_REGEX = Regex("""\b(240|360|480|540|720|1080|1440|2160)p\b|\b(4K)\b""", RegexOption.IGNORE_CASE)
+
+fun localVideoDistinguisher(title: String): String? {
+    val episode = EPISODE_SEASON_REGEX.find(title)?.let { match ->
+        val (season, episode) = match.destructured
+        "S${season.toInt()} E${episode.toInt()}"
+    } ?: EPISODE_WORD_REGEX.find(title)?.let { match ->
+        "Episode ${match.groupValues[1].toInt()}"
+    } ?: EPISODE_BARE_REGEX.find(title)?.let { match ->
+        "Episode ${match.groupValues[1].toInt()}"
+    }
+    val part = PART_REGEX.find(title)?.let { "Part ${it.groupValues[1].toInt()}" }
+    val quality = QUALITY_REGEX.find(title)?.let { match ->
+        match.groupValues[1].takeIf { it.isNotEmpty() }?.let { "${it}p" }
+            ?: match.groupValues[2].uppercase()
+    }
+    return listOfNotNull(episode, part, quality)
+        .takeIf { it.isNotEmpty() }
+        ?.joinToString(" · ")
+}
+
+/**
  * Which of the two folders a row came from, for the row's subtitle. A
  * `relative_path` reads `Movies/…` / `Download/…`; a `_data` path carries the
  * same folders after a `/`. Anything else is honest about being neither.

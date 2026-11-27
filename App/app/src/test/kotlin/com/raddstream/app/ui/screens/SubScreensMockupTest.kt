@@ -273,6 +273,32 @@ class SubScreensMockupTest {
     }
 
     @Test
+    fun localLibraryRowsShowTheEpisodeThatTellsSameNamedFilesApart() {
+        // Video-audit #40: two files called "River of No Return (2026)
+        // Episode 15" and "… Episode 16" both read "River of No Return
+        // (2…" at one line. Each row's details line leads with its
+        // episode, so the pair differs even where the title still cuts.
+        // Each episode string matches two nodes per file — its title node
+        // and its details node — so the count pins the details line
+        // carrying it, not just the title.
+        compose.setContent {
+            RaddStreamTheme {
+                LocalFolderVideosContent(
+                    folder = groupVideosIntoFolders(
+                        listOf(
+                            localFile(uri = "content://media/1", title = "River of No Return (2026) Episode 15", folder = "Movies"),
+                            localFile(uri = "content://media/2", title = "River of No Return (2026) Episode 16", folder = "Movies"),
+                        ),
+                    ).first { it.path == "Movies" },
+                    onPlay = {},
+                )
+            }
+        }
+        compose.onAllNodesWithText("Episode 15", substring = true).assertCountEquals(2)
+        compose.onAllNodesWithText("Episode 16", substring = true).assertCountEquals(2)
+    }
+
+    @Test
     fun localLibraryFolderVideoPlayButtonPlaysThatFile() {
         var played: LocalVideoFile? = null
         compose.setContent {

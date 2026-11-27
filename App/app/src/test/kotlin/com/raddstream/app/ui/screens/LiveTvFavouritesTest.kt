@@ -170,7 +170,7 @@ class LiveTvFavouritesTest {
     }
 
     @Test
-    fun favouritesChipIs48dpTallLikeAll() {
+    fun favouritesChipIs36dpTallLikeAll() {
         compose.setContent {
             RaddStreamTheme {
                 LiveTvCategoryRow(
@@ -180,7 +180,7 @@ class LiveTvFavouritesTest {
                 )
             }
         }
-        val expectedPx = with(compose.density) { 48.dp.toPx() }
+        val expectedPx = with(compose.density) { 36.dp.toPx() }
         val height = compose.onNodeWithTag("liveTv_chip_favourites")
             .fetchSemanticsNode().boundsInRoot.height
         assertEquals(expectedPx, height, 1f)

@@ -24,10 +24,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SelectableChipColors
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -96,7 +98,7 @@ fun ScrollingChipRow(
     contentPadding: PaddingValues = PaddingValues(horizontal = RaddTokens.Space.Gutter),
     verticalAlignment: Alignment.Vertical = Alignment.Top,
     horizontalSpacing: Dp = RaddTokens.Space.Sm,
-    fadeHeight: Dp = 48.dp,
+    fadeHeight: Dp = 36.dp,
     rowTestTag: String? = null,
     fadeTestTag: String? = null,
     content: LazyListScope.() -> Unit,
@@ -145,12 +147,13 @@ fun ScrollingChipRow(
  * instead of each hand-rolling its own copy.
  */
 @Composable
-internal fun RowEndFade(modifier: Modifier = Modifier, height: Dp = 48.dp) {
+internal fun RowEndFade(modifier: Modifier = Modifier, height: Dp = 36.dp) {
     // The fade needs an explicit height: fillMaxHeight() collapses to 0
     // here — the parent Box is wrap-content inside a scrollable column,
-    // so there is no definite height to fill. The default 48dp is the
-    // height of the filter, Browse and Live TV rows; callers with
-    // shorter rows pass their own height.
+    // so there is no definite height to fill. The default 36dp is the
+    // height of the filter, Browse and Live TV rows (video-audit #38:
+    // chips shrank from the 48dp floor); callers with shorter rows pass
+    // their own height. The WIDTH stays 48dp — see Audit #11 below.
     //
     // Audit #11: the strip itself is 48dp wide now, not 24dp — a 24dp
     // fade on a 360dp row dims only the last sliver of the cut chip, so
@@ -224,10 +227,13 @@ enum class RaddChipStyle {
 /**
  * A4-F3: the one chip. Filter delegates to Material3 FilterChip (which is
  * what keeps `selected` semantics — MyListMockupScreenTest pins
- * assertIsSelected() on the sort chips) with the 48dp touch-target floor
- * applied once, here, instead of at every call site. Navigation is the
- * Browse Surface pill (24dp radius, transparent, 1dp outlineVariant,
- * 12dp/16dp inner padding).
+ * assertIsSelected() on the sort chips) with the 36dp height floor
+ * applied once, here, instead of at every call site (video-audit #38:
+ * the 48dp floor made every chip row eat poster space; the user's
+ * standing direction is smaller chips). The label rides labelMedium
+ * (12sp) for the same reason — a bare Text would inherit FilterChip's
+ * labelLarge. Navigation is the Browse Surface pill (24dp radius,
+ * transparent, 1dp outlineVariant, 12dp/8dp inner padding).
  *
  * Per-screen selected fills are deliberate and survive through [colors]:
  * every screen uses [raddFilterChipColors] now (H3: Home's
@@ -302,7 +308,14 @@ fun RaddChip(
         RaddChipStyle.Filter -> FilterChip(
             selected = selected,
             onClick = onClick,
-            label = label,
+            // Video-audit #38: the label is labelMedium (12sp), not the
+            // labelLarge a bare Text inherits from FilterChip — applied
+            // here, once, so all 16 call sites shrink together.
+            label = {
+                CompositionLocalProvider(LocalTextStyle provides MaterialTheme.typography.labelMedium) {
+                    label()
+                }
+            },
             colors = colors,
             shape = shape,
             leadingIcon = resolvedLeadingIcon,
@@ -310,8 +323,11 @@ fun RaddChip(
             enabled = enabled,
             interactionSource = pressSource,
             // Audit #54: a FilterChip is 32 dp tall — the touch-target
-            // floor is 48 dp, so the chip itself carries it.
-            modifier = modifier.heightIn(min = 48.dp).pressScale(pressSource),
+            // floor was 48 dp, so the chip itself carried it. Video-audit
+            // #38 (Nov 2026): the floor is 36 dp now — the 48dp chips ate
+            // the space the posters need, and the user's direction is
+            // smaller chips everywhere.
+            modifier = modifier.heightIn(min = 36.dp).pressScale(pressSource),
         )
 
         RaddChipStyle.Navigation -> Surface(
@@ -324,8 +340,11 @@ fun RaddChip(
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), // token-exempt: hairline border, not spacing
             contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         ) {
-            // E-T4: 16dp of vertical padding takes the tile to >= 48dp.
-            Box(Modifier.padding(horizontal = RaddTokens.Space.Md, vertical = RaddTokens.Space.Gutter)) {
+            // E-T4: 16dp of vertical padding took the tile to >= 48dp.
+            // Video-audit #38: 8dp now — the label is already labelMedium
+            // at the one call site, so the pill is ~32dp tall, in line
+            // with the Filter chips.
+            Box(Modifier.padding(horizontal = RaddTokens.Space.Md, vertical = RaddTokens.Space.Sm)) {
                 label()
             }
         }

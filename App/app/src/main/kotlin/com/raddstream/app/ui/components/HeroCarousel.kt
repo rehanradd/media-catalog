@@ -539,11 +539,11 @@ fun HeroSkeleton(modifier: Modifier = Modifier) {
                 // The real slide's text column is 8dp-spaced, not 10dp.
                 verticalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm),
             ) {
-                // Title: 28sp displaySmall, one 32dp line. The real title allows
+                // Title: 24sp displaySmall, one 28dp line. The real title allows
                 // two lines, but a one-line title is the common case — a
                 // second bar would over-reserve every short title.
                 ShimmerBox(
-                    Modifier.fillMaxWidth(0.55f).height(32.dp).testTag("heroTitleSkeleton"), // token-exempt: skeleton title bar, fixed illustration geometry
+                    Modifier.fillMaxWidth(0.55f).height(28.dp).testTag("heroTitleSkeleton"), // token-exempt: skeleton title bar, fixed illustration geometry
                     shape = RaddTokens.Shape.Poster,
                 )
                 // Meta line: one bodyMedium line (16dp) — the real meta line
@@ -552,16 +552,18 @@ fun HeroSkeleton(modifier: Modifier = Modifier) {
                     Modifier.width(180.dp).height(20.dp), // token-exempt: skeleton meta bar, fixed illustration geometry
                     shape = RaddTokens.Shape.Poster,
                 )
-                // Action row: Watch Now AND My List, each 40dp min, 8dp
-                // apart, 28dp corners — the old skeleton drew one bar and
-                // the second button appeared out of nowhere on load.
+                // Action row: Watch Now AND My List, equal halves at the
+                // 40dp button height, 8dp apart, 28dp corners — the old
+                // skeleton drew a 192dp bar and an 88dp bar (the 2f/1f
+                // split video-audit #28 removed), so the second button
+                // appeared out of nowhere on load.
                 Row(horizontalArrangement = Arrangement.spacedBy(RaddTokens.Space.Sm)) {
                     ShimmerBox(
-                        Modifier.width(192.dp).height(HERO_BUTTON_HEIGHT_DP.dp), // token-exempt: skeleton button bar, fixed illustration geometry
+                        Modifier.width(160.dp).height(HERO_BUTTON_HEIGHT_DP.dp), // token-exempt: skeleton button bar, fixed illustration geometry
                         shape = RaddTokens.Shape.Pill,
                     )
                     ShimmerBox(
-                        Modifier.width(88.dp).height(HERO_BUTTON_HEIGHT_DP.dp), // token-exempt: skeleton button bar, fixed illustration geometry
+                        Modifier.width(160.dp).height(HERO_BUTTON_HEIGHT_DP.dp), // token-exempt: skeleton button bar, fixed illustration geometry
                         shape = RaddTokens.Shape.Pill,
                     )
                 }
@@ -740,18 +742,24 @@ private fun HeroSlide(
         // 2 — vertical scrim: a multi-stop bottom fade into the page
         // background (review redesign, Nov 2026). The old gradient faded
         // too late and too softly, so baked-in poster text bled behind
-        // the title and buttons; this one is clear through the top half
-        // (the dots ride the top end now, on the art) and
-        // 0.78 at 67% before landing at 0.92 at the bottom. Gemini home
-        // review (Nov 2026): the Dragon Ball Super title sat over bright
-        // yellow/white art with only the button area scrimmed — the scrim
-        // now covers the lower 55% with 0.78 behind the title and meta.
+        // the title and buttons; this one is clear through the top fifth
+        // (the dots ride the top end now, on the art) and climbs to 0.70
+        // at 60% and 0.88 at 80% before landing at 0.95 at the bottom.
+        // Gemini home review (Nov 2026): the Dragon Ball Super title sat
+        // over bright yellow/white art with only the button area
+        // scrimmed — the scrim now covers the lower 80% with 0.70 behind
+        // the title and meta.
         // Screen audit #9 (Nov 2026): the mid stop rose 0.65 → 0.78 —
         // the title sits in the mid-zone, and on bright yellow art 0.65
         // left it marginal; stop positions unchanged.
-        // The mid stop is 0.67f, not 0.68f: 0.68f is the poster-ratio
-        // literal owned by CardGeometry (CardGeometryTest bans it in
-        // every other UI source), and 1% of hero height is invisible.
+        // Video-audit #29 (Nov 2026): the title was unreadable over a
+        // bright pink/white hero — white 28sp on art with the scrim at
+        // 0.78 only behind the buttons. The fade now starts at 20% and
+        // the title zone (roughly 40–65% of the slide) sits at 0.35–
+        // 0.70, so the words read on any art. The mid stops avoid 0.68f:
+        // that is the poster-ratio literal owned by CardGeometry
+        // (CardGeometryTest bans it in every other UI source), and 1% of
+        // hero height is invisible.
         // Session 121 (P-20): the scrim protects the title/badges against
         // bright art and blends smoothly into the page canvas at the
         // bottom of the full-bleed hero.
@@ -760,9 +768,11 @@ private fun HeroSlide(
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        0.45f to MaterialTheme.colorScheme.background.copy(alpha = 0f),
-                        0.67f to MaterialTheme.colorScheme.background.copy(alpha = 0.78f),
-                        1f to MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
+                        0.20f to MaterialTheme.colorScheme.background.copy(alpha = 0f),
+                        0.40f to MaterialTheme.colorScheme.background.copy(alpha = 0.35f),
+                        0.60f to MaterialTheme.colorScheme.background.copy(alpha = 0.70f),
+                        0.80f to MaterialTheme.colorScheme.background.copy(alpha = 0.88f),
+                        1f to MaterialTheme.colorScheme.background.copy(alpha = 0.95f),
                     )
                 ),
         )
@@ -795,15 +805,21 @@ private fun HeroSlide(
             // Bold, -0.3sp tracking. The title was 36sp Bold
             // (displaySmall) — bigger than the redesign asks, and the
             // weight was already Bold, so the legibility defect was
-            // the scrim above, not the weight. 28sp keeps two lines
-            // inside the 320dp hero with room for the meta + CTAs.
+            // the scrim above, not the weight.
+            // Video-audit #29 (Nov 2026) + the user's standing direction
+            // (smaller text everywhere): 24sp Bold, 28sp line — the
+            // 28sp title's two lines, with the reason + meta + buttons,
+            // needed ~196dp inside a 220dp hero, so the column's top
+            // (the reason line) sat inside the dots band and the title's
+            // first line clipped at larger font scales. 24sp keeps two
+            // lines inside the taller hero with the dots clear above.
             // The sizes ride brandSp, not raw .sp literals — the
             // brand ramp owns every sp (BrandDriftTest).
             Text(
                 text = title,
                 style = RaddEmphasized.displaySmall.copy(
-                    fontSize = brandSp(28),
-                    lineHeight = brandSp(32),
+                    fontSize = brandSp(24),
+                    lineHeight = brandSp(28),
                     letterSpacing = brandSp(-0.3),
                 ),
                 color = MaterialTheme.colorScheme.onBackground,
@@ -849,13 +865,19 @@ private fun HeroSlide(
                     // Mockup (Nov 2026): the two buttons share the slide's
                     // width equally and read in sentence case — "Watch now" /
                     // "My list" (P0-7: the ALL-CAPS read was a 2016 tell).
-                    // The inset card leaves each button ~144dp wide, and the
-                    // default 24dp content padding + 22dp icon pushed
-                    // "Watch now" onto two lines — so both buttons take
-                    // 12dp of content padding and an 18dp icon, which fits
-                    // the longest label on one line with room to spare.
+                    // Video-audit #28 (Nov 2026): the split used to be 2f/1f
+                    // — "Watch now" took two thirds and "My list" was squeezed
+                    // to one third, its pill running to the screen edge on a
+                    // 360dp phone. Both buttons are 1f now, equal halves, and
+                    // the labels are labelMedium single-line with ellipsis, so
+                    // neither can push the other off the screen at any font
+                    // scale. The inset card is gone (full-bleed hero), so each
+                    // button is ~160dp wide; the default 24dp content padding
+                    // + 22dp icon pushed "Watch now" onto two lines — both
+                    // buttons take 12dp of content padding and an 18dp icon,
+                    // which fits the longest label on one line with room.
                     contentPadding = PaddingValues(horizontal = RaddTokens.Space.Md, vertical = RaddTokens.Space.Sm),
-                    modifier = Modifier.weight(2f).heightIn(min = HERO_BUTTON_HEIGHT_DP.dp).pressScale(watchNowSource),
+                    modifier = Modifier.weight(1f).heightIn(min = HERO_BUTTON_HEIGHT_DP.dp).pressScale(watchNowSource),
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.ic_player_play_filled),
@@ -863,15 +885,25 @@ private fun HeroSlide(
                         modifier = Modifier.size(18.dp), // token-exempt: icon size, not spacing
                     )
                     Spacer(Modifier.width(RaddTokens.Space.Sm))
-                    Text(Brand.copy("hero_watch_now", "Watch now"), fontWeight = FontWeight.Bold)
+                    Text(
+                        Brand.copy("hero_watch_now", "Watch now"),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
                 // Session 121 (P-26): My List on the hero, so saving a title does not
                 // need a trip to its details page first. The filled heart says saved.
                 // H1 (2027 Home fix): tonal now, not a scrim pill — the secondary
                 // action sits on surfaceContainerHigh with onSurface text, no
-                // border, no scrim: the hierarchy reads Play (2f, filled jade)
-                // vs My List (1f, tonal), and the tonal surface survives any
+                // border, no scrim: the hierarchy reads Play (filled jade)
+                // vs My List (tonal), and the tonal surface survives any
                 // art behind it without pretending to be part of the artwork.
+                // Video-audit #28 (Nov 2026): equal weight with Watch now
+                // (1f each — the old 2f/1f split squeezed this button to a
+                // third of the row); labelMedium single-line with ellipsis,
+                // like its neighbour, so it can never overflow the row.
                 Button(
                     onClick = onToggleFavorite,
                     shape = RaddTokens.Shape.Pill,
@@ -897,7 +929,13 @@ private fun HeroSlide(
                         modifier = Modifier.size(18.dp), // token-exempt: icon size, not spacing
                     )
                     Spacer(Modifier.width(RaddTokens.Space.Sm))
-                    Text(if (isFavorite) "Saved" else "My list", fontWeight = FontWeight.Bold)
+                    Text(
+                        if (isFavorite) "Saved" else "My list",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }
@@ -1071,12 +1109,15 @@ internal fun shouldAdvanceHero(
  * the hero action row was 56dp tall — M3's large button on a banner that
  * already eats 320–400dp of the first viewport. 40dp was M3's small button
  * and the size Netflix's Play button ships at; the review's 48dp touch
- * floor wins for these two — Watch now and My list are the hero's only
- * controls, and My List had no contained 48dp target at all. Both buttons
- * still span most of the hero's width, so the target stays large. The
- * skeleton placeholder reads this same constant.
+ * floor won for these two then — Watch now and My list are the hero's only
+ * controls, and My List had no contained 48dp target at all. Video-audit
+ * #28 (Nov 2026) + the user's standing direction (smaller buttons): the
+ * 40dp small button is the size now — still a large target on a banner,
+ * and the equal 1f/1f split gives each button ~160dp of width, so the
+ * smaller height costs no reachability. Both buttons still span most of
+ * the hero's width. The skeleton placeholder reads this same constant.
  */
-internal const val HERO_BUTTON_HEIGHT_DP = 48f
+internal const val HERO_BUTTON_HEIGHT_DP = 40f
 internal const val HERO_ACTION_BOTTOM_DP = 20f
 private const val DOT_TOUCH_HEIGHT_DP = 48f
 
@@ -1110,7 +1151,14 @@ private val DOT_TOUCH_WIDTH: Dp = 48.dp
 // with the other hero geometry consts, NOT above the function: the
 // @Composable annotation between the two KDocs belongs to heroHeight(),
 // and a const placed there steals it (CI, 24 Nov 2026).
-private const val HERO_HEIGHT_MIN_DP = 220f
+// Video-audit #29 (Nov 2026): the floor was 220dp — on a 360dp phone the
+// 16:9 height (202.5dp) coerced to 220dp, but the bottom text column
+// (reason + two-line title + meta + buttons) needs ~176dp at font scale
+// 1.0 and ~204dp at 1.3x, and the dots band occupies the top 16–64dp.
+// At 220dp the column's top (the reason line) sat inside the dots band
+// and the title's first line clipped at larger font scales. 272dp fits
+// the column below the dots band up to ~1.3x font scale.
+private const val HERO_HEIGHT_MIN_DP = 272f
 private const val HERO_HEIGHT_MAX_DP = 360f
 
 /**
@@ -1123,9 +1171,11 @@ private const val HERO_HEIGHT_MAX_DP = 360f
 @Composable
 /**
  * H1 (2027 Home fix): 16:9-derived — the hero is a 16:9 backdrop, so its
- * height follows the screen width (220dp floor, 360dp cap). Phones get
- * 220dp where they had 240/280dp — a smaller hero, more rail above the
- * fold. A tablet (expanded width, 840dp+) caps at 360dp. [HeroSkeleton]
+ * height follows the screen width (272dp floor, 360dp cap). Phones get
+ * 272dp where they had 220dp — a taller hero, because the bottom text
+ * column plus the dots band need the room (video-audit #29): at 220dp
+ * the reason line sat inside the dots band and the title clipped. A
+ * tablet (expanded width, 840dp+) caps at 360dp. [HeroSkeleton]
  * reads this same height, so the loading footprint shrinks with it.
  */
 private fun heroHeight(): Dp {

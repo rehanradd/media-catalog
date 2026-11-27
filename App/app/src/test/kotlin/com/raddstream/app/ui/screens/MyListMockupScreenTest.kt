@@ -125,17 +125,17 @@ class MyListMockupScreenTest {
     }
 
     @Test
-    fun filterChipsAre48dpTall() {
+    fun filterChipsAre36dpTall() {
         filterRowContent(filter = MyListFilter.ALL, sort = ListSort.RECENT)
         // FilterChip's own visual height is 32dp — the mockup's chips are
-        // 48dp, the touch-target floor, so the chip itself carries it.
+        // 36dp, the video-audit #38 chip floor, so the chip itself carries it.
         listOf(
             "myListFilterChip_ALL",
             "myListFilterChip_MOVIES",
             "myListFilterChip_SERIES",
             "myListFilterChip_DOWNLOADS",
         ).forEach { tag ->
-            assertEquals("$tag is not 48dp tall", 48.dp, chipHeightDp(tag))
+            assertEquals("$tag is not 36dp tall", 36.dp, chipHeightDp(tag))
         }
     }
 

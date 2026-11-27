@@ -195,7 +195,7 @@ class ScrollingChipRowTest {
             }
         }
         compose.onNodeWithTag("test-fade").assertExists()
-        compose.onNodeWithTag("test-fade").assertHeightIsEqualTo(48.dp)
+        compose.onNodeWithTag("test-fade").assertHeightIsEqualTo(36.dp)
     }
 
     @Test

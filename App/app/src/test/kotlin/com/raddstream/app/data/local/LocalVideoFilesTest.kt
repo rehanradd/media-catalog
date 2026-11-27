@@ -68,6 +68,40 @@ class LocalVideoFilesTest {
     }
 
     @Test
+    fun distinguisherFindsTheEpisodeNumber() {
+        // Video-audit #40: the episode is the difference between two
+        // same-named files, and it sits past the title's truncation.
+        assertEquals("Episode 15", localVideoDistinguisher("River of No Return (2026) Episode 15 kisskh"))
+        assertEquals("Episode 23", localVideoDistinguisher("Parizaad Ep 23"))
+        assertEquals("Episode 3", localVideoDistinguisher("Show Ep. 3"))
+        assertEquals("Episode 15", localVideoDistinguisher("River of No Return E15"))
+        assertEquals("S1 E7", localVideoDistinguisher("Show S01E07"))
+    }
+
+    @Test
+    fun distinguisherCombinesEpisodeAndQuality() {
+        // The same episode in two qualities must still differ.
+        assertEquals("Episode 15 · 480p", localVideoDistinguisher("River of No Return (2026) Episode 15 480p"))
+        assertEquals("Episode 8 · 720p", localVideoDistinguisher("The Remarried Empress Episode 8 720p"))
+        assertEquals("S1 E7 · 1080p", localVideoDistinguisher("Show S01E07 1080p"))
+    }
+
+    @Test
+    fun distinguisherFallsBackToPartOrQuality() {
+        assertEquals("Part 2", localVideoDistinguisher("Movie Part 2"))
+        assertEquals("720p", localVideoDistinguisher("Movie 720p"))
+        assertEquals("4K", localVideoDistinguisher("Movie 4k"))
+        assertEquals("Part 2 · 720p", localVideoDistinguisher("Movie Part 2 720p"))
+    }
+
+    @Test
+    fun distinguisherIsNullWhenNothingDistinguishes() {
+        assertNull(localVideoDistinguisher("my movie"))
+        assertNull(localVideoDistinguisher("Local video"))
+        assertNull(localVideoDistinguisher("River of No Return (2026)"))
+    }
+
+    @Test
     fun folderNamesMoviesAndDownloadsFromEitherPathShape() {
         assertEquals("Movies", localVideoFolder("Movies/RaddStream/", null))
         assertEquals("Downloads", localVideoFolder("Download/", null))

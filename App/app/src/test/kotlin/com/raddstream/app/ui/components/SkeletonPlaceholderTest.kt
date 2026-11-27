@@ -140,8 +140,8 @@ class SkeletonPlaceholderTest {
     }
 
     /**
-     * The hero title placeholder must be the hero title's own 32dp line
-     * height (the 28sp copy), not displaySmall's 44dp token.
+     * The hero title placeholder must be the hero title's own 28dp line
+     * height (the 24sp copy, video-audit #29), not displaySmall's 44dp token.
      */
     @Test
     fun heroTitleSkeletonMatchesHeroTitleLineHeight() {
@@ -154,6 +154,6 @@ class SkeletonPlaceholderTest {
         // B-42 (P2-11): the skeleton mounts only after the 200 ms delay
         // gate — advance past it before measuring.
         compose.mainClock.advanceTimeBy(SKELETON_DELAY_MS + 50)
-        compose.onNodeWithTag("heroTitleSkeleton").assertHeightIsEqualTo(32.dp)
+        compose.onNodeWithTag("heroTitleSkeleton").assertHeightIsEqualTo(28.dp)
     }
 }

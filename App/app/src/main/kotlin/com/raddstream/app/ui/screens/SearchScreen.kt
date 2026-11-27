@@ -64,6 +64,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -79,6 +80,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -950,15 +952,23 @@ private fun QuickFilterChip(
         colors = raddFilterChipColors(),
         selected = selected,
         onClick = onClick,
-        label = label,
+        // Video-audit #38: the label is labelMedium (12sp), like RaddChip
+        // — a bare Text inherits FilterChip's labelLarge.
+        label = {
+            CompositionLocalProvider(LocalTextStyle provides MaterialTheme.typography.labelMedium) {
+                label()
+            }
+        },
         // P2-chip2027: the selected check — the M3 Expressive mark, the
         // same one RaddChip shows (this chip keeps its own 0.96 press
         // scale instead of RaddChip's 0.97, so it takes the shared icon
         // rather than the shared chip).
         leadingIcon = if (selected) ({ SelectedCheckIcon() }) else null,
         interactionSource = interactionSource,
+        // Video-audit #38: 36dp, not the 48dp floor — same smaller-chip
+        // direction as RaddChip.
         modifier = modifier
-            .heightIn(min = 48.dp)
+            .heightIn(min = 36.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale },
     )
 }
@@ -1381,6 +1391,7 @@ internal fun FilterRail(
                 ) {
                     // S8 (round 2): the house sliders glyph, not the Material default Tune icon.
                     Icon(painterResource(R.drawable.ic_action_sliders), contentDescription = null, modifier = Modifier.size(18.dp))
+                    // Video-audit #38: labelMedium, like every other chip.
                     Text(filtersLabel, style = MaterialTheme.typography.labelMedium)
                 }
             },
@@ -1396,15 +1407,16 @@ internal fun FilterRail(
                 borderWidth = 1.dp,
                 selectedBorderWidth = 1.dp,
             ),
-            // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
+            // Audit #54: a FilterChip is 32 dp tall — the floor was 48 dp, so
+            // the chip itself carried it. Video-audit #38: 36 dp now.
             modifier = Modifier
-                .heightIn(min = 48.dp)
+                .heightIn(min = 36.dp)
                 .semantics { contentDescription = filtersA11y },
         )
         // A4-F3: the scrolling row is ScrollingChipRow now — Home's
         // pattern, shared: the row is fillMaxWidth inside the Box and the
         // fade is an overlay aligned to its end — the LazyRow's own height
-        // is its content, so the Box stays 48dp.
+        // is its content, so the Box stays 36dp.
         ScrollingChipRow(
             modifier = Modifier.weight(1f),
             state = listState,
@@ -2749,12 +2761,14 @@ internal fun FilterSheetBody(
                         colors = raddFilterChipColors(),
                         selected = state.filters.includedOnly,
                         onClick = { onSetIncludedOnly(!state.filters.includedOnly) },
-                        label = { Text("Included in my plan") },
+                        // Video-audit #38: labelMedium, like every other chip.
+                        label = { Text("Included in my plan", style = MaterialTheme.typography.labelMedium) },
                         // P2-chip2027: the selected check, as on every
                         // other selected filter chip.
                         leadingIcon = if (state.filters.includedOnly) ({ SelectedCheckIcon() }) else null,
-                        // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
-                        modifier = Modifier.heightIn(min = 48.dp),
+                        // Audit #54: a FilterChip is 32 dp tall — the floor was 48 dp, so the
+                        // chip itself carried it. Video-audit #38: 36 dp now.
+                        modifier = Modifier.heightIn(min = 36.dp),
                     )
                 }
                 HorizontalDivider(Modifier.padding(top = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
@@ -2900,8 +2914,8 @@ private fun <T> FacetChips(
 ) {
     FacetHeader(title = title, icon = icon)
     // F10 (Batch B): 8dp gaps read as five separate rows of buttons; 6dp
-    // reads as one group. The 48dp touch floor stays — density is the
-    // gaps, never the targets.
+    // reads as one group. The 36dp chip floor stays (video-audit #38) —
+    // density is the gaps, never the targets.
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -2911,15 +2925,17 @@ private fun <T> FacetChips(
                 colors = raddFilterChipColors(),
                 selected = isSelected(option),
                 onClick = { onSelect(option) },
-                label = { Text(label(option)) },
+                // Video-audit #38: labelMedium, like every other chip.
+                label = { Text(label(option), style = MaterialTheme.typography.labelMedium) },
                 // P2-chip2027: the selected check — the M3 Expressive
                 // mark, the same one RaddChip shows.
                 leadingIcon = if (isSelected(option)) ({ SelectedCheckIcon() }) else null,
-                // Audit #54: a FilterChip is 32 dp tall — the touch-target floor is 48 dp, so the chip itself carries it.
+                // Audit #54: a FilterChip is 32 dp tall — the floor was 48 dp, so the
+                // chip itself carried it. Video-audit #38: 36 dp now.
                 modifier = if (label(option) == "All") {
-                    Modifier.heightIn(min = 48.dp).semantics { contentDescription = allDescription }
+                    Modifier.heightIn(min = 36.dp).semantics { contentDescription = allDescription }
                 } else {
-                    Modifier.heightIn(min = 48.dp).semantics { contentDescription = "$title: ${label(option)}" }
+                    Modifier.heightIn(min = 36.dp).semantics { contentDescription = "$title: ${label(option)}" }
                 },
             )
         }
