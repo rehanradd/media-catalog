@@ -2103,6 +2103,10 @@ internal fun SearchNoResultsContent(
     onSeeAllTrending: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    // Design direction (Nov 2026): one poster-card size on this screen —
+    // the no-results rail shares [searchPosterCardWidthDp] with the
+    // discovery rail and the 3-up grids.
+    val cardWidthDp = searchPosterCardWidthDp(LocalConfiguration.current.screenWidthDp)
     val filterNames = activeFilterSummary(state.filters)
     Column(
         // SE-5 (round 2): the no-results root is a polite live region — a
