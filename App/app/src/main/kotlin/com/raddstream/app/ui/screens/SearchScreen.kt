@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -42,6 +43,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -426,6 +428,14 @@ fun SearchScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        // Video audit #19 (Nov 2026): the search field is the top bar — a
+        // custom Row, not a TopAppBar — so nothing applied the status-bar
+        // inset to it and the field drew half under the clock. The bar
+        // carries its own statusBarsPadding() (see SearchTopBar), so the
+        // Scaffold adds no insets of its own — the Home pattern: the
+        // default contentWindowInsets would add the status bar to
+        // contentPadding.top a second time.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         // P1-10 (Nov 2026): the field is the top bar — sticky while the
         // results scroll (the Scaffold bar never scrolls away), and the
         // in-content "Search" headline is gone: the bar + pill already say
@@ -685,7 +695,11 @@ private fun SearchTopBar(
     focusRequester: FocusRequester? = null,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        // Video audit #19 (Nov 2026): the field is the top bar, so it
+        // must clear the status bar itself — a custom Row gets no inset
+        // from the Scaffold (only TopAppBar does). Without this the field
+        // sat half under the clock on edge-to-edge devices.
+        modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
