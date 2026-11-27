@@ -98,7 +98,7 @@ fun ScrollingChipRow(
     contentPadding: PaddingValues = PaddingValues(horizontal = RaddTokens.Space.Gutter),
     verticalAlignment: Alignment.Vertical = Alignment.Top,
     horizontalSpacing: Dp = RaddTokens.Space.Sm,
-    fadeHeight: Dp = 36.dp,
+    fadeHeight: Dp = 36.dp, // token-exempt: chip-row height (geometry, not spacing)
     rowTestTag: String? = null,
     fadeTestTag: String? = null,
     content: LazyListScope.() -> Unit,
@@ -147,7 +147,7 @@ fun ScrollingChipRow(
  * instead of each hand-rolling its own copy.
  */
 @Composable
-internal fun RowEndFade(modifier: Modifier = Modifier, height: Dp = 36.dp) {
+internal fun RowEndFade(modifier: Modifier = Modifier, height: Dp = 36.dp) { // token-exempt: chip-row height (geometry, not spacing)
     // The fade needs an explicit height: fillMaxHeight() collapses to 0
     // here — the parent Box is wrap-content inside a scrollable column,
     // so there is no definite height to fill. The default 36dp is the
@@ -327,7 +327,7 @@ fun RaddChip(
             // #38 (Nov 2026): the floor is 36 dp now — the 48dp chips ate
             // the space the posters need, and the user's direction is
             // smaller chips everywhere.
-            modifier = modifier.heightIn(min = 36.dp).pressScale(pressSource),
+            modifier = modifier.heightIn(min = 36.dp).pressScale(pressSource), // token-exempt: chip height (geometry, not spacing)
         )
 
         RaddChipStyle.Navigation -> Surface(

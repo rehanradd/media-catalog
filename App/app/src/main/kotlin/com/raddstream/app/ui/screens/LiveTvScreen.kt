@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -458,14 +457,13 @@ internal fun LiveTvChannelGrid(
     }
     Box(modifier = modifier.fillMaxSize()) {
         LazyVerticalGrid(
-            // Video-audit #24/#36 (Nov 2026): Live TV gets its own column
-            // rule, not the shared 100dp one — on a 360dp phone the shared
-            // rule laid three ~101dp columns, and names cut mid-word after
-            // ~10 characters ("Discover …", "Al Jazeer…"). At 160dp a
-            // narrow phone gets two ~158dp columns, so names + the star fit;
-            // wider screens still gain columns. Browse / My List keep the
-            // shared rule — this is a Live TV fix, not a grid redesign.
-            columns = GridCells.Adaptive(minSize = 160.dp),
+            // Video-audit #24/#36 (Nov 2026): the columns are the shared
+            // [CatalogGridColumns] rule — [CatalogGridRuleTest] owns the one
+            // column rule, and a Live-TV-local GridCells.Adaptive is a
+            // second answer to how many posters fit. Readability comes from
+            // the card, not the column count: two-line names at 12sp read
+            // "Al Jazeera" / "English" where one line cut to "Al Jazeer…",
+            // and the meta is one short line ("News · Urdu").
             state = gridState,
             modifier = Modifier.fillMaxSize().testTag("liveTv_grid"),
             contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp, start = 16.dp, end = 16.dp),
@@ -702,13 +700,19 @@ internal fun languageLabel(code: String?): String? {
  * segment that tells two same-name channels apart — was the part that
  * vanished under the ellipsis. The tile shows the short line; the spoken
  * sentence keeps the full one. Pure, so the shapes are pinned in a unit test.
+ *
+ * A language that names the country ("pakistan" in the language field)
+ * adds nothing the triple does not already say — the triple drops it by
+ * dedup against the country, and the short line drops it the same way,
+ * so the tile never reads "News · pakistan".
  */
 internal fun channelShortMetaLine(channel: LiveTvChannel): String =
     listOfNotNull(
         categoryLabel(channel.category).takeIf { it.isNotBlank() },
         channel.language.trim()
             .takeIf(::isKnownLanguage)
-            ?.let(::languageLabel),
+            ?.let(::languageLabel)
+            ?.takeIf { it.lowercase() != countryLabel(channel.country)?.lowercase() },
     )
         .distinctBy { it.lowercase() }
         .joinToString(" · ")
