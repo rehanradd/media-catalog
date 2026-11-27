@@ -170,8 +170,11 @@ class SearchResultRowTest {
         // The last result scrolls into its own rich row too — the grid's
         // 3-up trio is gone, so every result gets its own row. Item 5 is
         // the Money Heist row (tabs, Movies header, 2 movie rows, Series
-        // header, then this row).
+        // header, then this row). The row staggers in on mount (up to
+        // 300ms), so the assertion waits for the entrance to settle
+        // instead of catching the row mid-fade.
         compose.onNodeWithTag(SearchResultsListTag).performScrollToIndex(5)
+        compose.waitForIdle()
         compose.onNodeWithText("Money Heist").assertIsDisplayed()
         compose.onNodeWithText("2017 · ★ 8.2 · Series").assertIsDisplayed()
     }
