@@ -1,6 +1,7 @@
 package com.raddstream.app.ui
 
 import com.raddstream.app.network.models.Post
+import com.raddstream.app.ui.components.clampHeroPage
 import com.raddstream.app.ui.components.heroMetaLine
 import com.raddstream.app.ui.components.heroSeasonsLabel
 import com.raddstream.app.ui.components.heroTitle
@@ -158,6 +159,34 @@ class HeroCarouselTest {
     fun nextPageNowhereOnDegenerateCount() {
         assertEquals(0, nextHeroPage(0, 0))
         assertEquals(0, nextHeroPage(3, 0))
+    }
+
+    // Video-audit #1 (Nov 2026): the crash on Home followed a return from
+    // Live TV and a hero auto-advance tick. A page the pager held before
+    // the list shrank is stale — the step must wrap safely from it instead
+    // of ever reading a slide that no longer exists.
+    @Test
+    fun nextPageWrapsSafelyFromAStalePage() {
+        assertEquals(0, nextHeroPage(5, 3))
+        assertEquals(2, nextHeroPage(7, 3))
+        assertEquals(1, nextHeroPage(3, 3))
+    }
+
+    // The clamp the LaunchedEffect(posts.size) applies when the list
+    // shrinks under a restored pager: back to the last valid page.
+    @Test
+    fun clampHeroPageHoldsTheLastValidPage() {
+        assertEquals(2, clampHeroPage(5, 3))
+        assertEquals(2, clampHeroPage(2, 3))
+        assertEquals(0, clampHeroPage(0, 3))
+        assertEquals(0, clampHeroPage(0, 1))
+    }
+
+    @Test
+    fun clampHeroPageHandlesDegenerateAndNegativePages() {
+        assertEquals(0, clampHeroPage(5, 0))
+        assertEquals(0, clampHeroPage(0, 0))
+        assertEquals(0, clampHeroPage(-1, 3))
     }
 
     // Samsung RTL (v1.1.2, Issue 3): the banner rotated every 5 s and a manual

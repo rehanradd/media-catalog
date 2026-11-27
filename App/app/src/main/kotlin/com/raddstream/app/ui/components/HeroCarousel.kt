@@ -172,6 +172,16 @@ fun HeroCarousel(
         heroVisible = true
     }
     val pagerState = rememberPagerState(pageCount = { posts.size })
+    // Video-audit #1 (Nov 2026): the hero list can shrink under a restored
+    // pager — return from Live TV with a refreshed, shorter catalog — and
+    // leave currentPage past the last page. A stale page means the pager
+    // reads a slide that no longer exists when the auto-advance tick fires,
+    // so clamp back to the last valid page the moment the list changes.
+    LaunchedEffect(posts.size) {
+        if (posts.isNotEmpty() && pagerState.currentPage >= posts.size) {
+            pagerState.scrollToPage(clampHeroPage(pagerState.currentPage, posts.size))
+        }
+    }
     val scrollScope = rememberCoroutineScope()
     // True while a finger is down on the visible slide's Watch Now button, reported
     // up by HeroSlide. The advance loop reads it per tick (it is deliberately NOT
@@ -229,6 +239,12 @@ fun HeroCarousel(
                 )
             ) continue
             lastChangeMs = SystemClock.uptimeMillis()
+            // Video-audit #1: re-check the page is still in range at this
+            // instant — the list can shrink between the tick and the
+            // advance (a refresh landing while the loop was waiting), and a
+            // stale currentPage would advance from a slide that no longer
+            // exists. Skip the tick instead of advancing.
+            if (pagerState.currentPage >= posts.size) continue
             pagerState.animateScrollToPage(
                 nextHeroPage(pagerState.currentPage, posts.size),
                 animationSpec = RaddMotion.defaultSpatial(),
@@ -994,6 +1010,15 @@ internal fun isKnownLanguage(value: String): Boolean = WireText.isKnownLanguage(
  */
 internal fun nextHeroPage(currentPage: Int, pageCount: Int): Int =
     if (pageCount <= 0) 0 else (currentPage + 1) % pageCount
+
+/**
+ * Video-audit #1 (Nov 2026): the page a restored pager holds when the hero
+ * list shrinks — clamp it to the last valid page, so the pager never reads
+ * a slide that no longer exists. A degenerate count clamps to 0, and a
+ * negative page (never expected, never trusted) clamps up to 0.
+ */
+internal fun clampHeroPage(currentPage: Int, pageCount: Int): Int =
+    if (pageCount <= 0) 0 else currentPage.coerceIn(0, pageCount - 1)
 
 /**
  * Whether the auto-advance loop may take the next slide, pure so the timing
