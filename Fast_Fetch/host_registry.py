@@ -871,6 +871,40 @@ def record_html_observation(host: str, sample_url: str, *,
 
 # ── validation (the audit's standard, reusable by the panel) ────────────────
 
+def html_observation_hosts(observations_path: str | Path | None = None) -> set[str]:
+    """Hosts with prior HTML-instead-of-media observations.
+
+    Read-only: the set of hosts carrying an ``html_observations`` record
+    (count >= 1) in the observations sidecar — i.e. hosts the sweep has
+    already seen answer 200 with an HTML page where the ledger expects
+    media. The parked-HEAD-200 check (``fast_probe._probe_host``) loads
+    this once per batch to decide which HEAD-200 hosts earn a verifying
+    ranged GET. Every host ever marked parked also has a record here
+    (``_mark_host_parked`` is only called from
+    :func:`record_html_observation`), so the sidecar alone covers the
+    "prior parked observation" signal. Never raises; a missing or
+    unreadable sidecar is an empty set.
+    """
+    try:
+        data = _load_observations(observations_path)
+        obs = data.get("html_observations")
+        if not isinstance(obs, dict):
+            return set()
+        hosts: set[str] = set()
+        for host, rec in obs.items():
+            if not isinstance(rec, dict):
+                continue
+            try:
+                count = int(rec.get("count") or 0)
+            except (TypeError, ValueError):
+                continue
+            if count >= 1:
+                hosts.add(str(host).lower())
+        return hosts
+    except Exception:
+        return set()
+
+
 def _tls_context():
     ctx = ssl.create_default_context()
     ctx.check_hostname = False

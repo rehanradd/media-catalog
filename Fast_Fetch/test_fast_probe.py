@@ -767,11 +767,19 @@ class ParkedFallbackTests(unittest.TestCase):
 
     PARKED_BODY = (b"<!doctype html><html><head><title>Buy this domain</title>"
                    b"</head><body><h1>This domain is for sale</h1></body></html>")
+    # The animahd.com shape (audit §6, live 2026-11-28): a Sedo parking
+    # page answering HEAD 200 cleanly. The marker sits in the body text,
+    # not the title — the title alone looks like a real site.
+    SEDO_BODY = (b"<!doctype html><html><head>"
+                 b"<title>animahd - a universe of anime</title></head>"
+                 b"<body><p>This domain is parked with Sedo.</p>"
+                 b"<p>Buy this domain at sedo.com</p></body></html>")
     GENERIC_HTML = (b"<html><head><title>Movie download page</title></head>"
                     b"<body>Download links here</body></html>")
     VIDEO_BODY = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00"
 
-    def _run(self, host, groups, mapping, registry=None):
+    def _run(self, host, groups, mapping, registry=None, site_hosts=None,
+             suspect_hosts=None):
         log = []
         factory = _make_factory(_status_map(mapping), log)
         if registry is None:
@@ -780,7 +788,8 @@ class ParkedFallbackTests(unittest.TestCase):
             stats = fast_probe._probe_host(
                 host, groups, session_factory=factory, timeout=5.0,
                 spacing_s=0.0, headers=fast_probe.probe_headers(),
-                out_queue=None)
+                out_queue=None, site_hosts=site_hosts,
+                suspect_hosts=suspect_hosts)
         return stats, log, registry
 
     def _registry(self):
@@ -909,6 +918,165 @@ class ParkedFallbackTests(unittest.TestCase):
         self.assertEqual(stats["get_fallbacks"], 0)
         self.assertEqual(stats["html_observations"], 0)
         registry.record_html_observation.assert_not_called()
+
+    def _requests(self, log):
+        return [e for e in log if e[0] == "request"]
+
+    # ── parked-HEAD-200 (Option A, audit §6) ──────────────────────────
+    #
+    # A parking page that answers HEAD 200 cleanly short-circuited before
+    # any GET, so the sweep never saw its body and the row stayed active.
+    # Now a HEAD 200 on a catalog site's own base host, or on a host with
+    # prior parked/HTML observations, earns ONE verifying ranged GET; only
+    # a parking marker reclassifies the row. A plain host still earns no
+    # GET — that is the cost bound.
+
+    @_public_dns
+    def test_head200_sedo_body_on_site_base_is_parked(self):
+        # (a) The animahd shape: HEAD 200 on a site base, the ranged GET
+        # returns a Sedo parking page -> parked, not active.
+        mapping = {
+            ("animahd.com", "/", "HEAD"): (200, {}, False),
+            ("animahd.com", "/", "GET"): (200, {}, False, self.SEDO_BODY),
+        }
+        registry = self._registry()
+        stats, log, _reg = self._run(
+            "animahd.com", self._one("https://animahd.com/"),
+            mapping, registry=registry,
+            site_hosts={"animahd.com": "animahd"})
+        self.assertEqual(stats["by_status"], {"parked": 1})
+        self.assertEqual(stats["results"]["https://animahd.com/"],
+                         ("parked", 200, "parked"))
+        self.assertEqual(stats["head200_checks"], 1)
+        self.assertEqual(stats["get_fallbacks"], 0)
+        self.assertEqual(stats["html_observations"], 1)
+        registry.record_html_observation.assert_called_once_with(
+            "animahd.com", "https://animahd.com/",
+            redirect_target=None)
+        # The parked verdict is a site-rotation signal for the base host.
+        self.assertEqual(stats["site_signals"], {"animahd": 1})
+        # The verifying GET is a ranged GET, one byte asked.
+        gets = [r for r in self._requests(log) if r[3] == "GET"]
+        self.assertEqual(len(gets), 1)
+        self.assertEqual(gets[0][4].get("Range"), "bytes=0-0")
+
+    @_public_dns
+    def test_head200_sedo_body_on_suspect_host_is_parked(self):
+        # (a) The suspect half of the gate: not a site base, but the host
+        # already has prior parked/HTML observations -> same verdict.
+        mapping = {
+            ("suspect.example", "/f.mp4", "HEAD"): (200, {}, False),
+            ("suspect.example", "/f.mp4", "GET"):
+                (200, {}, False, self.SEDO_BODY),
+        }
+        stats, _log, _reg = self._run(
+            "suspect.example", self._one("http://suspect.example/f.mp4"),
+            mapping, suspect_hosts={"suspect.example"})
+        self.assertEqual(stats["by_status"], {"parked": 1})
+        self.assertEqual(stats["results"]["http://suspect.example/f.mp4"],
+                         ("parked", 200, "parked"))
+        self.assertEqual(stats["head200_checks"], 1)
+        self.assertEqual(stats["get_fallbacks"], 0)
+        self.assertEqual(stats["html_observations"], 1)
+
+    @_public_dns
+    def test_head200_html_without_marker_on_site_base_stays_active(self):
+        # (b) A live file host's HTML page: the verifying GET runs (site
+        # base), the body has no parking marker, so the row stays active
+        # — the check's risk is cost, never correctness — and the HTML
+        # observation is still recorded.
+        mapping = {
+            ("files.example", "/f.mp4", "HEAD"): (200, {}, False),
+            ("files.example", "/f.mp4", "GET"):
+                (200, {}, False, self.GENERIC_HTML),
+        }
+        registry = self._registry()
+        stats, _log, _reg = self._run(
+            "files.example", self._one("http://files.example/f.mp4"),
+            mapping, registry=registry,
+            site_hosts={"files.example": "files"})
+        self.assertEqual(stats["by_status"], {"active": 1})
+        self.assertEqual(stats["results"]["http://files.example/f.mp4"],
+                         ("active", 200, ""))
+        self.assertEqual(stats["head200_checks"], 1)
+        self.assertEqual(stats["get_fallbacks"], 0)
+        self.assertEqual(stats["html_observations"], 1)
+        registry.record_html_observation.assert_called_once()
+
+    @_public_dns
+    def test_head200_sedo_body_on_plain_host_stays_active_no_get(self):
+        # The cost bound: a plain host (neither a site base nor a
+        # suspect) earns no verifying GET even when the body WOULD be
+        # parked — the sweep never fetches it, so the row stays active.
+        mapping = {
+            ("plain.example", "/f.mp4", "HEAD"): (200, {}, False),
+            ("plain.example", "/f.mp4", "GET"):
+                (200, {}, False, self.SEDO_BODY),
+        }
+        registry = self._registry()
+        stats, log, _reg = self._run(
+            "plain.example", self._one("http://plain.example/f.mp4"),
+            mapping, registry=registry)
+        self.assertEqual(stats["by_status"], {"active": 1})
+        self.assertEqual(stats["head200_checks"], 0)
+        self.assertEqual(stats["get_fallbacks"], 0)
+        self.assertEqual(stats["html_observations"], 0)
+        registry.record_html_observation.assert_not_called()
+        self.assertEqual([r[3] for r in self._requests(log)], ["HEAD"])
+
+    @_public_dns
+    def test_head200_get_transport_failure_keeps_active(self):
+        # A GET that never answers (timeout here) proves nothing about
+        # parking: HEAD's active verdict stands, the row is not dropped
+        # to no-verdict and no observation is recorded.
+        def behaviour(host, target, _n, method="HEAD"):
+            if method == "GET":
+                raise socket.timeout("slow server")
+            return (200, {}, False)
+
+        log = []
+        factory = _make_factory(behaviour, log)
+        registry = self._registry()
+        with unittest.mock.patch.object(fast_probe, "host_registry", registry):
+            stats = fast_probe._probe_host(
+                "animahd.com", self._one("https://animahd.com/"),
+                session_factory=factory, timeout=5.0, spacing_s=0.0,
+                headers=fast_probe.probe_headers(), out_queue=None,
+                site_hosts={"animahd.com": "animahd"})
+        self.assertEqual(stats["by_status"], {"active": 1})
+        self.assertEqual(stats["results"]["https://animahd.com/"],
+                         ("active", 200, ""))
+        self.assertEqual(stats["head200_checks"], 1)
+        self.assertEqual(stats["html_observations"], 0)
+        registry.record_html_observation.assert_not_called()
+
+    def test_needs_head200_parked_check_gate(self):
+        self.assertTrue(fast_probe._needs_head200_parked_check(
+            "animahd.com", {"animahd.com": "animahd"}, None))
+        self.assertTrue(fast_probe._needs_head200_parked_check(
+            "suspect.example", None, {"suspect.example"}))
+        self.assertFalse(fast_probe._needs_head200_parked_check(
+            "plain.example", {"animahd.com": "animahd"},
+            {"suspect.example"}))
+        self.assertFalse(fast_probe._needs_head200_parked_check(
+            "plain.example", None, None))
+        self.assertFalse(fast_probe._needs_head200_parked_check(
+            "plain.example", {}, set()))
+
+    def test_merge_counts_head200_checks(self):
+        merged = fast_probe._merge_stats(
+            [{"probed": 1, "verdicts": 1, "no_verdict": 0, "blocked": 0,
+              "reconnects": 0, "redirects_seen": 0, "moves_applied": 0,
+              "get_fallbacks": 0, "head200_checks": 1,
+              "html_observations": 1,
+              "by_status": {"parked": 1}},
+             {"probed": 1, "verdicts": 1, "no_verdict": 0, "blocked": 0,
+              "reconnects": 0, "redirects_seen": 0, "moves_applied": 0,
+              "get_fallbacks": 0, "head200_checks": 0,
+              "html_observations": 0,
+              "by_status": {"active": 1}}])
+        self.assertEqual(merged["head200_checks"], 1)
+        self.assertEqual(merged["by_status"], {"parked": 1, "active": 1})
 
     def test_merge_counts_html_observations(self):
         merged = fast_probe._merge_stats(

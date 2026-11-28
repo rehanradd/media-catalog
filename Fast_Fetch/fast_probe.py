@@ -84,7 +84,13 @@ What this module changes (and what it deliberately does NOT change)
   the probe target is a host on ``KNOWN_HEAD_LIARS``, the pass issues ONE
   ranged GET (``Range: bytes=0-0``, at most 1 KiB read) and classifies
   from that chain instead. Transport errors never trigger a GET — a GET
-  would burn the same budget on the same failure. The pass still writes
+  would burn the same budget on the same failure. A HEAD 200 is active
+  — except on a catalog site's own base host or a host with prior
+  parked/HTML observations, where ONE ranged GET verifies the body is
+  not a parking page (parked-HEAD-200, animahd.com 2026-11-28: a Sedo
+  page answers HEAD 200 cleanly). That check can only reclassify the
+  row to parked; any other GET answer keeps HEAD's active verdict.
+  The pass still writes
   ONLY the five verdict columns (``status``, ``http_status``,
   ``last_checked_at``, ``checked_at``, ``probe_error``) and leaves
   ``is_resumable`` / ``file_size_bytes`` / ``mime_type`` / ``protocol`` /
@@ -836,8 +842,11 @@ def _needs_get_fallback(host: str, status: int, error: str, verdict: str | None)
       chain judges instead.
     Transport errors never trigger a GET: a GET would burn the same
     budget on the same failure, and the full prober reports the transport
-    truth instead. A 2xx HEAD never triggers one either — active is
-    active, whatever the host.
+    truth instead. A 2xx HEAD never triggers the *fallback* either —
+    active is active, whatever the host. The parked-HEAD-200 check
+    (:func:`_needs_head200_parked_check`) is a separate, narrower path:
+    it GETs a HEAD 200 only on a site base or a suspect host, and only
+    a parking marker reclassifies the row.
     """
     if error:
         return False
@@ -846,6 +855,26 @@ def _needs_get_fallback(host: str, status: int, error: str, verdict: str | None)
     if int(status or 0) in (403, 429) or int(status or 0) >= 500:
         return True
     if verdict != link_state.STATUS_ACTIVE and is_known_head_liar(host):
+        return True
+    return False
+
+
+def _needs_head200_parked_check(host: str, site_hosts, suspect_hosts) -> bool:
+    """True when a HEAD-200 answer earns one verifying ranged GET.
+
+    Only a catalog site's own base host (``site_hosts``, the Branch 4
+    map) or a host the sweep already suspects (``suspect_hosts``: hosts
+    with prior parked/HTML observations in the host registry, loaded
+    once per batch). A plain file host never earns one: a parking page
+    lives at a domain root / site base, and GETting every HEAD 200
+    would roughly double the sweep's requests for HTML-serving hosts.
+    The GET itself is narrow — see :func:`_probe_host`: only a parking
+    marker reclassifies the row; any other answer keeps HEAD's active
+    verdict.
+    """
+    if site_hosts is not None and host in site_hosts:
+        return True
+    if suspect_hosts is not None and host in suspect_hosts:
         return True
     return False
 
@@ -1299,7 +1328,8 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
                 timeout: float, spacing_s: float | None,
                 headers: dict, out_queue=None, clearance=None,
                 resolvers=None, stop_event=None, stop_file=None,
-                site_hosts: dict | None = None) -> dict:
+                site_hosts: dict | None = None,
+                suspect_hosts: set | frozenset | None = None) -> dict:
     """Probe one host's distinct URLs, strictly serially, in id order.
 
     Returns per-host stats. When ``out_queue`` is given, verdicts are
@@ -1320,6 +1350,14 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
     site for a discovery-chain recheck. A file host is never in the map,
     so its dead rows never queue a site. ``None`` disables the counting.
 
+    ``suspect_hosts`` (parked-HEAD-200, Option A) is the set of hosts
+    with prior parked/HTML observations in the host registry, loaded
+    once per batch by the driver. Together with ``site_hosts`` it gates
+    the HEAD-200 verifying GET: a HEAD 200 on a host in either set earns
+    one ranged GET whose body is checked for a parking marker (see the
+    check in the walk below). ``None`` disables the suspect half of the
+    gate; a plain host earns no GET either way.
+
     ``stop_event`` / ``stop_file`` (INF-05) are checked before every URL:
     when either asks, the walk stops at once, ``stats["stopped"]`` is True,
     and the verdicts earned so far are already queued. The in-flight URL
@@ -1329,7 +1367,8 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
     stats: dict = {"host": host, "probed": 0, "verdicts": 0, "by_status": {},
                    "no_verdict": 0, "blocked": 0, "reconnects": 0,
                    "redirects_seen": 0, "moves_applied": 0,
-                   "get_fallbacks": 0, "html_observations": 0,
+                   "get_fallbacks": 0, "head200_checks": 0,
+                   "html_observations": 0,
                    "site_signals": {},
                    "stopped": False, "results": {} if out_queue is None else None}
     # H4 R8: one stored clearance per host, read once per host (not once
@@ -1397,6 +1436,35 @@ def _probe_host(host: str, groups: list[dict], *, session_factory=None,
                     _record_move(url, g_final, stats)
             else:
                 verdict = None
+        if (verdict == link_state.STATUS_ACTIVE and not error
+                and int(status or 0) == 200
+                and _needs_head200_parked_check(host, site_hosts, suspect_hosts)):
+            # Parked-HEAD-200 (Option A, audit §6): a parking page answers
+            # HEAD 200 cleanly, so HEAD alone can never prove it parked —
+            # but only a site base or a host the sweep already suspects
+            # earns the verifying GET. The GET is narrow on purpose: only
+            # a parking marker reclassifies the row (to parked, error
+            # "parked" — ``link_state.classify`` already handles that
+            # error at :364, so no change there). Any other GET answer —
+            # a live page, a blocked answer, a transport failure — keeps
+            # HEAD's active verdict. A 200 HTML answer is still one HTML
+            # observation for the host, exactly as in the fallback block
+            # above (never for a blocked/transport answer, so a WAF
+            # refusal can never count toward the parked threshold). The
+            # body read is the same 1 KiB cap the fallback uses
+            # (``GET_READ_CAP``); a Range-honouring media host answers
+            # 206 with one byte, which is neither HTML nor parked.
+            stats["head200_checks"] += 1
+            g_status, g_error, g_final = get_chain(
+                url, session, base_headers=hop_headers, timeout=timeout,
+                spacing_s=spacing_s)
+            g_body = getattr(session, "last_get_body", b"") or b""
+            if not g_error and 200 <= int(g_status or 0) < 300:
+                if _is_html_body(g_body):
+                    _record_html(url, host, g_final, stats)
+                if link_state.is_parked_body(g_body):
+                    status, error, _final = g_status, "parked", g_final
+                    verdict = link_state.STATUS_PARKED
         if verdict is None and _is_mixdrop_url(url):
             # Mixdrop: the bare probe cannot verdict (file page 302s to a
             # survey; the embed page is a JS challenge that a dead file
@@ -1452,6 +1520,7 @@ def _merge_stats(stats_list: list[dict]) -> dict:
     merged: dict = {"hosts": 0, "probed": 0, "verdicts": 0, "by_status": {},
                     "no_verdict": 0, "blocked": 0, "reconnects": 0,
                     "redirects_seen": 0, "moves_applied": 0, "get_fallbacks": 0,
+                    "head200_checks": 0,
                     "html_observations": 0, "site_signals": {},
                     "moves_applied_hosts": [],
                     "stopped": False}
@@ -1465,6 +1534,7 @@ def _merge_stats(stats_list: list[dict]) -> dict:
         merged["redirects_seen"] += stats.get("redirects_seen", 0)
         merged["moves_applied"] += stats.get("moves_applied", 0)
         merged["get_fallbacks"] += stats.get("get_fallbacks", 0)
+        merged["head200_checks"] += stats.get("head200_checks", 0)
         merged["html_observations"] += stats.get("html_observations", 0)
         for pair in stats.get("moves_applied_hosts") or []:
             if pair not in merged["moves_applied_hosts"]:
@@ -1548,6 +1618,16 @@ def run_pilot(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
             site_hosts = domain_resolver.site_hosts_map(registry_path)
         except Exception:
             site_hosts = None
+    # Parked-HEAD-200 (Option A): hosts with prior parked/HTML
+    # observations earn a verifying ranged GET on a HEAD-200 answer.
+    # Loaded once per batch, like site_hosts; a registry failure means
+    # no suspect set, never a failed batch.
+    suspect_hosts = None
+    if host_registry is not None:
+        try:
+            suspect_hosts = host_registry.html_observation_hosts()
+        except Exception:
+            suspect_hosts = None
     headers = probe_headers()
     # H4 R8: the apply sweep reads the shared clearance store (and
     # invalidates a host the moment it challenges again). An absent
@@ -1579,7 +1659,8 @@ def run_pilot(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
                                    headers=headers, out_queue=writer.queue,
                                    clearance=clearance,
                                    stop_event=event, stop_file=stop_path,
-                                   site_hosts=site_hosts)
+                                   site_hosts=site_hosts,
+                                   suspect_hosts=suspect_hosts)
                        for host, groups in selection["hosts"]]
             for future in concurrent.futures.as_completed(futures):
                 stats = future.result()
