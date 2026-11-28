@@ -1111,6 +1111,13 @@ def project(conn: sqlite3.Connection, *, rev: int | None = None, reset: bool = T
         # rating here. title_clean.valid_rating rejects anything outside
         # 0–10 instead of dividing it into a plausible-looking score.
         rating = title_clean.valid_rating(acc.best.get("imdb_rating"))
+        # reset=False (incremental re-projection) upserts: the work_key UNIQUE
+        # constraint used to crash the second run here. Every ledger-derived
+        # column refreshes on conflict; first_seen_at only ever moves earlier.
+        # The _finalize()-derived columns (release_count, best_quality_score,
+        # available_stream, ...) are recomputed below, so they are not in the
+        # update set. reset=True is unchanged: the table is empty, so every
+        # row takes the plain-insert path and the update clause never fires.
         cur = conn.execute(
             """
             INSERT INTO cat_works (work_key, title, original_title, year, work_type,
@@ -1118,6 +1125,29 @@ def project(conn: sqlite3.Connection, *, rev: int | None = None, reset: bool = T
                 imdb_rating, imdb_id, tmdb_id, poster_url, backdrop_urls, site_count,
                 entitlement_model, first_seen_at, updated_at, source_rev)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'free', ?, ?, ?)
+            ON CONFLICT(work_key) DO UPDATE SET
+                title = excluded.title,
+                original_title = excluded.original_title,
+                year = excluded.year,
+                work_type = excluded.work_type,
+                is_animated = excluded.is_animated,
+                is_18_plus = excluded.is_18_plus,
+                synopsis = excluded.synopsis,
+                genres = excluded.genres,
+                languages = excluded.languages,
+                country = excluded.country,
+                industry = excluded.industry,
+                imdb_rating = excluded.imdb_rating,
+                imdb_id = excluded.imdb_id,
+                tmdb_id = excluded.tmdb_id,
+                poster_url = excluded.poster_url,
+                backdrop_urls = excluded.backdrop_urls,
+                site_count = excluded.site_count,
+                entitlement_model = excluded.entitlement_model,
+                first_seen_at = MIN(cat_works.first_seen_at, excluded.first_seen_at),
+                updated_at = excluded.updated_at,
+                source_rev = excluded.source_rev
+            RETURNING id
             """,
             (
                 key, title, _post_column(head, "title", default=title), year, wtype,
@@ -1139,7 +1169,7 @@ def project(conn: sqlite3.Connection, *, rev: int | None = None, reset: bool = T
                 now, rev or 0,
             ),
         )
-        work_id = cur.lastrowid
+        work_id = cur.fetchone()[0]
         work_ids[key] = work_id
         for alias, site, kind in acc.aliases:
             conn.execute(
@@ -1151,7 +1181,7 @@ def project(conn: sqlite3.Connection, *, rev: int | None = None, reset: bool = T
     conn.commit()
     _progress(f"works written: {len(work_ids)} ({time.time() - started:.0f}s)")
     counters = _project_pages(conn, works, work_ids, release_descriptor, now, adult_keys,
-                              catalog_rev=catalog_rev)
+                              catalog_rev=catalog_rev, reset=reset)
     _progress(f"pages/prints done: {counters['releases']} prints, {counters['links']} links "
               f"({time.time() - started:.0f}s)")
     _finalize(conn, works, work_ids, now, counters)
@@ -1291,7 +1321,7 @@ def projection_gap(conn: sqlite3.Connection) -> dict:
 
 def _project_pages(conn, works, work_ids, release_descriptor, now,
                    adult_keys: frozenset[str] | set[str] = frozenset(),
-                   catalog_rev: int | None = None) -> dict:
+                   catalog_rev: int | None = None, reset: bool = True) -> dict:
     counters = {"releases": 0, "links": 0, "episodes": 0, "seasons": 0, "suspect": 0,
                 "unattributed": 0, "release_dups": 0, "parts": 0,
                 # Session 107: ledger->cat release pairs written to
@@ -1316,6 +1346,32 @@ def _project_pages(conn, works, work_ids, release_descriptor, now,
                       f"{counters['links']} links")
         work_id = work_ids[key]
         displayable = key not in adult_keys
+        # reset=False: the prints this work already owns survive in the table,
+        # so seed the in-run dedupe index from them (one indexed lookup per
+        # work on idx_cat_releases_work). Without this, a re-projection would
+        # mint a duplicate row per print — cat_releases has no UNIQUE key to
+        # catch it. The seed key is built exactly like `pkey` below, including
+        # the stored NULL→0 season_number mapping; describe() always returns
+        # "unknown" (never None/"") for resolution/source_tag/codec, so the
+        # stored values match the fresh key components exactly.
+        seeded_ids: set[int] = set()
+        if not reset:
+            for row in conn.execute(
+                    "SELECT id, label, source_site, origin_url, coverage_type,"
+                    " season_number, resolution, source_tag, codec, size_bytes,"
+                    " episode_range FROM cat_releases WHERE work_id = ?",
+                    (work_id,)):
+                skey = (
+                    work_id, str(row["label"] or "").strip().casefold(),
+                    str(row["source_site"] or ""), str(row["origin_url"] or ""),
+                    str(row["coverage_type"] or ""),
+                    int(row["season_number"]) if row["season_number"] is not None else 0,
+                    str(row["resolution"] or ""), str(row["source_tag"] or ""),
+                    str(row["codec"] or ""), int(row["size_bytes"] or 0),
+                    str(row["episode_range"] or ""),
+                )
+                print_index[skey] = int(row["id"])
+                seeded_ids.add(int(row["id"]))
         family = work_family(str(conn.execute(
             "SELECT work_type FROM cat_works WHERE id = ?", (work_id,)).fetchone()[0]))
         pages = {}
@@ -1332,11 +1388,19 @@ def _project_pages(conn, works, work_ids, release_descriptor, now,
                     pages[str(extra["url"])] = (
                         extra["source_site"] or "unknown", post_id, extra["source_title"] or "", None)
         for page_url, (page_site, page_post, page_title, page_ctype) in sorted(pages.items()):
+            # reset=False refreshes last_seen_at (and the page fields) instead
+            # of keeping the first run's row forever via INSERT OR IGNORE.
             conn.execute(
                 """
-                INSERT OR IGNORE INTO cat_work_sites
+                INSERT INTO cat_work_sites
                     (work_id, source_site, post_id, page_url, page_title, page_content_type, last_seen_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(work_id, page_url) DO UPDATE SET
+                    source_site = excluded.source_site,
+                    post_id = excluded.post_id,
+                    page_title = excluded.page_title,
+                    page_content_type = excluded.page_content_type,
+                    last_seen_at = excluded.last_seen_at
                 """,
                 (work_id, page_site, page_post, page_url, page_title, page_ctype, now),
             )
@@ -1366,6 +1430,42 @@ def _project_pages(conn, works, work_ids, release_descriptor, now,
                     # Same print re-emitted by a second scraper pass: keep one row,
                     # its links are still attached below.
                     counters["release_dups"] += 1
+                    if release_id in seeded_ids:
+                        # Cross-run reuse (reset=False): refresh the descriptor
+                        # columns from the current ledger row. The print keeps
+                        # its id, so its links and the evidence journal stay
+                        # attached; created_at and the _finalize()-derived
+                        # counts stay as they were.
+                        conn.execute(
+                            """
+                            UPDATE cat_releases SET
+                                quality_label = ?, bit_depth = ?, hdr = ?, container = ?,
+                                edition = ?, print_version = ?, release_group = ?,
+                                size_per_episode_bytes = ?, audio_languages = ?,
+                                audio_channels = ?, audio_codecs = ?, dual_audio = ?,
+                                subtitle_mode = ?, subtitle_languages = ?, watermarked = ?,
+                                official_print = ?, quality_score = ?, flags = ?,
+                                descriptor_json = ?
+                            WHERE id = ?
+                            """,
+                            (
+                                desc.get("quality_label") or "", int(desc.get("bit_depth") or 0),
+                                json.dumps(desc.get("hdr") or []), desc.get("container") or "unknown",
+                                desc.get("edition") or "unknown", int(desc.get("version") or 0),
+                                str(desc.get("release_group") or ""),
+                                int(desc.get("size_per_episode_bytes") or 0),
+                                json.dumps((desc.get("audio") or {}).get("languages") or []),
+                                (desc.get("audio") or {}).get("channel_layout") or "unknown",
+                                json.dumps((desc.get("audio") or {}).get("codecs") or []),
+                                1 if (desc.get("audio") or {}).get("dual_audio") else 0,
+                                "hardcoded" if (desc.get("subtitles") or {}).get("hardcoded")
+                                else ("external" if (desc.get("subtitles") or {}).get("available") else "none"),
+                                json.dumps((desc.get("subtitles") or {}).get("langs") or []),
+                                1 if desc.get("watermarked") else 0, 1 if desc.get("official_print") else 0,
+                                int(desc.get("quality_score") or 0), json.dumps(_flags_of(desc)),
+                                json.dumps(desc, default=str), release_id,
+                            ),
+                        )
                 else:
                     raw_season = str(rel["season"] or "")
                     is_special = (season_number == 0 and family == "series"
@@ -1427,14 +1527,34 @@ def _project_pages(conn, works, work_ids, release_descriptor, now,
                         ekey = (work_id, season_number, ep_number)
                         episode_id = episode_index.get(ekey)
                         if episode_id is None:
+                            # ON CONFLICT DO NOTHING + RETURNING tells an insert
+                            # apart from a reuse: a cross-run episode already
+                            # exists (the UNIQUE(season_id, number) row from the
+                            # earlier run), so the insert is skipped and the
+                            # existing id is read back instead of crashing.
                             ecur = conn.execute(
                                 "INSERT INTO cat_episodes (work_id, season_id, number,"
-                                " title, air_date, runtime_minutes) VALUES (?, ?, ?, ?, ?, ?)",
+                                " title, air_date, runtime_minutes) VALUES (?, ?, ?, ?, ?, ?)"
+                                " ON CONFLICT(season_id, number) DO NOTHING RETURNING id",
                                 (work_id, season_id, ep_number) + ep_facts,
                             )
-                            episode_id = ecur.lastrowid
+                            inserted = ecur.fetchone()
+                            if inserted is not None:
+                                episode_id = inserted[0]
+                                counters["episodes"] += 1
+                            else:
+                                episode_id = conn.execute(
+                                    "SELECT id FROM cat_episodes WHERE season_id = ? AND number = ?",
+                                    (season_id, ep_number),
+                                ).fetchone()[0]
+                                if any(ep_facts):
+                                    conn.execute(
+                                        "UPDATE cat_episodes SET title = COALESCE(title, ?),"
+                                        " air_date = COALESCE(air_date, ?),"
+                                        " runtime_minutes = COALESCE(runtime_minutes, ?) WHERE id = ?",
+                                        ep_facts + (episode_id,),
+                                    )
                             episode_index[ekey] = episode_id
-                            counters["episodes"] += 1
                         elif any(ep_facts):
                             conn.execute(
                                 "UPDATE cat_episodes SET title = COALESCE(title, ?),"
@@ -1478,15 +1598,40 @@ def _project_pages(conn, works, work_ids, release_descriptor, now,
                     state = _link_state_of(src)
                     measured = _measured_evidence(src)
                     counters["link_state_" + state] = counters.get("link_state_" + state, 0) + 1
+                    # Upsert, not INSERT OR IGNORE: the ledger-owned columns
+                    # refresh on re-projection, while the probe-owned ones
+                    # (state, http_status, latency_ms, speed_mbps,
+                    # last_evidence_at, rank_score, expires_at) are preserved
+                    # — apply_evidence() owns those, and the ledger's copy of
+                    # them is at best equally fresh, usually staler. A fresh
+                    # row still takes its state from _link_state_of() below.
                     conn.execute(
                         """
-                        INSERT OR IGNORE INTO cat_links (release_id, work_id, ledger_link_id,
+                        INSERT INTO cat_links (release_id, work_id, ledger_link_id,
                             source_site, service,
                             source_name, kind, url, final_url, resource_id, playability, state,
                             resumable, accepts_ranges, cors_open,
                             ephemeral, protocol, content_type, size_bytes, latency_ms, speed_mbps,
                             http_status, last_evidence_at, tier)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(release_id, url) DO UPDATE SET
+                            work_id = excluded.work_id,
+                            ledger_link_id = excluded.ledger_link_id,
+                            source_site = excluded.source_site,
+                            service = excluded.service,
+                            source_name = excluded.source_name,
+                            kind = excluded.kind,
+                            final_url = excluded.final_url,
+                            resource_id = excluded.resource_id,
+                            playability = excluded.playability,
+                            resumable = excluded.resumable,
+                            accepts_ranges = excluded.accepts_ranges,
+                            cors_open = excluded.cors_open,
+                            ephemeral = excluded.ephemeral,
+                            protocol = excluded.protocol,
+                            content_type = excluded.content_type,
+                            size_bytes = excluded.size_bytes,
+                            tier = excluded.tier
                         """,
                         (release_id, work_id, src["id"], rel_site,
                          src["service"], src["source_name"], kind, src["source_url"], src["final_url"],
@@ -1657,6 +1802,16 @@ def _raise_review(conn, *, kind: str, work_id, work_key: str, detail: dict,
         "SELECT resolved_at FROM cat_review_resolutions"
         " WHERE kind = ? AND work_key = ? AND signature = ?",
         (kind, str(work_key), signature)).fetchone()
+    # reset=False re-raises the same finding on every run (the queue is only
+    # wiped by _reset); skip when an identical row already stands, in any
+    # state — resolve_reviews() stamps the existing row when it settles, so
+    # re-inserting would only duplicate the queue.
+    existing = conn.execute(
+        "SELECT 1 FROM cat_review_queue WHERE kind = ? AND work_id IS ?"
+        " AND release_id IS ? AND detail = ?",
+        (kind, work_id, release_id, signature)).fetchone()
+    if existing:
+        return bool(resolved)
     conn.execute(
         "INSERT INTO cat_review_queue (kind, work_id, release_id, page_url, detail,"
         " raised_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -3023,11 +3178,12 @@ def apply_evidence(conn, results=(), *, link_ids=None, limit=None,
     }
 
 
-def project_db(db_path: Path, *, rev: int | None = None, verbose: bool = True) -> dict:
+def project_db(db_path: Path, *, rev: int | None = None, verbose: bool = True,
+               reset: bool = True) -> dict:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        return project(conn, rev=rev, verbose=verbose)
+        return project(conn, rev=rev, verbose=verbose, reset=reset)
     finally:
         conn.close()
 

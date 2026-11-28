@@ -116,9 +116,9 @@ class ProjectionTestCase(unittest.TestCase):
         }
         return rel
 
-    def project(self):
+    def project(self, reset=True):
         self.conn.commit()
-        self.summary = catalog_v2.project(self.conn, rev=1, verbose=False)
+        self.summary = catalog_v2.project(self.conn, rev=1, verbose=False, reset=reset)
         return self.summary
 
     # ---- assertions helpers ----------------------------------------------- #
@@ -2104,6 +2104,124 @@ class WorkDetailLadderTests(ProjectionTestCase):
         self.assertEqual(
             [t["band"] for t in detail["quality_ladder"][0]["tiers"]],
             ["480p"])
+
+
+class ResetFalseUpsertTests(ProjectionTestCase):
+    """Phase 2 item 6: project(reset=False) must upsert, not crash.
+
+    Before this fix the second run died ~2 min in on the plain INSERT into
+    cat_works (UNIQUE constraint failed: cat_works.work_key), and the prints
+    below it would have duplicated (cat_releases has no UNIQUE key) or gone
+    stale (cat_links INSERT OR IGNORE). Each test projects once with the
+    default reset=True, then again with reset=False, and asserts the second
+    run is a refresh: same ids, same counts, changed fields updated.
+    """
+
+    CDN = "https://video-downloads.googleusercontent.com/"
+
+    def src(self, tag):
+        return {"source_name": "g", "service": "google_cdn", "resource_id": tag,
+                "source_url": f"{self.CDN}{tag}", "final_url": f"{self.CDN}{tag}",
+                "playback_type": "direct", "is_temporary": 0, "status": "active"}
+
+    def _ids(self, table, order="id"):
+        return [int(r[0]) for r in self.conn.execute(
+            f"SELECT id FROM {table} ORDER BY {order}").fetchall()]
+
+    def _count(self, table):
+        return int(self.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+
+    def test_repeat_projection_with_reset_false_is_stable(self):
+        self.add_post("hdhub4u", "https://hdhub4u.test/example-film/",
+                      clean_title="Example Film", year=2024, releases=[
+                          {"release_title": "Example Film 1080p WEB-DL", "quality": "1080p",
+                           "sources": [self.src("ex-1080")]},
+                          {"release_title": "Example Film 480p", "quality": "480p",
+                           "sources": [self.src("ex-480")]},
+                      ])
+        first = self.project()
+        works, releases, links = (self._ids("cat_works"), self._ids("cat_releases"),
+                                  self._ids("cat_links"))
+        self.assertEqual(len(works), 1)
+        self.assertEqual(len(releases), 2)
+        self.assertEqual(len(links), 2)
+        second = self.project(reset=False)
+        self.assertEqual(self._ids("cat_works"), works, "work ids must be stable")
+        self.assertEqual(self._ids("cat_releases"), releases, "print ids must be stable")
+        self.assertEqual(self._ids("cat_links"), links, "link ids must be stable")
+        self.assertEqual(second["works"], first["works"])
+        self.assertEqual(second["releases"], 0, "no new prints on a repeat run")
+        self.assertEqual(second["release_dups"], first["releases"],
+                         "every print is a reuse on the second run")
+        self.assertEqual(self._count("cat_works"), 1)
+        self.assertEqual(self._count("cat_releases"), 2)
+        self.assertEqual(self._count("cat_links"), 2)
+
+    def test_reset_false_refreshes_changed_fields_and_keeps_probe_state(self):
+        post_id = self.add_post("hdhub4u", "https://hdhub4u.test/refresh-film/",
+                                clean_title="Refresh Film", year=2024, releases=[
+                                    {"release_title": "Refresh Film 1080p", "quality": "1080p",
+                                     "languages": '["Hindi"]',
+                                     "sources": [self.src("rf-1080")]},
+                                ])
+        self.project()
+        work = self.works("Refresh Film", 2024)[0]
+        link = self.conn.execute("SELECT * FROM cat_links WHERE work_id = ?",
+                                 (work["id"],)).fetchone()
+        # The ledger changes: a new poster + rating on the post, a new audio
+        # language on the print, a new final URL on the source.
+        self.conn.execute("UPDATE posts SET poster_url = ?, imdb_rating = ? WHERE id = ?",
+                          ("https://cdn/poster-v2.jpg", 8.5, post_id))
+        self.conn.execute("UPDATE releases SET languages = ? WHERE post_id = ?",
+                          ('["Hindi", "English"]', post_id))
+        self.conn.execute("UPDATE download_sources SET final_url = ? WHERE source_url = ?",
+                          (f"{self.CDN}rf-1080-v2", link["url"]))
+        # …while the probe pipeline has marked the link dead: that verdict is
+        # owned by apply_evidence(), not the projection, and must survive.
+        self.conn.execute("UPDATE cat_links SET state = 'dead' WHERE id = ?", (link["id"],))
+        self.conn.commit()
+        self.project(reset=False)
+        refreshed = self.works("Refresh Film", 2024)[0]
+        self.assertEqual(len(self.works("Refresh Film", 2024)), 1, "no duplicate work")
+        self.assertEqual(refreshed["id"], work["id"], "work id must be stable")
+        self.assertEqual(refreshed["poster_url"], "https://cdn/poster-v2.jpg")
+        self.assertEqual(refreshed["imdb_rating"], 8.5)
+        self.assertEqual(self._count("cat_releases"), 1, "no duplicate print")
+        release = self.releases(work["id"])[0]
+        self.assertIn("English", release["audio_languages"],
+                      "print descriptor columns refresh on reuse")
+        self.assertEqual(self._count("cat_links"), 1, "no duplicate link")
+        same_link = self.conn.execute(
+            "SELECT * FROM cat_links WHERE id = ?", (link["id"],)).fetchone()
+        self.assertEqual(same_link["final_url"], f"{self.CDN}rf-1080-v2",
+                         "ledger-owned link columns refresh")
+        self.assertEqual(same_link["state"], "dead",
+                         "probe-owned link state must survive a re-projection")
+
+    def test_reset_false_series_episodes_and_reviews_do_not_duplicate(self):
+        self.add_post("site-a", "https://a.test/mystery-drops/",
+                      clean_title="Mystery Drops", year=2022, content_type="series",
+                      releases=[
+                          {"release_title": "Mystery Drops S01E01 720p", "season": "1",
+                           "episode": "1", "quality": "720p", "sources": [self.src("MYST-E1")]},
+                          {"release_title": "Mystery Drops S01E02 720p", "season": "1",
+                           "episode": "2", "quality": "720p", "sources": [self.src("MYST-E2")]},
+                          {"release_title": "Mystery Drops E02 720p", "season": "",
+                           "episode": "2", "quality": "720p", "sources": [self.src("MYST-E2B")]},
+                      ])
+        self.project()
+        episodes = self._ids("cat_episodes")
+        queue = self._count("cat_review_queue")
+        # S01E01 + S01E02 + the season-less print's own (season 0, episode 2) row.
+        self.assertEqual(len(episodes), 3)
+        self.assertEqual(queue, 1, "the season-less print raises exactly one review")
+        self.project(reset=False)
+        self.assertEqual(self._ids("cat_episodes"), episodes, "episode ids must be stable")
+        self.assertEqual(self._count("cat_episodes"), 3, "no duplicate episodes")
+        self.assertEqual(self._count("cat_review_queue"), queue,
+                         "reviews must not re-raise on a repeat run")
+        # Season 1 from the episode prints + season 0 from the suspect print.
+        self.assertEqual(self._count("cat_seasons"), 2, "no duplicate season")
 
 
 if __name__ == "__main__":
