@@ -459,30 +459,34 @@ class HttpGetTimeoutTests(unittest.TestCase):
         return resp
 
     def test_timeout_returns_at_once_without_a_retry(self):
+        # Seam is _fetch_once since the keep-alive port (2026-11-28):
+        # the direct path no longer calls urllib.request.urlopen.
+        # The assertion is the behaviour — one attempt, no retry — not
+        # the transport underneath it.
         with mock.patch.dict(os.environ, {}, clear=False), \
                 mock.patch.object(fast_fetch.warp_proxy,
                                   "urllib_proxy_handler",
                                   return_value=None), \
-                mock.patch.object(fast_fetch.urllib.request, "urlopen",
-                                  side_effect=TimeoutError("timed out")) as opener:
+                mock.patch.object(fast_fetch, "_fetch_once",
+                                  side_effect=TimeoutError("timed out")) as fetcher:
             status, _final, body = fast_fetch.http_get(
                 "https://gdflix.test/file/abc", timeout=10, max_retries=2)
         self.assertEqual(status, 0)
         self.assertTrue(body.startswith("ERROR:"))
-        self.assertEqual(opener.call_count, 1)
+        self.assertEqual(fetcher.call_count, 1)
 
     def test_reset_still_retries_and_then_succeeds(self):
         with mock.patch.object(fast_fetch.warp_proxy,
                                "urllib_proxy_handler",
                                return_value=None), \
-                mock.patch.object(fast_fetch.urllib.request, "urlopen",
+                mock.patch.object(fast_fetch, "_fetch_once",
                                   side_effect=[ConnectionResetError("reset"),
-                                               self._fake_200()]) as opener, \
+                                               self._fake_200()]) as fetcher, \
                 mock.patch("time.sleep"):
             status, _final, _body = fast_fetch.http_get(
                 "https://gdflix.test/file/abc", timeout=10, max_retries=2)
         self.assertEqual(status, 200)
-        self.assertEqual(opener.call_count, 2)
+        self.assertEqual(fetcher.call_count, 2)
 
 
 # ---------------------------------------------------------------------------
