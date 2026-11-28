@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 183 session files (180 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 185 session files (182 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -77,12 +77,11 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - **2026-11-28 — rotated out:** the oldest session entry (2026-11-28 http_get keep-alive) — verbatim in `checkpoints/20261128-continuity-rotation-probe-schedule.md`.
 - **2026-11-28 — rotated out:** the oldest session entry (2026-11-28 importer domain-resolver wiring) — verbatim in `checkpoints/20261128-continuity-rotation-sweep-hardening.md`.
 - **2026-11-28 — rotated out:** the oldest session entry (2026-11-28 probe schedule + domain map) — verbatim in `checkpoints/20261128-continuity-rotation-dead-host-rebase.md`.
+- **2026-11-28 — rotated out:** the oldest session entry (2026-11-28 sweep-load hardening) — verbatim in `checkpoints/20261128-continuity-rotation-phase2-host-verdicts.md`.
+- **2026-11-28 — rotated out:** the oldest session entry (2026-11-28 dead-host re-verification) — verbatim in `checkpoints/20261128-continuity-rotation-phase2-host-verdicts.md`.
 ## Moved out (reference prose, verbatim)
 
 - ✍️ Incoming Agent Checklist → `../docs/SPEC_INCOMING_AGENT_CHECKLIST.md` (294 lines) — the onboarding procedure, unchanged
 
-## 2026-11-28 - sweep-load hardening (Phase 3 item 12)
-- Two symptoms, two mechanisms: presses failed "database is locked" (sweep holds BEGIN IMMEDIATE while press banks had NO retry); posts 503 is NOT a lock, it is the 10 s query deadline (baseline crosses 10 s under sweep load). Fix: serve pragmas on the sweep writer (64 MiB cache, was 2 MiB) + bounded lock retry (3 attempts, 0.5/1.0 s, only "locked", fresh connection per attempt) in _bank_hubcloud_siblings and both viewer.py banks. 30 s busy_timeout and the deadline untouched. Tests: 7 new, all green; fast_probe 88/88; other modules green; registered in backend-ci.yml. Branch sweep-load-hardening (parent owns the gate/landing; live proof is a press under sweep load).
-
-## 2026-11-28 - dead-host re-verification (Phase 2 item 8)
-- Re-probe 18:50 (timer's command): 7 sites, all unresolved:down, 0 resolved. 7 of 8 still down day 2, but none is a dead server — all answer (thin 200s, 404s, redirects); likely bot-filtered. No site marked dead; no deletions. animeworld LIVE again (wp-json, 3 posts) — registry still down, tomorrow's probe fixes it. hdtvb redirects to hdhubs.in (top check); megacartoons WP REST works, no quality marker. Verdicts at checkpoints/20261128-dead-host-reverify.md.
+## 2026-11-28 - Phase 2 item 8 host verdicts (vikingfile / dropgalaxy / mobilejsr)
+- Re-probe ~21:50–22:00 PKT from the Oracle VM (read-only): vikingfile ALIVE (12/12 active URLs 200; plan's "25,622 rows 404" is stale). dropgalaxy ALIVE (200s, 429s, resets from datacenter egress); dgdrive.pro dead everywhere (SERVFAIL) but the same file code returns 200 on dropgalaxy.vip — migration, remap of 16,028 rows owed (separate branch, gate + backup). mobilejsr already fully dead in the table (0 active, 110,092 dead) — no deletion action. NO deletions. Verdicts at checkpoints/20261128-phase2-host-verdicts.md.
