@@ -98,8 +98,8 @@ class SearchCrashGuardTest {
                 "lets a DataStore failure kill the process",
             viewModelSource.contains("viewModelScope.launch { settingsRepository.save"),
         )
-        val guarded = "runCatching { settingsRepository.save".toRegex()
-            .findAll(viewModelSource).count()
+        val guarded = viewModelSource
+            .split("runCatching { settingsRepository.save").size - 1
         assertEquals(
             "all four persist launches (recordRecent, removeRecent, " +
                 "saveCurrentFilters, removeSavedFilter) must be runCatching-guarded",
