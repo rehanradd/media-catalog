@@ -2,15 +2,11 @@ package com.raddstream.app.ui.components
 
 import android.content.Context
 import android.os.SystemClock
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
-import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -32,7 +28,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -50,7 +45,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.semantics.contentDescription
@@ -139,15 +133,15 @@ fun HeroCarousel(
 ) {
     if (posts.isEmpty()) return
     val reduceMotion = rememberReduceMotion()
-    // Round 6 (motion): the hero enters with a fade + short rise on the
-    // expressive springs, following the rail pattern — in inspection mode
-    // it is already visible, so a Paparazzi golden shows the settled hero.
-    val inInspectionMode = LocalInspectionMode.current
-    var heroVisible by remember { mutableStateOf(inInspectionMode) }
-    LaunchedEffect(Unit) {
-        if (inInspectionMode) return@LaunchedEffect
-        heroVisible = true
-    }
+    // Hero fix (2026-11-28): the hero used to gate its own size on a
+    // `heroVisible` state that started false and was flipped true only by a
+    // `LaunchedEffect(Unit)`. On a real device the flip evidently never took
+    // effect, so the AnimatedVisibility stayed collapsed and the hero
+    // occupied no space — the chips sat directly under the header while the
+    // hero had already taken its 6 items (the "Recently added" rail started
+    // at v2 newest position 7). A hero must occupy its space from the first
+    // frame; never gate it on an effect firing. The fade+slide entrance is
+    // gone with the gate — the slide still fades in via its own content.
     val pagerState = rememberPagerState(pageCount = { posts.size })
     // Video-audit #1 (Nov 2026): the hero list can shrink under a restored
     // pager — return from Live TV with a refreshed, shorter catalog — and
@@ -232,24 +226,11 @@ fun HeroCarousel(
     // Now taps is structural now, not a band calculation
     // ([heroIndicatorOverlapsActionRow] is gone with it).
     Column(modifier.fillMaxWidth()) {
-    AnimatedVisibility(
-        visible = heroVisible,
-        // Video-audit #7 (Nov 2026): clip the hero's entrance to its own
-        // bounds, like the rails — the slide starts 1/4-height down and
-        // would otherwise paint over the filter chips below it while
-        // entering. Settled frames are unchanged.
-        modifier = Modifier.clipToBounds(),
-        enter = fadeIn(
-            animationSpec = if (reduceMotion) snap() else RaddMotion.defaultEffects(),
-        ) + if (reduceMotion) {
-            EnterTransition.None
-        } else {
-            slideInVertically(
-                initialOffsetY = { it / 4 },
-                animationSpec = RaddMotion.defaultSpatial(),
-            )
-        },
-    ) {
+    // Hero fix (2026-11-28): the AnimatedVisibility gate that used to wrap
+    // this Box is gone — it started invisible and was flipped only by a
+    // LaunchedEffect that evidently never fired on a real device, so the
+    // hero occupied no space. The Box below is the hero itself, always laid
+    // out at full height from the first frame.
     Box(Modifier.fillMaxWidth().height(heroHeight())) {
         HeroAmbientGlow(
             currentPage = pagerState.currentPage,
@@ -315,7 +296,6 @@ fun HeroCarousel(
                 )
             }
         }
-    }
     }
 
     }

@@ -162,4 +162,28 @@ class HeroCarouselTest {
         assertFalse("the clean hero paints no button", Regex("""\bButton\(""").containsMatchIn(source))
         assertTrue("the clean hero slide must still open the title on tap", "clickable(onClick = onClick)" in source)
     }
+
+    // Hero fix (2026-11-28): the hero used to gate its own size on a
+    // `heroVisible` state that started false and was flipped true only by a
+    // `LaunchedEffect(Unit)`. On a real device the flip evidently never took
+    // effect, so the AnimatedVisibility stayed collapsed and the hero
+    // occupied no space — the chips sat directly under the header while the
+    // hero had already taken its 6 items (the "Recently added" rail started
+    // at v2 newest position 7). A Robolectric render test cannot catch this:
+    // LaunchedEffect runs fine in tests, and Paparazzi shoots in inspection
+    // mode where the state started true. So the ban is pinned here, over
+    // the source: the hero must never again be gated on an effect firing.
+    // (The checks name the state declaration and the composable call, not
+    // the bare word — the fix comment above the Box names both.)
+    @Test
+    fun heroIsNeverGatedOnAnEffectFiring() {
+        val source = File("src/main/kotlin/com/raddstream/app/ui/components/HeroCarousel.kt").readText()
+        assertFalse("no heroVisible state may gate the hero", "var heroVisible" in source)
+        assertFalse("no LaunchedEffect may flip the hero visible", "heroVisible = true" in source)
+        assertFalse("no AnimatedVisibility may wrap the hero", "AnimatedVisibility(" in source)
+        assertTrue(
+            "the hero Box must be laid out unconditionally",
+            "Box(Modifier.fillMaxWidth().height(heroHeight()))" in source,
+        )
+    }
 }
