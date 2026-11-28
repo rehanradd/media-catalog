@@ -131,8 +131,19 @@ if str(BASE_DIR) not in sys.path:
 
 import fast_fetch  # noqa: E402  (path bootstrap must run first)
 
+try:
+    from domain_resolver import get_active_base_url, resolve_if_dead
+except Exception:  # noqa: BLE001 - registry wiring is optional offline
+    def get_active_base_url(site_name, fallback_default=None, registry_path=None):  # type: ignore
+        return fallback_default or ""
+
+    def resolve_if_dead(site_name, registry_path=None):  # type: ignore
+        return ""
+
 SITE = "themoviebox"
-BASE_URL = "https://themoviebox.xyz"
+SITE_NAME = "themoviebox"
+DEFAULT_BASE_URL = "https://themoviebox.xyz"
+BASE_URL = DEFAULT_BASE_URL
 DEFAULT_DB_PATH = Path("/home/ubuntu/radd-stream-data/themoviebox.db")
 
 #: The site's own catalog service. Public, paginated, and the only discovery
@@ -1825,12 +1836,25 @@ def pick_search_hit(items: list, keyword: str,
     return accepted[0]
 
 
-def _detail_url(item: dict) -> str | None:
+def _resolve_base(base_url: str | None = None,
+                  registry_path: str | Path | None = None) -> str:
+    """Registry-resolved site base; an explicit base_url still wins.
+
+    Session 106 pattern (``import_10xflix.py``, ``import_castle.py``): the
+    registry is the source of truth for the live domain and the hardcoded
+    default survives only as the fallback when the registry has no live base.
+    """
+    return (base_url or get_active_base_url(
+        SITE_NAME, DEFAULT_BASE_URL, registry_path)).rstrip("/")
+
+
+def _detail_url(item: dict, base_url: str | None = None) -> str | None:
     """A work's page address, built the way the site itself builds it."""
     path = _as_text(item.get("detailPath"))
     if not path:
         return None
-    return f"{BASE_URL}{DETAIL_PREFIX}{path.strip('/')}"
+    base = (base_url or BASE_URL).rstrip("/")
+    return f"{base}{DETAIL_PREFIX}{path.strip('/')}"
 
 
 def detail_api_url(subject_id) -> str:
@@ -1861,7 +1885,8 @@ def _queued_subject_id(row) -> str | None:
 
 def _walk_feed(subject_types=ACCEPTED_SUBJECT_TYPES, pages: int = API_MAX_PAGES,
                per_page: int = API_PAGE_SIZE, delay: float = DEFAULT_DELAY,
-               state: dict | None = None, filters: dict | None = None):
+               state: dict | None = None, filters: dict | None = None,
+               base_url: str | None = None):
     """Yield ``(item, detail_url)`` for every work the feed names.
 
     ``state`` receives ``stopped_for_memory``/``stop_reason`` when the memory
@@ -1893,6 +1918,7 @@ def _walk_feed(subject_types=ACCEPTED_SUBJECT_TYPES, pages: int = API_MAX_PAGES,
     One pass over the pages, whitelist applied where the data actually is.
     """
     page = 1
+    base = (base_url or BASE_URL).rstrip("/")
     body_extra = dict(filters or {})
     while page <= max(1, pages):
         if STOP_REQUESTED:
@@ -1919,7 +1945,7 @@ def _walk_feed(subject_types=ACCEPTED_SUBJECT_TYPES, pages: int = API_MAX_PAGES,
             break
         for item in items:
             if isinstance(item, dict):
-                url = _detail_url(item)
+                url = _detail_url(item, base)
                 if url:
                     yield item, url
         pager = data.get("pager") or {}
@@ -1961,17 +1987,24 @@ def _queue_loc(conn: sqlite3.Connection, loc: str, lastmod=None, slug=None,
 def sync_catalog(db_path: Path | str = DEFAULT_DB_PATH, limit: int | None = None,
                  seeds=(), pages: int = API_MAX_PAGES,
                  per_page: int = API_PAGE_SIZE, verbose: bool = True,
-                 filters: dict | None = None) -> dict:
+                 filters: dict | None = None, base_url: str | None = None,
+                 registry_path: str | Path | None = None) -> dict:
     """Queue detail pages from the catalog feed (plus any explicitly seeded URL).
 
     The old version of this function read ``/sitemap.xml``. That path answers HTTP
     404 on this site — measured, 12 connections, one of which returned a complete
     HTML 404 page — so the queue could only ever fill with zero rows.
+
+    The detail URLs queued here come from the registry-resolved base
+    (``base_url or get_active_base_url(SITE_NAME, DEFAULT_BASE_URL)``), and a
+    0-item sync runs ``resolve_if_dead`` once and retries on the chain's
+    verdict — the Session 106 pattern (``import_10xflix.py``).
     """
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     totals = {"pages": 0, "queued": 0, "duplicates": 0, "errors": 0, "items": 0,
-              "stopped_for_memory": False, "stop_reason": None}
+              "stopped_for_memory": False, "stop_reason": None,
+              "base_url": None}
     feed_state: dict = {}
     conn = sqlite3.connect(db_path, timeout=60)
     conn.row_factory = sqlite3.Row
@@ -1989,27 +2022,50 @@ def sync_catalog(db_path: Path | str = DEFAULT_DB_PATH, limit: int | None = None
             if seed:
                 queue(seed)
 
-        for item, url in _walk_feed(pages=pages, per_page=per_page,
-                                    state=feed_state, filters=filters):
-            if STOP_REQUESTED:
-                break
-            totals["items"] += 1
-            key = fast_fetch.generate_canonical_key(
-                _first_text(item, TITLE_KEYS) or "",
-                _year_of(_lookup(item, [], DATE_KEYS)))
-            # A dubbed print is a separate subject with the same title and year, so
-            # queueing every one of them spends connections re-fetching a work whose
-            # row already exists and lets the last dub win the upsert.
-            if key in known:
-                totals["duplicates"] += 1
-                continue
-            known.add(key)
-            totals["pages"] += 1
-            queue(url, _lookup(item, [], DATE_KEYS),
-                  _as_text(item.get("detailPath")),
-                  _as_text(item.get("subjectId")))
-            if limit and totals["queued"] >= limit:
-                break
+        base = _resolve_base(base_url, registry_path)
+        totals["base_url"] = base
+
+        def _run_once(base_: str) -> None:
+            for item, url in _walk_feed(pages=pages, per_page=per_page,
+                                        state=feed_state, filters=filters,
+                                        base_url=base_):
+                if STOP_REQUESTED:
+                    return
+                totals["items"] += 1
+                key = fast_fetch.generate_canonical_key(
+                    _first_text(item, TITLE_KEYS) or "",
+                    _year_of(_lookup(item, [], DATE_KEYS)))
+                # A dubbed print is a separate subject with the same title and year, so
+                # queueing every one of them spends connections re-fetching a work whose
+                # row already exists and lets the last dub win the upsert.
+                if key in known:
+                    totals["duplicates"] += 1
+                    continue
+                known.add(key)
+                totals["pages"] += 1
+                queue(url, _lookup(item, [], DATE_KEYS),
+                      _as_text(item.get("detailPath")),
+                      _as_text(item.get("subjectId")))
+                if limit and totals["queued"] >= limit:
+                    return
+
+        _run_once(base)
+        if (totals["items"] == 0 and base_url is None
+                and not STOP_REQUESTED
+                and not feed_state.get("stopped_for_memory")):
+            # Empty sync: retry once on the chain's verdict, and only then.
+            # A memory-refused run is not an empty sync — it made no
+            # request by design, and the chain probe would break that.
+            # The feed itself lives on the aoneroom API host, but the detail
+            # URLs it queues — and the crawl that follows them — live on
+            # this base, so a moved base is what the retry heals.
+            fresh = resolve_if_dead(SITE_NAME, registry_path)
+            if fresh and fresh.rstrip("/") != base:
+                log(f"[!] [{SITE}] sync found 0 items and the cached base "
+                    f"is dead; chain found {fresh}; retrying once")
+                base = fresh.rstrip("/")
+                totals["base_url"] = base
+                _run_once(base)
         conn.commit()
     finally:
         conn.close()
@@ -2030,7 +2086,8 @@ def harvest_catalog(db_path: Path | str = DEFAULT_DB_PATH, limit: int | None = N
                     pages: int = API_MAX_PAGES, per_page: int = API_PAGE_SIZE,
                     verbose: bool = True, filters: dict | None = None,
                     known_keys: set | None = None,
-                    delay: float = DEFAULT_DELAY) -> dict:
+                    delay: float = DEFAULT_DELAY, base_url: str | None = None,
+                    registry_path: str | Path | None = None) -> dict:
     """Write catalog rows straight from the feed, and queue each page for enrichment.
 
     This is the ingest that MovieBox can honestly support today: the feed carries
@@ -2044,11 +2101,18 @@ def harvest_catalog(db_path: Path | str = DEFAULT_DB_PATH, limit: int | None = N
     ``known_keys`` are canonical keys that already exist elsewhere (the source
     vault a gap-fill reads from): they count as duplicates here instead of
     being re-staged, so a follow-up vault holds only works the source lacks.
+
+    Detail URLs come from the registry-resolved base. Unlike
+    ``sync_catalog`` there is no ``resolve_if_dead`` retry here: gapfill
+    calls this once per year+genre cell, and an empty cell is a normal
+    answer ("no works in this cell"), not a dead domain — retrying the
+    chain per empty cell would probe the network up to once per cell.
     """
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     totals = {"items": 0, "posts": 0, "duplicates": 0, "skipped_type": 0,
-              "queued": 0, "stopped_for_memory": False, "stop_reason": None}
+              "queued": 0, "stopped_for_memory": False, "stop_reason": None,
+              "base_url": None}
     feed_state: dict = {}
     conn = sqlite3.connect(db_path, timeout=60)
     conn.row_factory = sqlite3.Row
@@ -2058,9 +2122,11 @@ def harvest_catalog(db_path: Path | str = DEFAULT_DB_PATH, limit: int | None = N
         known = _existing_keys(conn)
         if known_keys:
             known |= set(known_keys)
+        base = _resolve_base(base_url, registry_path)
+        totals["base_url"] = base
         for item, url in _walk_feed(pages=pages, per_page=per_page,
                                     state=feed_state, filters=filters,
-                                    delay=delay):
+                                    delay=delay, base_url=base):
             if STOP_REQUESTED:
                 break
             totals["items"] += 1
@@ -2085,7 +2151,7 @@ def harvest_catalog(db_path: Path | str = DEFAULT_DB_PATH, limit: int | None = N
                 totals["posts"] += export_staging(db_path, batch,
                                                   conn=conn)["posts_written"]
                 conn.commit()
-                batch = []
+                batch.clear()
                 ok, reason = memory_ok()
                 if not ok:
                     totals["stopped_for_memory"] = True
@@ -3024,6 +3090,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     sync.add_argument("--classify", help="filter the feed to one classify value (e.g. Hindi dub)")
     sync.add_argument("--seed", action="append", default=[],
                       help="an explicit page URL to queue (repeatable)")
+    sync.add_argument("--base-url", default=None,
+                      help="explicit site base; wins over the registry-resolved base")
 
     harvest = sub.add_parser("harvest",
                              help="write catalog rows straight from the feed")
@@ -3036,6 +3104,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     harvest.add_argument("--sort", help="sort the feed (Latest/Hot/newest: sorted pages are disjoint, unlike the default shuffle)")
     harvest.add_argument("--country", help="filter the feed to one country (e.g. India)")
     harvest.add_argument("--classify", help="filter the feed to one classify value (e.g. Hindi dub)")
+    harvest.add_argument("--base-url", default=None,
+                         help="explicit site base; wins over the registry-resolved base")
 
     crawl = sub.add_parser("crawl", help="fetch queued pages")
     crawl.add_argument("--db", default=str(DEFAULT_DB_PATH))
@@ -3106,10 +3176,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "sync":
         totals = sync_catalog(args.db, limit=args.limit, seeds=args.seed,
                               pages=args.pages, per_page=args.per_page,
-                              filters=filters or None)
+                              filters=filters or None,
+                              base_url=args.base_url)
     elif args.command == "harvest":
         totals = harvest_catalog(args.db, limit=args.limit, pages=args.pages,
-                                 per_page=args.per_page, filters=filters or None)
+                                 per_page=args.per_page, filters=filters or None,
+                                 base_url=args.base_url)
     elif args.command == "crawl":
         totals = crawl_pending(limit=args.limit, db_path=args.db,
                                workers=args.workers, delay=args.delay,

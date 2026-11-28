@@ -441,10 +441,16 @@ class DiscoveryTests(unittest.TestCase):
             api = mock.MagicMock(return_value=(400, None))
             with silenced(), mock.patch.object(
                     mb, "memory_ok", return_value=(True, "ok")), \
-                    mock.patch.object(mb, "_api_request", api):
+                    mock.patch.object(mb, "_api_request", api), \
+                    mock.patch.object(mb, "resolve_if_dead",
+                                      return_value="") as dead:
                 totals = mb.sync_catalog(db)
             self.assertEqual(totals["queued"], 0)
             self.assertEqual(api.call_count, 1, "one failure per type, no retry storm")
+            # The 0-item path consults the resolver, but the mock answers
+            # "base alive", so no second walk happens — and the real
+            # resolve_if_dead (a network probe) never runs in this suite.
+            dead.assert_called_once_with("themoviebox", None)
 
     def test_harvest_writes_rows_with_detail_url_sources(self):
         # Session 107: each declared tier stages one source naming the
@@ -474,6 +480,170 @@ class DiscoveryTests(unittest.TestCase):
             self.assertEqual(post["title"], "Matchbox the Movie")
             self.assertEqual(post["media_type"], "movie")
             self.assertIn("trailer_url", post["raw_meta"])
+
+
+class ResolverWiringTests(unittest.TestCase):
+    """The domain-resolver wiring (Session 106 pattern, import_castle.py).
+
+    Detail URLs come from the registry-resolved base, an explicit base_url
+    still wins, and a 0-item sync/harvest consults ``resolve_if_dead`` once
+    and retries on the chain's verdict. Every resolver call is mocked: the
+    real ``resolve_if_dead`` probes the network and may rewrite the
+    registry, which an offline suite must never do.
+    """
+
+    MOVED_BASE = "https://themoviebox.moved"
+
+    def _feed_pages(self, pages):
+        """An _api_request that answers `pages` in order, then empty pages."""
+        calls = {"n": 0}
+
+        def side_effect(*args, **kwargs):
+            calls["n"] += 1
+            idx = calls["n"] - 1
+            items = pages[idx] if idx < len(pages) else []
+            return (200, {"code": 0, "message": "ok",
+                          "data": {"items": items,
+                                   "pager": {"hasMore": False}}})
+
+        return mock.MagicMock(side_effect=side_effect)
+
+    def test_sync_uses_the_registry_base_for_detail_urls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "v.db"
+            with silenced(), mock.patch.object(
+                    mb, "memory_ok", return_value=(True, "ok")), \
+                    mock.patch.object(
+                        mb, "_api_request",
+                        self._feed_pages([[MATCHBOX]])), \
+                    mock.patch.object(
+                        mb, "get_active_base_url",
+                        return_value=self.MOVED_BASE) as active, \
+                    mock.patch.object(mb, "resolve_if_dead") as dead:
+                totals = mb.sync_catalog(db)
+            active.assert_called_once_with(
+                "themoviebox", "https://themoviebox.xyz", None)
+            dead.assert_not_called()
+            self.assertEqual(totals["base_url"], self.MOVED_BASE, totals)
+            conn = sqlite3.connect(db)
+            locs = {row[0] for row in conn.execute(
+                "SELECT loc FROM sitemap_cache")}
+            conn.close()
+            self.assertIn(
+                self.MOVED_BASE + "/detail/matchbox-the-movie-S5hfykcX3Z4",
+                locs)
+
+    def test_explicit_base_url_wins_over_the_registry(self):
+        explicit = "https://explicit.example"
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "v.db"
+            with silenced(), mock.patch.object(
+                    mb, "memory_ok", return_value=(True, "ok")), \
+                    mock.patch.object(
+                        mb, "_api_request",
+                        self._feed_pages([[MATCHBOX]])), \
+                    mock.patch.object(
+                        mb, "get_active_base_url",
+                        return_value=self.MOVED_BASE) as active, \
+                    mock.patch.object(mb, "resolve_if_dead") as dead:
+                totals = mb.sync_catalog(db, base_url=explicit)
+            active.assert_not_called()
+            dead.assert_not_called()
+            self.assertEqual(totals["base_url"], explicit, totals)
+            conn = sqlite3.connect(db)
+            locs = {row[0] for row in conn.execute(
+                "SELECT loc FROM sitemap_cache")}
+            conn.close()
+            self.assertIn(
+                explicit + "/detail/matchbox-the-movie-S5hfykcX3Z4", locs)
+
+    def test_zero_item_sync_retries_once_on_the_chain_verdict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "v.db"
+            with silenced(), mock.patch.object(
+                    mb, "memory_ok", return_value=(True, "ok")), \
+                    mock.patch.object(
+                        mb, "_api_request",
+                        self._feed_pages([[], [MATCHBOX]])) as api, \
+                    mock.patch.object(
+                        mb, "get_active_base_url",
+                        return_value="https://themoviebox.xyz"), \
+                    mock.patch.object(
+                        mb, "resolve_if_dead",
+                        return_value=self.MOVED_BASE) as dead:
+                totals = mb.sync_catalog(db)
+            dead.assert_called_once_with("themoviebox", None)
+            self.assertEqual(api.call_count, 2, "one walk, one retry")
+            self.assertEqual(totals["queued"], 1, totals)
+            self.assertEqual(totals["base_url"], self.MOVED_BASE, totals)
+            conn = sqlite3.connect(db)
+            locs = {row[0] for row in conn.execute(
+                "SELECT loc FROM sitemap_cache")}
+            conn.close()
+            self.assertIn(
+                self.MOVED_BASE + "/detail/matchbox-the-movie-S5hfykcX3Z4",
+                locs)
+
+    def test_zero_item_sync_does_not_retry_when_the_base_verifies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "v.db"
+            with silenced(), mock.patch.object(
+                    mb, "memory_ok", return_value=(True, "ok")), \
+                    mock.patch.object(
+                        mb, "_api_request",
+                        self._feed_pages([[]])) as api, \
+                    mock.patch.object(
+                        mb, "get_active_base_url",
+                        return_value="https://themoviebox.xyz"), \
+                    mock.patch.object(
+                        mb, "resolve_if_dead", return_value="") as dead:
+                totals = mb.sync_catalog(db)
+            dead.assert_called_once_with("themoviebox", None)
+            self.assertEqual(api.call_count, 1, "no retry when base is alive")
+            self.assertEqual(totals["queued"], 0, totals)
+
+    def test_a_memory_refused_sync_never_consults_the_resolver(self):
+        # A refused run makes no request by design — and the chain probe
+        # is a request, so the 0-item retry must not fire on it.
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "v.db"
+            with silenced(), mock.patch.object(
+                    mb, "memory_ok",
+                    return_value=(False, "MemAvailable 900 MB < 2500 MB")), \
+                    mock.patch.object(mb, "_api_request") as api, \
+                    mock.patch.object(mb, "resolve_if_dead") as dead:
+                totals = mb.sync_catalog(db)
+            api.assert_not_called()
+            dead.assert_not_called()
+            self.assertTrue(totals["stopped_for_memory"], totals)
+
+    def test_harvest_uses_the_registry_base_for_detail_url_sources(self):
+        # Session 107: each declared tier stages one source naming the
+        # detail page — so the source URL must carry the resolved base too.
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "v.db"
+            with silenced(), mock.patch.object(
+                    mb, "memory_ok", return_value=(True, "ok")), \
+                    mock.patch.object(
+                        mb, "_api_request",
+                        self._feed_pages([[MATCHBOX_WITH_RESOURCE]])), \
+                    mock.patch.object(
+                        mb, "get_active_base_url",
+                        return_value=self.MOVED_BASE), \
+                    mock.patch.object(mb, "resolve_if_dead") as dead:
+                totals = mb.harvest_catalog(db)
+            dead.assert_not_called()
+            self.assertEqual(totals["posts"], 1, totals)
+            self.assertEqual(totals["base_url"], self.MOVED_BASE, totals)
+            conn = sqlite3.connect(db)
+            sources = conn.execute(
+                "SELECT source_url FROM sources").fetchall()
+            conn.close()
+            self.assertEqual(len(sources), 3, "one detail-URL source per tier")
+            self.assertTrue(
+                all(s[0] == self.MOVED_BASE
+                    + "/detail/matchbox-the-movie-S5hfykcX3Z4" for s in sources),
+                sources)
 
 
 class HttpTests(unittest.TestCase):
@@ -853,6 +1023,12 @@ class CliTests(unittest.TestCase):
         args = mb.parse_args(["sync"])
         self.assertEqual(args.pages, mb.API_MAX_PAGES)
         self.assertEqual(args.per_page, mb.API_PAGE_SIZE)
+
+    def test_base_url_flag_reaches_sync_and_harvest(self):
+        args = mb.parse_args(["sync", "--base-url", "https://explicit.example"])
+        self.assertEqual(args.base_url, "https://explicit.example")
+        args = mb.parse_args(["harvest", "--base-url", "https://explicit.example"])
+        self.assertEqual(args.base_url, "https://explicit.example")
 
     def test_politeness_defaults_hold_the_floor(self):
         self.assertLessEqual(mb.DEFAULT_WORKERS, 2)
