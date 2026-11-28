@@ -225,7 +225,11 @@ def candidate_order_sql(alias: str = "", band: str | None = None) -> str:
 CANDIDATE_ORDER_SQL = candidate_order_sql()
 
 _BAND_RE_PATTERNS = (
-    ("2160p", ("2160", "4k", "uhd", "hdr")),
+    # HDR is a dynamic-range label, never a resolution: it must not appear
+    # in any band's needles, or a "720p HDRip" file reads as 2160p (the
+    # 2160p tuple is checked first in band_of). A release that says only
+    # "HDR10+" carries no resolution and falls through to unspecified.
+    ("2160p", ("2160", "4k", "uhd")),
     ("1080p", ("1080", "full hd", "fhd")),
     ("720p", ("720", "hd rip")),
     ("480p", ("480", "sdrip", "sd rip")),
@@ -247,7 +251,9 @@ def band_of(*texts) -> str:
     # Promising 720p when the file is 1080p costs the user one notch on a switch
     # they can move; promising 1080p when it is 720p shows them a blurry picture
     # under a label they trusted. The conservative reading wins.
-    if "hd" in blob or "hdtv" in blob:
+    # The "hd" inside "hdr" is not an HD claim: a bare "HDR10+" or "HDRip"
+    # must fall through to unspecified, not read as 720p.
+    if ("hd" in blob and "hdr" not in blob) or "hdtv" in blob:
         return "720p"
     return UNSPECIFIED
 
@@ -504,7 +510,17 @@ def for_release(release, links, mega_decrypt: bool = False) -> dict:
     Returns ``{"tiers": [...], "auto": {...}}`` where each tier is exactly what a
     quality switch needs: the band, our own handle for the single best copy, how
     it behaves, whether it plays here or is download-only, and how many copies
-    were folded into it. ``auto`` is the tier the player should start at."""
+    were folded into it. ``auto`` is the tier the player should start at.
+
+    A download_only tier's link may be an expired copy: when no copy plays, the
+    tier still names its top-scored copy so the download surface has something
+    to offer, and a lapsed signature can be re-resolved. That link MUST be
+    re-resolved before serving — never serve the stored URL directly. The
+    press path already does (``/api/v1/stream`` and ``/api/v1/download``
+    resolve through ``resolve_live_source``), and M3U export excludes expired.
+    ``merge()`` preserves this: its tiers are the per-print tiers built here,
+    so an expired link appears only in a download_only tier, never in a play
+    tier. Pinned by ``test_tiers.DeadLinkGateTests``."""
     row = release if isinstance(release, dict) else dict(release)
     # Only the structured columns decide a band. A release headline is a scraper's
     # sentence and can contain any word ("Camera", "Sand") that a band needle in

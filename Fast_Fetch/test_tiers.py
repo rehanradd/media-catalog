@@ -32,7 +32,9 @@ def link(**fields) -> dict:
 class BandTests(unittest.TestCase):
     def test_a_scraper_quality_string_becomes_a_band(self):
         for text, band in (
-                ("4K", "2160p"), ("2160p UHD", "2160p"), ("HDR10+", "2160p"),
+                ("4K", "2160p"), ("2160p UHD", "2160p"), ("HDR10+", tiers.UNSPECIFIED),
+                ("1080p HDR", "1080p"), ("2160p HDR", "2160p"),
+                ("720p HDRip", "720p"), ("HDRip", tiers.UNSPECIFIED),
                 ("1080P", "1080p"), ("720p WEB-DL", "720p"), ("480p-HEVC", "480p"),
                 ("360p", "sd"), ("HDCAM", "sd"), ("HD", "720p"),
                 ("Download", tiers.UNSPECIFIED), ("unknown", tiers.UNSPECIFIED)):
@@ -593,6 +595,28 @@ class DeadLinkGateTests(unittest.TestCase):
         # The dead copy may still trail as a silent runner-up (an existing rule
         # pins dead last in `backups`); what it may no longer be is the winner.
         self.assertEqual(tiers.score(dead_direct, "1080p"), 0)
+
+    def test_a_download_only_tier_may_carry_an_expired_link_that_must_be_re_resolved(self):
+        # Audit §4b residual: when no copy plays, for_release still names its
+        # top-scored copy — which may be expired. That link is only ever a
+        # download offer; the press path re-resolves it, never serves the
+        # stored URL. The invariant is the mode: an expired link appears
+        # only in a download_only tier, never in a play tier.
+        expired = link(id=1, status="expired", is_resumable=1, http_status=200)
+        ladder = tiers.for_release({"quality": "1080p"}, [expired])
+        tier = ladder["tiers"][0]
+        self.assertEqual(tier["mode"], "download_only")
+        self.assertFalse(tier["playable"])
+        self.assertIsNone(ladder["auto"])
+        self.assertEqual(tier["link"]["status"], "expired")
+
+    def test_an_expired_copy_never_wins_when_a_live_copy_plays(self):
+        expired = link(id=1, status="expired", is_resumable=1, http_status=200,
+                       speed_mbps=95, rank_score=200)
+        live = link(id=2, playback_type="url")
+        ladder = tiers.for_release({"quality": "1080p"}, [expired, live])
+        self.assertEqual(ladder["tiers"][0]["link"]["id"], 2)
+        self.assertTrue(ladder["tiers"][0]["playable"])
 
 
 class AudioTests(unittest.TestCase):

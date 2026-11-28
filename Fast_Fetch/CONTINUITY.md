@@ -85,3 +85,7 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 
 ## 2026-11-27 - Self-healing Branch 6: durability (log + reconciliation + weekly prune)
 - New `self_healing_log.py` (stdlib-only): append-only JSON-lines audit log (`self_healing.log` in the data dir, `RADD_SELF_HEALING_LOG` override, weekly rotation); every auto-change writes exactly one line — site-move via `_record_verified`, host-move via `apply_move`, parked-flag via `_mark_host_parked`, cache-refusal + derived-expiry-banked via `record_resolved_cache`. Merge rule: `reconcile_site_host` logs a registry disagreement + queues the site for `resolve_site`; wired into `resolve_live_source` (memoised once per site per hour). `host_registry.prune_observations` (90-day retention, spent markers kept) + new `self_heal_weekly.py` CLI + `radd-self-heal-weekly.service/.timer` (Sun 07:00). Tests: new `test_self_healing_log.py` 29/29 + CI step. Full note: `checkpoints/20261127-selfheal-b6-durability.md`. Branch selfheal-b6-durability, base cbcc000c.
+
+## 2026-11-28 - HDR banding fix (backend loop item 14)
+- `tiers.band_of`: "hdr" out of the 2160p needles (HDR is a flag, not a resolution; "720p HDRip" read as 2160p); bare "HDR10+" now unspecified. test_tiers 65/65, catalog_api 183, link_health 57, release_descriptor 25, quality 7 — all green.
+- §4b residual: `for_release` docstring — a download_only tier's link may be expired, MUST be re-resolved; tests pin expired-only-in-download_only. Branch hdr-banding-fix @ 90e485b0.
