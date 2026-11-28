@@ -190,6 +190,11 @@ try:  # package-style import when run as Fast_Fetch/fast_probe.py
 except ImportError:  # running from inside Fast_Fetch/ (the documented way)
     import warp_proxy  # type: ignore
 
+try:  # package-style import when run as Fast_Fetch/fast_probe.py
+    from Fast_Fetch import db_pragmas
+except ImportError:  # running from inside Fast_Fetch/ (the documented way)
+    import db_pragmas  # type: ignore
+
 try:
     from Fast_Fetch import host_registry
 except ImportError:  # running from inside Fast_Fetch/ (the documented way)
@@ -1645,6 +1650,13 @@ def run_pilot(conn: sqlite3.Connection, *, max_rows: int = DEFAULT_MAX_ROWS,
         clearance = None
     writer_conn = sqlite3.connect(db_path, timeout=WRITER_BUSY_TIMEOUT_MS / 1000.0,
                                   check_same_thread=False)
+    # Serve pragmas on the writer (64 MiB cache, wal_autocheckpoint 1000):
+    # the raw connect ran on SQLite's 2 MiB default cache, so each 100-row
+    # batch over a 4.7M-row table did more disk I/O and held the write lock
+    # longer than it needs to — starving press-path writes (which have no
+    # lock retry) and slowing the reads behind the posts 10 s deadline.
+    # busy_timeout stays 30 s: apply_serve_pragmas uses the same value.
+    db_pragmas.apply_serve_pragmas(writer_conn)
     try:
         link_state.ensure_schema(writer_conn)
         writer = VerdictWriter(writer_conn)

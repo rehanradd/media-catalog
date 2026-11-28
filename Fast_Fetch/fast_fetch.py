@@ -1854,6 +1854,32 @@ def _init_db_with_retry(db_path: Path | None = None) -> None:
     raise last_error
 
 
+_BANK_LOCK_MAX_ATTEMPTS = 3
+_BANK_LOCK_RETRY_DELAYS = (0.5, 1.0)
+
+
+def _bank_with_locked_retry(fn):
+    """Call ``fn()``, retrying a busy database a bounded number of times.
+
+    Only "database is locked" is retried — any other failure raises at
+    once, exactly like :func:`_init_db_with_retry`. Silent: the press
+    banks are a best-effort write on the hot path, so a retry is not
+    worth a log line. Each attempt must open a FRESH connection (the
+    caller does that inside ``fn``) — retrying on a connection that
+    already failed a lock is not reliable."""
+    last_error = None
+    for attempt in range(1, _BANK_LOCK_MAX_ATTEMPTS + 1):
+        try:
+            return fn()
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower():
+                raise
+            last_error = exc
+            if attempt < _BANK_LOCK_MAX_ATTEMPTS:
+                time.sleep(_BANK_LOCK_RETRY_DELAYS[attempt - 1])
+    raise last_error
+
+
 def _backfill_post_sources(conn, floor_id) -> None:
     """INSERT OR IGNORE the post_sources rows for posts (all, or id > floor)."""
     if floor_id is None:
@@ -10417,7 +10443,15 @@ def _bank_hubcloud_siblings(*, release_id, pressed_id, candidates):
     if not candidates or release_id is None:
         return 0
     by_service = {c["service"]: c for c in candidates}
-    try:
+    banked = []
+
+    def _do_bank():
+        # One attempt = one fresh connection: a press write arriving
+        # while the sweep holds BEGIN IMMEDIATE waits out the 30 s busy
+        # timeout and fails without a retry, unlike the sweep writer
+        # (5 retries) and init_db (3 attempts). The UPDATE is a pure
+        # SET to the same values, so re-running it after a partial
+        # commit is idempotent.
         placeholders = ",".join("?" for _ in _HUBCLOUD_SIBLING_SERVICES)
         with get_db() as conn:
             rows = conn.execute(
@@ -10426,7 +10460,6 @@ def _bank_hubcloud_siblings(*, release_id, pressed_id, candidates):
                 + placeholders + ")",
                 (release_id, pressed_id,
                  *_HUBCLOUD_SIBLING_SERVICES)).fetchall()
-            banked = []
             for row in rows:
                 cand = by_service.get(row["service"])
                 if cand is None:
@@ -10440,6 +10473,9 @@ def _bank_hubcloud_siblings(*, release_id, pressed_id, candidates):
                     "WHERE id = ?",
                     (cand["final_url"], cand["is_temporary"], row["id"]))
                 banked.append((row["id"], cand))
+
+    try:
+        _bank_with_locked_retry(_do_bank)
     except Exception:
         return 0
     for sid, cand in banked:

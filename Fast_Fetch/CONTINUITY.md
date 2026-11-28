@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 179 session files (176 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 180 session files (177 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -75,13 +75,14 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - **2026-11-28 — rotated out:** the three oldest session entries (2026-11-26 P2 cast backend; 2026-11-27 self-healing Branch 5 + Branch 6) — verbatim in `checkpoints/20261128-continuity-rotation-hdr-banding.md`.
 - **2026-11-28 — rotated out:** the two oldest session entries (2026-11-28 HDR banding fix; 2026-11-28 projection reset=False upsert fix) — verbatim in `checkpoints/20261128-continuity-rotation-importer-wiring.md`.
 - **2026-11-28 — rotated out:** the oldest session entry (2026-11-28 http_get keep-alive) — verbatim in `checkpoints/20261128-continuity-rotation-probe-schedule.md`.
+- **2026-11-28 — rotated out:** the oldest session entry (2026-11-28 importer domain-resolver wiring) — verbatim in `checkpoints/20261128-continuity-rotation-sweep-hardening.md`.
 ## Moved out (reference prose, verbatim)
 
 - ✍️ Incoming Agent Checklist → `../docs/SPEC_INCOMING_AGENT_CHECKLIST.md` (294 lines) — the onboarding procedure, unchanged
 
-## 2026-11-28 - importer domain-resolver wiring (backend loop Phase 1 item 1)
-- import_wp_family wired to domain_resolver: _resolved_config re-points base/sitemaps/rest at the registry base (bollyflix gen.in -> io.in; other 4 unchanged); sync_catalog/crawl take --base-url/--registry; empty enumeration retries once via resolve_if_dead; parse_page/parse_rest_post take an optional config. Audit: 27 importers, 6 already wired (castle/dramadog/themoviebox/javmost/megacartoons/missav, 297,598 posts, 64.5%); wp_family was the only wirable remainder (5 registry sites, 0 live posts). Tests: 7 new ResolverWiringTests; wp_family 55/55, javmost 23, megacartoons 13, missav 19, domain_resolver 81/81 — all green. Branch importer-domain-wiring (build only — parent owns the gate/landing).
-
 ## 2026-11-28 - probe schedule + domain map (Phase 1 items 3 + 5)
 - Item 3 ALREADY DONE, no code: radd-domain-probe.timer (daily 10:30) → domain_recheck.py --probe-stale → probe_all_sites + resolve_site chain, live since Branch 4. Fired today 10:40: 8 down, 1 resolved (world4ufree). The plan premise was stale.
 - Item 5: domain map at checkpoints/20261128-domain-map.md — 33 sites (23 active, 8 down, 2 unverifiable), verified vs live registry + posts (461,611); 6 moves since the repo copy froze 23 Nov; down sites hold 79,093 posts (themoviebox first). Follow-ups: re-verify the 8 down (item 8); repo copy 5 days stale. Branch probe-all-sites-schedule (docs only — parent owns the landing).
+
+## 2026-11-28 - sweep-load hardening (Phase 3 item 12)
+- Two symptoms, two mechanisms: presses failed "database is locked" (sweep holds BEGIN IMMEDIATE while press banks had NO retry); posts 503 is NOT a lock, it is the 10 s query deadline (baseline crosses 10 s under sweep load). Fix: serve pragmas on the sweep writer (64 MiB cache, was 2 MiB) + bounded lock retry (3 attempts, 0.5/1.0 s, only "locked", fresh connection per attempt) in _bank_hubcloud_siblings and both viewer.py banks. 30 s busy_timeout and the deadline untouched. Tests: 7 new, all green; fast_probe 88/88; other modules green; registered in backend-ci.yml. Branch sweep-load-hardening (parent owns the gate/landing; live proof is a press under sweep load).

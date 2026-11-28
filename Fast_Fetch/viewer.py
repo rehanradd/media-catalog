@@ -8971,24 +8971,35 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     and not res.get("stale")):
                 try:
                     import resolved_cache
-                    with get_db() as conn:
-                        # API-01: the row is minted for THIS press's client,
-                        # so a same-IP later press can be served it — a copy
-                        # is banked (the answer itself is untouched) and the
-                        # cache keeps the IP only on ip_bound=1 rows.
-                        banked = dict(res)
-                        banked["minted_ip"] = _press_client_ip(self)
-                        resolved_cache.record_resolved_cache(
-                            conn, int(source_id), banked)
-                        # Fill-hit measurement: this press just paid for a
-                        # full resolve (see the hit branch above).
-                        conn.execute("PRAGMA busy_timeout = 250")
-                        resolved_cache.note_serve_outcome(
-                            conn, route="stream", served_from="cold")
-                        # H4 R5 shared warm: this cold press is the demand
-                        # signal — record it, then warm the print's other
-                        # bands so the next press at another band hits warm.
-                        _note_shared_demand(conn, int(source_id))
+                    from fast_fetch import _bank_with_locked_retry
+
+                    def _do_bank():
+                        # Fresh connection per attempt: a press bank
+                        # arriving while the sweep holds BEGIN IMMEDIATE
+                        # waits out the 30 s busy timeout without a
+                        # retry, unlike the sweep writer (5) and init_db
+                        # (3). The upsert is idempotent, so re-running
+                        # it after a partial commit is safe.
+                        with get_db() as conn:
+                            # API-01: the row is minted for THIS press's client,
+                            # so a same-IP later press can be served it — a copy
+                            # is banked (the answer itself is untouched) and the
+                            # cache keeps the IP only on ip_bound=1 rows.
+                            banked = dict(res)
+                            banked["minted_ip"] = _press_client_ip(self)
+                            resolved_cache.record_resolved_cache(
+                                conn, int(source_id), banked)
+                            # Fill-hit measurement: this press just paid for a
+                            # full resolve (see the hit branch above).
+                            conn.execute("PRAGMA busy_timeout = 250")
+                            resolved_cache.note_serve_outcome(
+                                conn, route="stream", served_from="cold")
+                            # H4 R5 shared warm: this cold press is the demand
+                            # signal — record it, then warm the print's other
+                            # bands so the next press at another band hits warm.
+                            _note_shared_demand(conn, int(source_id))
+
+                    _bank_with_locked_retry(_do_bank)
                     _warm_sibling_bands(int(source_id))
                 except Exception:      # noqa: BLE001
                     pass
@@ -9184,22 +9195,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         and not res.get("stale")):
                     try:
                         import resolved_cache
-                        with get_db() as conn:
-                            # API-01: same minting-IP stamp as the stream
-                            # route above — this row was minted for this
-                            # press's client.
-                            banked = dict(res)
-                            banked["minted_ip"] = _press_client_ip(self)
-                            resolved_cache.record_resolved_cache(
-                                conn, int(source_id), banked)
-                            # Fill-hit measurement: this download just paid
-                            # for a full resolve (see the hit note above).
-                            conn.execute("PRAGMA busy_timeout = 250")
-                            resolved_cache.note_serve_outcome(
-                                conn, route="download", served_from="cold")
-                            # H4 R5 shared warm: same demand signal and
-                            # sibling warm as the stream route above.
-                            _note_shared_demand(conn, int(source_id))
+                        from fast_fetch import _bank_with_locked_retry
+
+                        def _do_bank():
+                            # Fresh connection per attempt: same lock
+                            # starvation as the stream route above.
+                            with get_db() as conn:
+                                # API-01: same minting-IP stamp as the stream
+                                # route above — this row was minted for this
+                                # press's client.
+                                banked = dict(res)
+                                banked["minted_ip"] = _press_client_ip(self)
+                                resolved_cache.record_resolved_cache(
+                                    conn, int(source_id), banked)
+                                # Fill-hit measurement: this download just paid
+                                # for a full resolve (see the hit note above).
+                                conn.execute("PRAGMA busy_timeout = 250")
+                                resolved_cache.note_serve_outcome(
+                                    conn, route="download", served_from="cold")
+                                # H4 R5 shared warm: same demand signal and
+                                # sibling warm as the stream route above.
+                                _note_shared_demand(conn, int(source_id))
+
+                        _bank_with_locked_retry(_do_bank)
                         _warm_sibling_bands(int(source_id))
                     except Exception:      # noqa: BLE001
                         pass

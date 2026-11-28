@@ -386,6 +386,13 @@ jobs:
       - name: 🧪 test_init_db_busy.py
         run: python3 -S Fast_Fetch/test_init_db_busy.py
 
+      # The press-bank busy fix (sweep-load hardening): bounded lock retry
+      # on the press-path banks (_bank_hubcloud_siblings + both viewer.py
+      # record_resolved_cache banks) + serve pragmas on the sweep writer
+      # connection. Offline, stdlib, temp-file SQLite only.
+      - name: 🧪 test_press_bank_busy.py
+        run: python3 -S Fast_Fetch/test_press_bank_busy.py
+
       - name: 🧪 test_series_filter.py
         run: python3 -S Fast_Fetch/test_series_filter.py
 
