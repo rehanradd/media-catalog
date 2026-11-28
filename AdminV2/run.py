@@ -21,7 +21,8 @@ fresh verified backup marker exists for that store):
     RADD_CERT_PATH       fullchain.pem for the cert-expiry read
     RADD_FLEET_DIR       Fast_Fetch dir (crawler scripts)
     RADD_BACKUP_MARKER_DIR  directory holding the gate backups and
-                         their *.verified.json markers (live: /home/ubuntu).
+                         their *.verified.json markers (live:
+                         /home/ubuntu/radd-stream-data).
                          Unset = every live write refused until set.
     RADD_BACKUP_MAX_AGE_S   freshness window in seconds (default 86400 = 24h).
     RADD_TOTP_KEY        base64 TOTP encryption key (rotated 2026-11-11;

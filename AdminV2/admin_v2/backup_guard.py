@@ -44,7 +44,8 @@ record the gate left behind.
 
 Configuration (environment, read by BackupGuard.from_env):
 * ``RADD_BACKUP_MARKER_DIR`` — directory holding the gate backups
-  and their ``*.verified.json`` markers (on the live VM: /home/ubuntu).
+  and their ``*.verified.json`` markers (on the live VM:
+  /home/ubuntu/radd-stream-data, where the newest gate backups live).
   Unset means "not configured": every live write is refused until
   the operator sets it. There is deliberately no default directory
   to guess — a wrong guess would authorise writes against the wrong
