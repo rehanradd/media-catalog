@@ -793,7 +793,13 @@ class SearchViewModel @Inject constructor(
         val next = _uiState.value.recents.filterNot { it == query }
         if (next == _uiState.value.recents) return
         _uiState.update { it.copy(recents = next) }
-        viewModelScope.launch { settingsRepository.saveSearchRecents(next) }
+        viewModelScope.launch {
+            // Search-crash fix (2026-11-28): a DataStore write failure must
+            // never escape this launch uncaught — it kills the process
+            // ("Radd keeps stopping"). The rail is already updated; a failed
+            // persist is a silent retry-next-time, never a crash.
+            runCatching { settingsRepository.saveSearchRecents(next) }
+        }
     }
 
     fun selectType(type: String?) {
@@ -891,7 +897,13 @@ class SearchViewModel @Inject constructor(
         if (existing.any { it.encoded == saved.encoded }) return
         val next = (existing + saved).takeLast(MaxSavedFilters)
         _uiState.update { it.copy(savedFilters = next) }
-        viewModelScope.launch { settingsRepository.saveSavedSearchFilters(next.map { it.encoded }) }
+        viewModelScope.launch {
+            // Search-crash fix (2026-11-28): a DataStore write failure must
+            // never escape this launch uncaught — it kills the process.
+            // The chip row is already updated; a failed persist is a silent
+            // retry-next-time, never a crash.
+            runCatching { settingsRepository.saveSavedSearchFilters(next.map { it.encoded }) }
+        }
     }
 
     /**
@@ -909,7 +921,11 @@ class SearchViewModel @Inject constructor(
         val next = _uiState.value.savedFilters.filterNot { it == saved }
         if (next == _uiState.value.savedFilters) return
         _uiState.update { it.copy(savedFilters = next) }
-        viewModelScope.launch { settingsRepository.saveSavedSearchFilters(next.map { it.encoded }) }
+        viewModelScope.launch {
+            // Search-crash fix (2026-11-28): same guard as saveCurrentFilters
+            // — a failed DataStore write must never kill the process.
+            runCatching { settingsRepository.saveSavedSearchFilters(next.map { it.encoded }) }
+        }
     }
 
     /**
@@ -1199,7 +1215,15 @@ class SearchViewModel @Inject constructor(
         // Show the new rail immediately, then persist the same list; the store's flow will
         // echo it back and settle the state.
         _uiState.update { it.copy(recents = next) }
-        viewModelScope.launch { settingsRepository.saveSearchRecents(next) }
+        viewModelScope.launch {
+            // Search-crash fix (2026-11-28): this launch fires ~0.5s after
+            // the first keystrokes, while the viewer is still typing. A
+            // DataStore write failure used to escape the launch uncaught and
+            // kill the process ("Radd keeps stopping"); the rail is already
+            // shown, so a failed persist is a silent retry-next-time, never
+            // a crash.
+            runCatching { settingsRepository.saveSearchRecents(next) }
+        }
     }
 
     private companion object {

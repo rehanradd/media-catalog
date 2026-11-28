@@ -426,6 +426,14 @@ class CatalogRepository @Inject constructor(
             return null
         } catch (_: IOException) {
             return null
+        } catch (ex: CancellationException) {
+            throw ex
+        } catch (_: Exception) {
+            // Search-crash fix (2026-11-28): a Gson parse failure
+            // (JsonSyntaxException, a RuntimeException) used to escape here
+            // and crash callers that are not inside a catch. Null means
+            // "fall back", exactly like an HTTP or IO failure.
+            return null
         }
         if (!response.ok) return null
         val posts = response.items.map { it.toPost() }
@@ -464,6 +472,13 @@ class CatalogRepository @Inject constructor(
         } catch (_: HttpException) {
             return null
         } catch (_: IOException) {
+            return null
+        } catch (ex: CancellationException) {
+            throw ex
+        } catch (_: Exception) {
+            // Search-crash fix (2026-11-28): same as browseWorksV2 — a Gson
+            // parse failure must fall back to null, never escape to a caller
+            // outside a catch. Cancellation still propagates.
             return null
         }
         if (!response.ok) return null

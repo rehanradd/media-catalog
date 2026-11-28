@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import com.raddstream.app.brand.Brand
 import com.raddstream.app.diagnostics.DiagnosticsBus
+import java.io.File
 import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.flow.first
@@ -27,6 +28,14 @@ import kotlinx.coroutines.flow.first
  * counts from before the answer.
  */
 object Telemetry {
+
+    /**
+     * The last crash's stack trace, written to the app's files dir by
+     * [persistCrashTrace] (Search-crash fix, 2026-11-28). Last crash only —
+     * each crash overwrites it. Read it back from Settings > Diagnostics
+     * or by pulling the file off the device.
+     */
+    const val CRASH_TRACE_FILE: String = "last-crash.txt"
 
     /** The usage-block field names the server accepts (`usage_stats.CLIENT_FIELDS`). */
     val USAGE_FIELDS: Set<String> = setOf(
@@ -171,11 +180,17 @@ object Telemetry {
      * `runCatching`, because the process is dying and a suspending DataStore
      * write would never land; if there was no previous handler, the process
      * is killed outright rather than left running in a broken state.
+     *
+     * Search-crash fix (2026-11-28): the counter alone never says WHAT
+     * crashed — the Appetize search crash left no trace to read. The trace
+     * is also persisted best-effort to [CRASH_TRACE_FILE] (last crash only),
+     * so the next crash is diagnosable from the device instead of a guess.
      */
     fun installCrashHandler() {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             runCatching { counters?.record("crashes") }
+            runCatching { persistCrashTrace(thread, error) }
             if (isRobolectricFirebaseSessionsNoise(thread, error)) return@setDefaultUncaughtExceptionHandler
             if (previous != null) {
                 previous.uncaughtException(thread, error)
@@ -183,6 +198,23 @@ object Telemetry {
                 android.os.Process.killProcess(android.os.Process.myPid())
             }
         }
+    }
+
+    /**
+     * The last crash's stack trace, written to the app's files dir so a later
+     * diagnostics read can show it. Best-effort only: a dying process must
+     * never die a second time inside its own crash handler, and a missing
+     * application context (a handler installed before [init]) simply skips
+     * the write.
+     */
+    private fun persistCrashTrace(thread: Thread, error: Throwable) {
+        val context = appContext ?: return
+        val trace = buildString {
+            appendLine("time=${System.currentTimeMillis()}")
+            appendLine("thread=${thread.name}")
+            appendLine(error.stackTraceToString())
+        }
+        File(context.filesDir, CRASH_TRACE_FILE).writeText(trace)
     }
 
     // APP-13 (review N-6): every counter increment is also fed into the
