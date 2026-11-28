@@ -895,5 +895,124 @@ class ParseRestPostTests(unittest.TestCase):
                 conn.close()
 
 
+class ResolverWiringTests(unittest.TestCase):
+    def test_resolved_config_moves_bollyflix_to_io_in(self):
+        with mock.patch.object(wp, "get_active_base_url",
+                               return_value="https://thebollyflix.io.in"):
+            cfg = wp._resolved_config("bollyflix")
+        self.assertEqual(cfg["base"], "https://thebollyflix.io.in")
+        self.assertEqual(cfg["rest"],
+                         "https://thebollyflix.io.in/wp-json/wp/v2/posts")
+        # The live SITES dict is never mutated by resolution.
+        self.assertEqual(wp.SITES["bollyflix"]["base"],
+                         "https://thebollyflix.gen.in")
+
+    def test_resolved_config_keeps_hardcoded_when_resolver_matches(self):
+        with mock.patch.object(wp, "get_active_base_url",
+                               return_value="https://moviehax.run"):
+            cfg = wp._resolved_config("moviehax")
+        self.assertEqual(cfg["base"], "https://moviehax.run")
+        self.assertEqual(cfg["sitemaps"],
+                         ["https://moviehax.run/sitemap_index.xml"])
+
+    def test_resolved_config_keeps_hardcoded_when_resolver_empty(self):
+        with mock.patch.object(wp, "get_active_base_url", return_value=""):
+            cfg = wp._resolved_config("animeworld")
+        self.assertEqual(cfg["base"], "https://animeworld.live")
+        self.assertEqual(cfg["sitemaps"],
+                         ["https://animeworld.live/sitemap_index.xml"])
+
+    def test_sync_fetches_sitemaps_from_resolved_base(self):
+        index = ("<sitemapindex><sitemap><loc>https://new.example/post-sitemap.xml"
+                 "</loc></sitemap></sitemapindex>")
+        child = ("<urlset><url><loc>https://new.example/good-film-2023/</loc>"
+                 "</url></urlset>")
+        seen_urls: list[str] = []
+
+        def fake_get(url, **_kw):
+            seen_urls.append(url)
+            return (200, url, index) if url.endswith("sitemap_index.xml") \
+                else (200, url, child)
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(wp, "get_active_base_url",
+                                  return_value="https://new.example"), \
+                mock.patch.object(wp, "http_get", side_effect=fake_get):
+            db = Path(tmp) / "x.db"
+            fresh = wp.sync_catalog("moviehax", db, verbose=False)
+        self.assertEqual(fresh, 1)
+        self.assertTrue(seen_urls)
+        self.assertTrue(all(u.startswith("https://new.example")
+                            for u in seen_urls),
+                        f"fetched outside the resolved base: {seen_urls}")
+
+    def test_explicit_base_url_overrides_resolver(self):
+        index = ("<sitemapindex><sitemap><loc>https://override.example/post-sitemap.xml"
+                 "</loc></sitemap></sitemapindex>")
+        child = ("<urlset><url><loc>https://override.example/good-film-2023/</loc>"
+                 "</url></urlset>")
+        seen_urls: list[str] = []
+
+        def fake_get(url, **_kw):
+            seen_urls.append(url)
+            if url.startswith("https://override.example"):
+                return (200, url, index) if url.endswith("sitemap_index.xml") \
+                    else (200, url, child)
+            return 404, url, ""
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(wp, "get_active_base_url",
+                                  return_value="https://resolver.example"), \
+                mock.patch.object(wp, "http_get", side_effect=fake_get):
+            db = Path(tmp) / "x.db"
+            fresh = wp.sync_catalog("moviehax", db, verbose=False,
+                                    base_url="https://override.example")
+        self.assertEqual(fresh, 1)
+        self.assertTrue(all(u.startswith("https://override.example")
+                            for u in seen_urls),
+                        f"resolver base leaked in: {seen_urls}")
+
+    def test_empty_enumeration_retries_on_moved_base(self):
+        index = ("<sitemapindex><sitemap><loc>https://moved.example/post-sitemap.xml"
+                 "</loc></sitemap></sitemapindex>")
+        child = ("<urlset><url><loc>https://moved.example/good-film-2023/</loc>"
+                 "</url></urlset>")
+
+        def fake_get(url, **_kw):
+            if url.startswith("https://moviehax.run"):
+                return 404, url, ""
+            return (200, url, index) if url.endswith("sitemap_index.xml") \
+                else (200, url, child)
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(wp, "get_active_base_url",
+                                  return_value="https://moviehax.run"), \
+                mock.patch.object(wp, "resolve_if_dead",
+                                  return_value="https://moved.example"), \
+                mock.patch.object(wp, "http_get", side_effect=fake_get):
+            db = Path(tmp) / "x.db"
+            fresh = wp.sync_catalog("moviehax", db, verbose=False)
+            self.assertEqual(fresh, 1)
+            conn = sqlite3.connect(db)
+            try:
+                self.assertEqual(
+                    conn.execute("SELECT loc FROM sitemap_cache").fetchall(),
+                    [("https://moved.example/good-film-2023/",)])
+            finally:
+                conn.close()
+
+    def test_parse_page_uses_supplied_config(self):
+        cfg = dict(wp.SITES["hindidubbedmovies"], always_animated=True)
+        post = wp.parse_page(MOVIE_PAGE,
+                             "https://www.moviesmela.com/jawan-2023/",
+                             "hindidubbedmovies", config=cfg)
+        self.assertIsNotNone(post)
+        self.assertEqual(post["is_animated"], 1)
+        plain = wp.parse_page(MOVIE_PAGE,
+                              "https://www.moviesmela.com/jawan-2023/",
+                              "hindidubbedmovies")
+        self.assertEqual(plain["is_animated"], 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

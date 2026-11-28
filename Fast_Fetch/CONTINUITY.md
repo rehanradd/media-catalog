@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 176 session files (173 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 177 session files (174 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -73,16 +73,13 @@
 The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete index.
 - **2026-11-24 → 2026-11-21 — rotated out:** seven session-history bullets (DOC-05, PNL-02/03, INF-05, API-03, API-14, catalog pipeline fixes, 1fichier wiring) — verbatim in `checkpoints/20261127-selfheal-b6-durability.md` (Rotated out section).
 - **2026-11-28 — rotated out:** the three oldest session entries (2026-11-26 P2 cast backend; 2026-11-27 self-healing Branch 5 + Branch 6) — verbatim in `checkpoints/20261128-continuity-rotation-hdr-banding.md`.
+- **2026-11-28 — rotated out:** the two oldest session entries (2026-11-28 HDR banding fix; 2026-11-28 projection reset=False upsert fix) — verbatim in `checkpoints/20261128-continuity-rotation-importer-wiring.md`.
 ## Moved out (reference prose, verbatim)
 
 - ✍️ Incoming Agent Checklist → `../docs/SPEC_INCOMING_AGENT_CHECKLIST.md` (294 lines) — the onboarding procedure, unchanged
 
-## 2026-11-28 - HDR banding fix (backend loop item 14)
-- `tiers.band_of`: "hdr" out of the 2160p needles (HDR is a flag, not a resolution; "720p HDRip" read as 2160p); bare "HDR10+" now unspecified. test_tiers 65/65, catalog_api 183, link_health 57, release_descriptor 25, quality 7 — all green.
-- §4b residual: `for_release` docstring — a download_only tier's link may be expired, MUST be re-resolved; tests pin expired-only-in-download_only. Branch hdr-banding-fix @ 90e485b0.
-
-## 2026-11-28 - Projection reset=False upsert fix (backend loop Phase 2 item 6)
-- `project(reset=False)` no longer crashes on `cat_works.work_key`: works upsert (all ledger columns refresh, first_seen_at only moves earlier); prints reuse by a per-work seeded print index (cat_releases has no UNIQUE key — seeding is one indexed lookup per work on idx_cat_releases_work, descriptor columns refresh on reuse, ids stay stable); episodes upsert via ON CONFLICT DO NOTHING + RETURNING; links upsert ledger-owned columns but preserve probe-owned state/evidence (apply_evidence owns those); work_sites refresh last_seen_at; `_raise_review` dedupes identical queue rows. `project_db(reset=...)` passthrough added. reset=True behaviour unchanged (empty tables → plain inserts). Tests: 3 new in test_catalog_v2.ResetFalseUpsertTests (repeat stable, refresh + probe-state preserved, series episodes/reviews stable); catalog_v2 116/116, catalog_api 183, docs_invariants 22/22, tiers 65/65 — all green. Branch projection-upsert-fix (build only — parent owns the gate/landing).
-
 ## 2026-11-28 - http_get keep-alive (backend loop Phase 3 item 11)
 - Direct fetches reuse one http.client connection per (scheme, host, port); pool cap 16, stale socket drops + retries once. WARP path unchanged (urllib). Tests: 6 new KeepAliveTests (reuse, redirect, 404, stale retry, cookie drop, pool bound); 6 wiring tests re-pointed to _fetch_once. Bench: 50 GETs 0.08s → 0.02s, 50 → 1 conns. Branch http-keep-alive.
+
+## 2026-11-28 - importer domain-resolver wiring (backend loop Phase 1 item 1)
+- import_wp_family wired to domain_resolver: _resolved_config re-points base/sitemaps/rest at the registry base (bollyflix gen.in -> io.in; other 4 unchanged); sync_catalog/crawl take --base-url/--registry; empty enumeration retries once via resolve_if_dead; parse_page/parse_rest_post take an optional config. Audit: 27 importers, 6 already wired (castle/dramadog/themoviebox/javmost/megacartoons/missav, 297,598 posts, 64.5%); wp_family was the only wirable remainder (5 registry sites, 0 live posts). Tests: 7 new ResolverWiringTests; wp_family 55/55, javmost 23, megacartoons 13, missav 19, domain_resolver 81/81 — all green. Branch importer-domain-wiring (build only — parent owns the gate/landing).

@@ -56,6 +56,15 @@ if str(BASE_DIR) not in sys.path:
 import fast_fetch  # noqa: E402
 import wp_rest  # noqa: E402
 
+try:
+    from domain_resolver import get_active_base_url, resolve_if_dead
+except Exception:  # noqa: BLE001 - registry wiring is optional offline
+    def get_active_base_url(site_name, fallback_default=None, registry_path=None):  # type: ignore
+        return fallback_default or ""
+
+    def resolve_if_dead(site_name, registry_path=None):  # type: ignore
+        return ""
+
 DATA_DIR = Path("/home/ubuntu/radd-stream-data")
 PAGE_TIMEOUT = 30
 RATE_LIMIT_STATUS = 429
@@ -213,6 +222,37 @@ SITES = {
                    r"disclaimer|feed|wp-json|sitemap)",
     },
 }
+
+
+def _resolved_config(site: str, base_url: str | None = None,
+                     registry_path: str | Path | None = None) -> dict:
+    """A copy of SITES[site] re-pointed at the resolver's current base.
+
+    The registry is the domain authority: for 4 of the 5 family sites the
+    registry base equals the hardcoded one (behaviour-identical), while
+    bollyflix moves gen.in -> io.in (gen.in 301s there; io.in is the live
+    domain, Cloudflare-403 from Oracle egress so the registry marks it
+    "unverifiable" — that is not a down verdict). An explicit base_url
+    overrides the resolver; a falsy resolved base (retired site, or no
+    registry entry) keeps the hardcoded config so the run still targets
+    the documented domain instead of "". sitemaps/rest are full URLs built
+    from the hardcoded base, so they are re-derived by swapping the
+    old-base prefix for the new one; every other key rides along unchanged.
+    """
+    cfg = dict(SITES[site])
+    resolved = (base_url or get_active_base_url(
+        site, SITES[site]["base"], registry_path)).rstrip("/")
+    if not resolved or resolved == SITES[site]["base"].rstrip("/"):
+        return cfg
+    old = SITES[site]["base"].rstrip("/")
+    cfg["base"] = resolved
+    cfg["sitemaps"] = [
+        u.replace(old, resolved, 1) if u.startswith(old) else u
+        for u in cfg.get("sitemaps") or []]
+    rest = cfg.get("rest")
+    if rest and rest.startswith(old):
+        cfg["rest"] = rest.replace(old, resolved, 1)
+    return cfg
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sitemap_cache (
@@ -598,9 +638,10 @@ def _size_bytes(text: str | None) -> int | None:
     return int(value * (1024 ** 3 if m.group(2).lower() == "gb" else 1024 ** 2))
 
 
-def parse_page(html: str, page_url: str, site: str) -> dict | None:
+def parse_page(html: str, page_url: str, site: str,
+               config: dict | None = None) -> dict | None:
     """Maps a server-rendered detail page onto the staging post shape."""
-    cfg = SITES.get(site, {})
+    cfg = config or SITES.get(site, {})
     title_raw = _title_from_html(html, site, cfg)
     title = _clean_title(title_raw, site)
     slug = _slug_of(page_url)
@@ -772,7 +813,8 @@ def _haz_episode_releases(content: str, season: int | None) -> list[dict]:
     return releases
 
 
-def parse_rest_post(post: dict, site: str) -> dict | None:
+def parse_rest_post(post: dict, site: str,
+                    config: dict | None = None) -> dict | None:
     """Maps one WP REST post dict onto the staging post shape.
 
     No per-post page fetch: title from title.rendered, metadata from the
@@ -782,7 +824,7 @@ def parse_rest_post(post: dict, site: str) -> dict | None:
     The site carries no IMDb rating, cast or director, so those stay NULL;
     the post date is a publish date, never a release year.
     """
-    cfg = SITES.get(site, {})
+    cfg = config or SITES.get(site, {})
     raw_title = (post.get("title") or {}).get("rendered") or ""
     post_url = post.get("link") or ""
     title = _clean_title(raw_title, site)
@@ -950,14 +992,16 @@ def _unwrap_cdata(value: str) -> str:
     return html_mod.unescape(m.group(1) if m else value)
 
 
-def sync_catalog(site: str, db_path: Path | str, config: dict | None = None,
-                 verbose: bool = True) -> int:
-    cfg = config or SITES[site]
+def _enumerate(site: str, cfg: dict,
+               verbose: bool = True) -> tuple[list, dict, int]:
+    """Sitemap walk + REST seed -> (locs, by_loc, rest_seeded).
+
+    locs entries are [loc, lastmod, raw_json]: the REST seed backfills
+    raw_json so crawl can parse without a per-post page fetch.
+    """
     exclude = re.compile(cfg["exclude"], re.I)
     pending = list(cfg["sitemaps"])
     seen: set[str] = set()
-    # [loc, lastmod, raw_json]: the REST seed backfills raw_json so crawl
-    # can parse without a per-post page fetch.
     locs: list[list] = []
     by_loc: dict[str, list] = {}
     depth = 0
@@ -986,6 +1030,22 @@ def sync_catalog(site: str, db_path: Path | str, config: dict | None = None,
         pending = nxt
         depth += 1
     rest_seeded = _seed_rest(cfg, exclude, seen, by_loc, locs, site, verbose)
+    return locs, by_loc, rest_seeded
+
+
+def sync_catalog(site: str, db_path: Path | str, config: dict | None = None,
+                 verbose: bool = True, base_url: str | None = None,
+                 registry_path: str | Path | None = None) -> int:
+    cfg = config or _resolved_config(site, base_url, registry_path)
+    locs, by_loc, rest_seeded = _enumerate(site, cfg, verbose)
+    if not locs and not config and base_url is None:
+        # The registry base answered nothing: the domain may have moved
+        # since the registry was last verified. Probe once and re-enumerate
+        # on the fresh base, mirroring the wired importers.
+        fresh = resolve_if_dead(site, registry_path)
+        if fresh and fresh.rstrip("/") != cfg["base"].rstrip("/"):
+            cfg = _resolved_config(site, fresh, registry_path)
+            locs, by_loc, rest_seeded = _enumerate(site, cfg, verbose)
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=60)
@@ -1089,10 +1149,13 @@ def _bump(db_path: Path, loc: str, note: str, *, park: bool = False) -> None:
 
 
 def crawl(site: str, db_path: Path | str, limit: int | None = None,
-          delay: float = 0.5, verbose: bool = True) -> dict:
+          delay: float = 0.5, verbose: bool = True,
+          base_url: str | None = None,
+          registry_path: str | Path | None = None) -> dict:
     global STOP_REQUESTED
     STOP_REQUESTED = False
     _RATE_LIMITED.clear()
+    cfg = _resolved_config(site, base_url, registry_path)
     db_path = Path(db_path)
     conn = sqlite3.connect(db_path, timeout=60)
     try:
@@ -1120,7 +1183,7 @@ def crawl(site: str, db_path: Path | str, limit: int | None = None,
         if raw_json:
             # WP REST post stored at sync: parse it, no page fetch.
             try:
-                post = parse_rest_post(json.loads(raw_json), site)
+                post = parse_rest_post(json.loads(raw_json), site, config=cfg)
             except (json.JSONDecodeError, TypeError, AttributeError):
                 post = None
         if post is not None:
@@ -1156,7 +1219,7 @@ def crawl(site: str, db_path: Path | str, limit: int | None = None,
             totals["failed"] += 1
             continue
         try:
-            post = parse_page(body, final or loc, site)
+            post = parse_page(body, final or loc, site, config=cfg)
         except RateLimited:
             _RATE_LIMITED.set()
             _bump(db_path, loc, "rate-limited")
@@ -1216,6 +1279,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--delay", type=float, default=0.5)
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--base-url", default=None,
+                        help="fetch from this base instead of the registry's")
+    parser.add_argument("--registry", default=None,
+                        help="path to domain_registry.json (default: repo copy)")
     return parser.parse_args(argv)
 
 
@@ -1223,10 +1290,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     db = Path(args.db) if args.db else SITES[args.site]["db"]
     if args.command == "sync":
-        sync_catalog(args.site, db, verbose=not args.quiet)
+        sync_catalog(args.site, db, verbose=not args.quiet,
+                     base_url=args.base_url, registry_path=args.registry)
     elif args.command == "crawl":
         crawl(args.site, db, limit=args.limit, delay=args.delay,
-              verbose=not args.quiet)
+              verbose=not args.quiet, base_url=args.base_url,
+              registry_path=args.registry)
     else:
         print(json.dumps(stats(args.site, db), indent=2))
     return 0
