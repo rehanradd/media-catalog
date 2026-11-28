@@ -28,6 +28,8 @@ import calendar
 import codecs
 import difflib
 import http.cookiejar
+import http.client
+import io
 import sqlite3
 import argparse
 import threading
@@ -2307,6 +2309,207 @@ def _is_timeout(exc: BaseException) -> bool:
     return "timed out" in text or "timeout" in text
 
 
+# ── Keep-alive connection pool (2026-11-28, backend loop Phase 3 item 11) ─────
+#
+# ``http_get`` used to open a fresh connection per request (urllib
+# ``urlopen``). The 23 Nov HubCloud probe measured the same 2-GET chain at
+# 3.02 s fresh vs 0.57 s over a reused ``http.client`` connection (5.3x),
+# so direct (non-WARP) fetches now reuse one connection per
+# (scheme, host, port). The WARP proxy path is untouched — it still goes
+# through the urllib opener exactly as before.
+#
+# A connection is checked OUT of the pool for one transaction and checked
+# back IN only after the response body is fully read, so two threads can
+# never share a socket; the lock guards checkout/checkin only, never the
+# request itself, so the sitemap fan-out still runs in parallel. A pooled
+# connection that turns out dead (the server closed it between calls) is
+# dropped and the request retried ONCE on a fresh connection — a GET is
+# idempotent, so the retry is safe. A failure on a fresh connection is
+# not a stale-pool problem and propagates to http_get's retry loop.
+# The pool is bounded (16 connections, oldest evicted first) so a
+# long-lived serve process cannot grow it without limit.
+
+_HTTP_POOL_MAX = 16
+_HTTP_POOL_REDIRECTS = 10
+_HTTP_POOL_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+# Errors that mean "this pooled socket is dead", never "the server is slow":
+# a slow server fails the same way on a fresh connection and the caller's
+# retry loop owns that case.
+_HTTP_POOL_STALE_ERRORS = (
+    http.client.RemoteDisconnected,
+    http.client.BadStatusLine,
+    http.client.NotConnected,
+    BrokenPipeError,
+    ConnectionResetError,
+    TimeoutError,
+)
+
+_http_pool_lock = threading.Lock()
+_http_pool: dict = {}
+
+
+def _http_pool_total() -> int:
+    return sum(len(conns) for conns in _http_pool.values())
+
+
+def _pool_checkout(key):
+    """Take one pooled connection for ``key``, or None (caller opens fresh)."""
+    with _http_pool_lock:
+        conns = _http_pool.get(key)
+        if not conns:
+            return None
+        conn = conns.pop()
+        if not conns:
+            del _http_pool[key]
+        return conn
+
+
+def _pool_checkin(key, conn) -> None:
+    """Return a connection after a fully-read response, evicting oldest first."""
+    with _http_pool_lock:
+        while _http_pool_total() >= _HTTP_POOL_MAX:
+            oldest_key = next(iter(_http_pool))
+            oldest = _http_pool[oldest_key].pop(0)
+            if not _http_pool[oldest_key]:
+                del _http_pool[oldest_key]
+            try:
+                oldest.close()
+            except Exception:
+                pass
+        _http_pool.setdefault(key, []).append(conn)
+
+
+def _pool_close(conn) -> None:
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def _close_http_pool() -> None:
+    """Close every pooled connection (tests; process exit closes them anyway)."""
+    with _http_pool_lock:
+        pooled = [c for conns in _http_pool.values() for c in conns]
+        _http_pool.clear()
+    for conn in pooled:
+        _pool_close(conn)
+
+
+class _FetchedResponse:
+    """One fetched page: the shape http_get's post-processing expects.
+
+    ``status`` / ``headers`` / ``read()`` / ``geturl()`` mirror
+    urllib's response, so the redirect tracking, charset decode and
+    clearance recording in http_get work unchanged. The body is held in
+    memory — http_get reads it fully anyway.
+    """
+
+    def __init__(self, status, headers, body: bytes, url: str):
+        self.status = status
+        self.headers = headers
+        self._body = body
+        self._url = url
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self) -> bytes:
+        return self._body
+
+    def geturl(self) -> str:
+        return self._url
+
+
+def _fetch_once(req, timeout):
+    """One GET transaction over a pooled keep-alive connection.
+
+    Follows redirects (up to 10, urllib's limit) and returns the final
+    ``_FetchedResponse``. A status >= 400 raises ``urllib.error.HTTPError``
+    carrying the body — exactly what urllib's urlopen would have raised —
+    so http_get's except branch (clearance note, retries, TLD probe,
+    ``(0, url, "ERROR: …")``) behaves identically. Each hop opens its
+    own connection with that hop's ``_tls_context`` — which also closes
+    the known gap where urllib applied one context to a whole redirect
+    chain. A clearance ``Cookie`` rides on same-host hops only; a hop to
+    a different host drops it (the cookie is bound to the host that set
+    it, not to the redirect target).
+    """
+    url = req.full_url
+    headers = dict(req.headers)
+    origin_host = (urllib.parse.urlparse(url).hostname or "").lower()
+    for _hop in range(_HTTP_POOL_REDIRECTS + 1):
+        parsed = urllib.parse.urlparse(url)
+        scheme = (parsed.scheme or "http").lower()
+        host = parsed.hostname or ""
+        port = parsed.port or (443 if scheme == "https" else 80)
+        path = parsed.path or "/"
+        if parsed.query:
+            path += "?" + parsed.query
+        key = (scheme, host, port)
+        resp = None
+        body = b""
+        last_exc = None
+        for _conn_attempt in range(2):
+            conn = _pool_checkout(key) if _conn_attempt == 0 else None
+            fresh = conn is None
+            if fresh:
+                if scheme == "https":
+                    conn = http.client.HTTPSConnection(
+                        host, port, timeout=timeout,
+                        context=_tls_context(url))
+                else:
+                    conn = http.client.HTTPConnection(host, port, timeout=timeout)
+            try:
+                conn.request("GET", path, headers=headers)
+                resp = conn.getresponse()
+                body = resp.read()
+                break
+            except _HTTP_POOL_STALE_ERRORS as exc:
+                last_exc = exc
+                _pool_close(conn)
+                if fresh:
+                    raise
+                # Pooled socket was dead: one fresh retry for this hop.
+                continue
+        if resp is None:
+            raise last_exc
+        if resp.status in _HTTP_POOL_REDIRECT_STATUSES:
+            location = resp.headers.get("Location")
+            if location and _hop < _HTTP_POOL_REDIRECTS:
+                if not resp.will_close:
+                    _pool_checkin(key, conn)
+                else:
+                    _pool_close(conn)
+                next_url = urllib.parse.urljoin(url, location)
+                if (urllib.parse.urlparse(next_url).hostname or "").lower() != origin_host:
+                    headers.pop("Cookie", None)
+                    headers.pop("cookie", None)
+                url = next_url
+                continue
+            if _hop >= _HTTP_POOL_REDIRECTS:
+                raise urllib.error.HTTPError(
+                    url, 500, "Too many redirects", resp.headers,
+                    io.BytesIO(body))
+        if resp.status >= 400:
+            if not resp.will_close:
+                _pool_checkin(key, conn)
+            else:
+                _pool_close(conn)
+            raise urllib.error.HTTPError(
+                url, resp.status, resp.reason or "", resp.headers,
+                io.BytesIO(body))
+        if not resp.will_close:
+            _pool_checkin(key, conn)
+        else:
+            _pool_close(conn)
+        return _FetchedResponse(resp.status, resp.headers, body, url)
+    raise urllib.error.HTTPError(
+        url, 500, "Too many redirects", None, io.BytesIO(b""))
+
+
 def http_get(url: str, timeout: int = 15, max_retries: int = 2, allow_probe: bool = True,
              clearance=None) -> tuple[int, str, str]:
     """
@@ -2343,8 +2546,11 @@ def http_get(url: str, timeout: int = 15, max_retries: int = 2, allow_probe: boo
         try:
             # WARP proxy (RADD_WARP_PROXY): when on, the fetch goes
             # through 127.0.0.1:40000 via an opener carrying the
-            # ProxyHandler; when off this is the plain urlopen call
-            # it was before (the seam the clearance tests stub).
+            # ProxyHandler — the proxy path is unchanged, urllib all
+            # the way. When off, the fetch goes through the keep-alive
+            # pool (_fetch_once): one reused connection per host, same
+            # (status, final_url, body) contract and same HTTPError
+            # semantics, so everything below this block is untouched.
             _ph = warp_proxy.urllib_proxy_handler()
             if _ph is not None:
                 _handlers = [urllib.request.HTTPSHandler(
@@ -2352,9 +2558,7 @@ def http_get(url: str, timeout: int = 15, max_retries: int = 2, allow_probe: boo
                 _resp_cm = urllib.request.build_opener(
                     *_handlers).open(req, timeout=timeout)
             else:
-                _resp_cm = urllib.request.urlopen(
-                    req, timeout=timeout,
-                    context=_tls_context(norm_url))
+                _resp_cm = _fetch_once(req, timeout)
             with _resp_cm as resp:
                 final_url = resp.geturl()
                 # Auto-detect domain change/redirect

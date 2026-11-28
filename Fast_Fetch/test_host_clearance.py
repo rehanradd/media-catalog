@@ -27,7 +27,8 @@ pins:
   database.
 
 No network, no production DB: every test runs against an in-memory
-SQLite fixture, a loopback stub server, or a stubbed ``urlopen``.
+SQLite fixture, a loopback stub server, or a stubbed fetch seam
+(``fast_fetch._fetch_once`` — the keep-alive transport under http_get).
 """
 
 from __future__ import annotations
@@ -617,7 +618,11 @@ class FastProbeWiringTests(unittest.TestCase):
         self.assertEqual(stats["verdicts"], 1)
 
 
-# ── fast_fetch wiring (stubbed urlopen, no network) ──────────────────────────
+# ── fast_fetch wiring (stubbed _fetch_once, no network) ─────────────────────
+# The seam moved with the keep-alive port (2026-11-28): http_get's direct
+# path no longer calls urllib.request.urlopen, so these tests stub the
+# transport under it (_fetch_once) instead. The assertions — clearance
+# replay, capture, invalidation, unchanged behaviour — are untouched.
 
 class _FakeResponse:
     def __init__(self, status=200, body=b"<html>ok</html>", url="https://x.test/",
@@ -655,7 +660,7 @@ class HttpGetWiringTests(unittest.TestCase):
                 seen["headers"] = dict(req.headers)
                 return _FakeResponse(url=f"https://{HOST}/page")
 
-            with mock.patch.object(fast_fetch.urllib.request, "urlopen", fake_urlopen):
+            with mock.patch.object(fast_fetch, "_fetch_once", fake_urlopen):
                 status, _, _ = fast_fetch.http_get(
                     f"https://{HOST}/page", max_retries=0, clearance=store)
             self.assertEqual(status, 200)
@@ -675,7 +680,7 @@ class HttpGetWiringTests(unittest.TestCase):
                     url=f"https://{HOST}/page",
                     headers={"Set-Cookie": "cf_clearance=fresh-1; Path=/"})
 
-            with mock.patch.object(fast_fetch.urllib.request, "urlopen", fake_urlopen):
+            with mock.patch.object(fast_fetch, "_fetch_once", fake_urlopen):
                 fast_fetch.http_get(f"https://{HOST}/page", max_retries=0,
                                     clearance=store)
             # The capture stamps real time (http_get passes no clock).
@@ -699,7 +704,7 @@ class HttpGetWiringTests(unittest.TestCase):
                     f"https://{HOST}/page", 403, "Forbidden", hdrs,
                     io.BytesIO(b"<html>cf-turnstile wait</html>"))
 
-            with mock.patch.object(fast_fetch.urllib.request, "urlopen", fake_urlopen):
+            with mock.patch.object(fast_fetch, "_fetch_once", fake_urlopen):
                 status, _, content = fast_fetch.http_get(
                     f"https://{HOST}/page", max_retries=0, clearance=store)
             self.assertEqual(status, 0)
@@ -711,11 +716,167 @@ class HttpGetWiringTests(unittest.TestCase):
         def fake_urlopen(req, timeout=None, context=None):
             return _FakeResponse(url="https://x.test/page")
 
-        with mock.patch.object(fast_fetch.urllib.request, "urlopen", fake_urlopen):
+        with mock.patch.object(fast_fetch, "_fetch_once", fake_urlopen):
             status, final, content = fast_fetch.http_get(
                 "https://x.test/page", max_retries=0)
         self.assertEqual((status, final), (200, "https://x.test/page"))
         self.assertIn("ok", content)
+
+
+# ── keep-alive pool (2026-11-28, Phase 3 item 11) ───────────────────────────
+# Loopback server, HTTP/1.1 so the connection CAN stay open (the probe
+# stub above is HTTP/1.0, which closes after every response and could
+# never prove reuse). Connection count is server-side: handle() runs
+# once per accepted TCP connection.
+
+_KA_SEEN = {}
+
+
+class _KeepAliveHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    connections = 0
+    last_conn = None
+
+    def handle(self):
+        type(self).connections += 1
+        type(self).last_conn = self.connection
+        super().handle()
+
+    def _send(self, body, status=200, extra=None):
+        data = body if isinstance(body, bytes) else body.encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        for key, value in (extra or {}).items():
+            self.send_header(key, value)
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        _KA_SEEN[self.path] = {
+            "Cookie": self.headers.get("Cookie"),
+            "User-Agent": self.headers.get("User-Agent"),
+        }
+        if self.path == "/redir":
+            self._send("", status=302, extra={"Location": "/page"})
+        elif self.path == "/redir-cross":
+            # Same loopback server, different hostname: the second hop
+            # must not carry the first hop's Cookie.
+            port = self.server.server_address[1]
+            self._send("", status=302,
+                       extra={"Location": f"http://localhost:{port}/page"})
+        elif self.path == "/missing":
+            self._send("nope", status=404)
+        else:
+            self._send("<html>ok</html>")
+
+    def log_message(self, *args):
+        pass
+
+
+class _QuietServer(http.server.ThreadingHTTPServer):
+    # A test that kills a socket must not spam the test log: the
+    # traceback printer lives on the SERVER (process_request_thread),
+    # not on the handler.
+    def handle_error(self, request, client_address):
+        pass
+
+
+class KeepAliveTests(unittest.TestCase):
+    def setUp(self):
+        _KeepAliveHandler.connections = 0
+        _KeepAliveHandler.last_conn = None
+        _KA_SEEN.clear()
+        fast_fetch._close_http_pool()
+        self.httpd = _QuietServer(("127.0.0.1", 0), _KeepAliveHandler)
+        self.port = self.httpd.server_address[1]
+        self.thread = threading.Thread(target=self.httpd.serve_forever,
+                                       daemon=True)
+        self.thread.start()
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        fast_fetch._close_http_pool()
+
+    def _url(self, path):
+        return f"http://127.0.0.1:{self.port}{path}"
+
+    def test_sequential_gets_reuse_one_connection(self):
+        s1, _, c1 = fast_fetch.http_get(self._url("/page"), max_retries=0)
+        s2, _, c2 = fast_fetch.http_get(self._url("/page"), max_retries=0)
+        self.assertEqual((s1, s2), (200, 200))
+        self.assertIn("ok", c1)
+        self.assertIn("ok", c2)
+        self.assertEqual(_KeepAliveHandler.connections, 1)
+
+    def test_redirect_reuses_connection_and_reports_final_url(self):
+        status, final, content = fast_fetch.http_get(
+            self._url("/redir"), max_retries=0)
+        self.assertEqual(status, 200)
+        self.assertEqual(final, self._url("/page"))
+        self.assertIn("ok", content)
+        self.assertEqual(_KeepAliveHandler.connections, 1)
+
+    def test_error_status_keeps_urlopen_semantics(self):
+        status, _, content = fast_fetch.http_get(
+            self._url("/missing"), max_retries=0)
+        self.assertEqual(status, 0)
+        self.assertIn("ERROR", content)
+
+    def test_stale_pooled_connection_retried_transparently(self):
+        status, _, _ = fast_fetch.http_get(self._url("/page"), max_retries=0)
+        self.assertEqual(status, 200)
+        self.assertEqual(_KeepAliveHandler.connections, 1)
+        # Kill the server side of the pooled socket: the next request
+        # must discover the dead socket, drop it, and succeed on a
+        # fresh connection — never fail the caller for a stale pool.
+        dead = _KeepAliveHandler.last_conn
+        dead.shutdown(1)
+        dead.close()
+        time.sleep(0.2)
+        status, _, content = fast_fetch.http_get(
+            self._url("/page"), max_retries=0)
+        self.assertEqual(status, 200)
+        self.assertIn("ok", content)
+        self.assertEqual(_KeepAliveHandler.connections, 2)
+
+    def test_cookie_dropped_on_cross_host_redirect(self):
+        import urllib.request
+        req = urllib.request.Request(
+            self._url("/redir-cross"),
+            headers={"User-Agent": fast_fetch.USER_AGENT,
+                     "Cookie": "cf_clearance=tok-1"})
+        # localhost resolves to the same loopback server, but it is a
+        # different hostname — the second hop must not carry the cookie.
+        resp = fast_fetch._fetch_once(req, timeout=5)
+        with resp:
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.geturl(),
+                             f"http://localhost:{self.port}/page")
+        self.assertEqual(_KA_SEEN["/redir-cross"]["Cookie"],
+                         "cf_clearance=tok-1")
+        self.assertIsNone(_KA_SEEN["/page"]["Cookie"])
+
+    def test_pool_bound_evicts_oldest(self):
+        made = []
+
+        class _Dummy:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        for i in range(fast_fetch._HTTP_POOL_MAX + 1):
+            dummy = _Dummy()
+            made.append(dummy)
+            fast_fetch._pool_checkin(("http", f"h{i}.test", 80), dummy)
+        self.assertEqual(fast_fetch._http_pool_total(),
+                         fast_fetch._HTTP_POOL_MAX)
+        self.assertTrue(made[0].closed)
+        self.assertFalse(made[-1].closed)
+        fast_fetch._close_http_pool()
 
 
 class UnwrapWiringTests(unittest.TestCase):
