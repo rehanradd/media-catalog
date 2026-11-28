@@ -55,4 +55,24 @@ class SearchLocalSuggestTest {
         assertEquals("Jawan", item.title)
         assertEquals(2023, item.year)
     }
+
+    @Test
+    fun `two local rows with the same title but different years are one chip`() {
+        // Search-crash fix (2026-11-28): the catalog holds two different
+        // works both titled "SpongeBob SquarePants" (1999 and 2024). Both
+        // become local chips with the same title-derived id, and the chips
+        // LazyRow throws IllegalArgumentException on duplicate keys — the
+        // process died the moment the word completed. The merge must dedupe
+        // the local half too, first occurrence wins.
+        val local = listOf(
+            LocalSearchResult("SpongeBob SquarePants", 2024, "anime", null).toSuggestItem(),
+            LocalSearchResult("SpongeBob SquarePants", 1999, "anime", null).toSuggestItem(),
+        )
+        val merged = mergeSuggestions(local, emptyList())
+        assertEquals(listOf("SpongeBob SquarePants"), merged.map { it.title })
+        assertEquals(
+            "chip keys must be unique or the LazyRow throws",
+            merged.size, merged.map { it.id }.toSet().size,
+        )
+    }
 }

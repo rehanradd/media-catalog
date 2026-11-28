@@ -1266,8 +1266,9 @@ data class LocalSearchResult(
  * Feel-instant S3b: a local row as a suggestion chip. The id is a negative
  * hash of the title — the chips are keyed by id, and a server id is a
  * positive post id, so a local chip can never collide with a server one.
- * Two titles with the same hash are vanishingly rare, and the merge below
- * dedupes by title anyway.
+ * Two different works CAN share one title ("SpongeBob SquarePants" 1999
+ * and 2024), so they share one chip id — [mergeSuggestions] dedupes by
+ * title, so the chips row never sees the duplicate key.
  */
 internal fun LocalSearchResult.toSuggestItem(): SuggestItem =
     SuggestItem(id = -title.hashCode(), title = title, year = year)
@@ -1275,13 +1276,24 @@ internal fun LocalSearchResult.toSuggestItem(): SuggestItem =
 /**
  * Feel-instant S3b: one chip row from the two halves — the instant local
  * rows first, then the server batch underneath, deduped by title
- * (case-insensitive: the same title from both sides is one chip), capped
- * so the row never runs long. Pure so a test can pin it without a
- * ViewModel.
+ * (case-insensitive: the same title from either side is one chip — including
+ * two different works that share one title on the same side, e.g.
+ * "SpongeBob SquarePants" 1999 and 2024), capped so the row never runs
+ * long. Pure so a test can pin it without a ViewModel.
+ *
+ * Search-crash fix (2026-11-28): the dedupe MUST cover the local half too.
+ * It used to seed `seen` from the local titles and add the local list
+ * wholesale, so two same-title local rows both became chips with the same
+ * title-derived id — and the chips LazyRow throws IllegalArgumentException
+ * on duplicate keys, killing the process the moment the word completed.
  */
 internal fun mergeSuggestions(local: List<SuggestItem>, server: List<SuggestItem>): List<SuggestItem> {
-    val seen = local.map { it.title.lowercase() }.toMutableSet()
-    val merged = local.toMutableList()
+    val seen = mutableSetOf<String>()
+    val merged = mutableListOf<SuggestItem>()
+    for (item in local) {
+        if (merged.size >= MAX_SUGGESTIONS) break
+        if (seen.add(item.title.lowercase())) merged.add(item)
+    }
     for (item in server) {
         if (merged.size >= MAX_SUGGESTIONS) break
         if (seen.add(item.title.lowercase())) merged.add(item)
