@@ -17,6 +17,11 @@
     <string name="diagnostics_tab_timeline">Timeline (%1$d)</string>
     <string name="diagnostics_tab_problems">Problems (%1$d)</string>
     <string name="diagnostics_tab_session">Session</string>
+    <string name="diagnostics_tab_crash">Crash</string>
+    <string name="diagnostics_crash_empty">No crash recorded. If the app ever vanishes or shows “keeps stopping”, come back here — the last crash’s stack trace will be shown below, naming the exact place it died.</string>
+    <string name="diagnostics_crash_hint">Last crash — the exact place the app died. Copy it and send it to the developer.</string>
+    <string name="diagnostics_crash_copy">Copy crash trace</string>
+    <string name="diagnostics_crash_copied">Crash trace copied.</string>
     <string name="diagnostics_empty_timeline">No events recorded yet. Browse, play something, then come back.</string>
     <string name="diagnostics_empty_problems">No problems — no errors or warnings recorded.</string>
     <string name="diagnostics_export">Export diagnostics</string>

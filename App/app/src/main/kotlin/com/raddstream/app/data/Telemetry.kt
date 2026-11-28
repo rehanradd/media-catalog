@@ -217,6 +217,23 @@ object Telemetry {
         File(context.filesDir, CRASH_TRACE_FILE).writeText(trace)
     }
 
+    /**
+     * Reads back the last crash's stack trace, if one was persisted — the
+     * other half of [persistCrashTrace]. Best-effort: a missing file or an
+     * unreadable one is "no crash recorded", never a throw. The debug
+     * Diagnostics screen shows this under its Crash tab (Settings >
+     * Diagnostics), so a crash on a device the owner holds is diagnosable
+     * without adb: the trace names the exact exception, file and line. And
+     * its absence after a silent vanish is itself the answer — the death was
+     * not an uncaught JVM exception (native crash, OOM, or a system kill).
+     */
+    fun readLastCrashTrace(context: Context): String? = runCatching {
+        File(context.filesDir, CRASH_TRACE_FILE)
+            .takeIf { it.isFile }
+            ?.readText()
+            ?.takeIf { it.isNotBlank() }
+    }.getOrNull()
+
     // APP-13 (review N-6): every counter increment is also fed into the
     // diagnostics bus, so the debug timeline can show it. In release the
     // bus is the NoOp and this costs one dead call. The `crashes` record in

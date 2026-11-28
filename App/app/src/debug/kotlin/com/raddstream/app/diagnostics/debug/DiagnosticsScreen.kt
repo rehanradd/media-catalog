@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Button
@@ -37,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -86,6 +89,7 @@ fun DiagnosticsScreen(
         onClearEvents = viewModel::clearEvents,
         onExport = { viewModel.exportResults(events) },
         onCopy = { viewModel.copyResultsJsonl(events) },
+        onCopyCrashTrace = viewModel::copyCrashTrace,
     )
 }
 
@@ -107,6 +111,7 @@ fun DiagnosticsContent(
     onClearEvents: () -> Unit,
     onExport: () -> Unit,
     onCopy: () -> Unit,
+    onCopyCrashTrace: () -> Unit,
 ) {
     var tab by remember { mutableIntStateOf(0) }
     val counts = remember(events) { countEvents(events) }
@@ -232,6 +237,11 @@ fun DiagnosticsContent(
                     onClick = { tab = 2 },
                     text = { Text(stringResource(R.string.diagnostics_tab_session)) },
                 )
+                Tab(
+                    selected = tab == 3,
+                    onClick = { tab = 3 },
+                    text = { Text(stringResource(R.string.diagnostics_tab_crash)) },
+                )
             }
             when (tab) {
                 0 -> DiagnosticsEventList(
@@ -242,13 +252,17 @@ fun DiagnosticsContent(
                     events = problemsVisible,
                     emptyText = stringResource(R.string.diagnostics_empty_problems),
                 )
-                else -> DiagnosticsSessionTab(
+                2 -> DiagnosticsSessionTab(
                     sessionInfo = uiState.sessionInfo,
                     counts = counts,
                     eventsEmpty = events.isEmpty(),
                     onExport = onExport,
                     onCopy = onCopy,
                     onClearEvents = onClearEvents,
+                )
+                else -> DiagnosticsCrashTab(
+                    lastCrashTrace = uiState.lastCrashTrace,
+                    onCopy = onCopyCrashTrace,
                 )
             }
         }
@@ -392,6 +406,46 @@ private fun DiagnosticsSessionTab(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(stringResource(R.string.diagnostics_clear))
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticsCrashTab(
+    lastCrashTrace: String?,
+    onCopy: () -> Unit,
+) {
+    // Detail-crash diagnosis (2026-11-28): the last crash's stack trace,
+    // written by Telemetry to last-crash.txt. A trace here names the exact
+    // exception, file and line. No trace after a silent vanish is itself
+    // the answer — the death was not an uncaught JVM exception.
+    if (lastCrashTrace == null) {
+        Text(
+            stringResource(R.string.diagnostics_crash_empty),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            stringResource(R.string.diagnostics_crash_hint),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        OutlinedButton(
+            onClick = onCopy,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.diagnostics_crash_copy))
+        }
+        Column(
+            modifier = Modifier.fillMaxSize()
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Text(
+                text = lastCrashTrace,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+            )
         }
     }
 }

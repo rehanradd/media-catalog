@@ -2085,7 +2085,15 @@ class DetailViewModel @Inject constructor(
             // the state — the collector above may not have delivered yet, and
             // the optimistic header below must not flash a title the mode
             // forbids while the fetch is in flight.
-            val kidsOn = settingsRepository.kidsModeActive.first()
+            // Detail-crash hardening (2026-11-28): this read used to sit
+            // bare before the try below — the only unguarded suspend call on
+            // the Detail-open path. A DataStore read throws only on a
+            // corrupt/unreadable file, but a throw here escaped the launch
+            // uncaught and killed the process with no error state and no
+            // Retry. A failed read is "kids mode off" now; the fetch below
+            // still runs inside its own try.
+            val kidsOn = runCatching { settingsRepository.kidsModeActive.first() }
+                .getOrDefault(false)
             _uiState.update { it.copy(kidsMode = kidsOn) }
             // Feel-instant S4: paint the header at once, from the list row
             // this process already holds — the tap answers within a frame,

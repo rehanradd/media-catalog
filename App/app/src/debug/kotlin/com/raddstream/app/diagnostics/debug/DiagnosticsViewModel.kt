@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import com.raddstream.app.BuildConfig
 import com.raddstream.app.R
 import com.raddstream.app.data.ServerSettingsRepository
+import com.raddstream.app.data.Telemetry
 import com.raddstream.app.diagnostics.Diagnostics
 import com.raddstream.app.diagnostics.DiagnosticsBus
 import com.raddstream.app.diagnostics.DiagnosticsEvent
@@ -65,6 +66,13 @@ class DiagnosticsViewModel @Inject constructor(
         val notice: String? = null,
         /** How many oldest events were evicted once the buffer filled (R-1). */
         val droppedCount: Long = 0L,
+        /**
+         * The last crash's stack trace, read once from Telemetry's
+         * last-crash.txt when this screen opens. Null means no crash was
+         * ever recorded — which, after a silent vanish, is itself the
+         * answer: the death was not an uncaught JVM exception.
+         */
+        val lastCrashTrace: String? = null,
     )
 
     /** The live event stream, newest last. */
@@ -86,6 +94,12 @@ class DiagnosticsViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             diagnostics.loadPersisted(appContext)
+            // Detail-crash diagnosis (2026-11-28): the last crash's trace
+            // is written by Telemetry to last-crash.txt and read back here,
+            // once, when this screen opens. The file is written by a
+            // previous process, so it cannot change while this screen is
+            // open — no refresh needed.
+            _uiState.update { it.copy(lastCrashTrace = Telemetry.readLastCrashTrace(appContext)) }
             val serverUrl = settings.serverUrl.first()
             val remoteConfig = readRemoteConfig()
             _uiState.update { state ->
@@ -254,6 +268,18 @@ class DiagnosticsViewModel @Inject constructor(
             val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             clipboard.setPrimaryClip(ClipData.newPlainText("diagnostics", jsonLines))
             _uiState.update { it.copy(notice = appContext.getString(R.string.diagnostics_copied)) }
+        } catch (_: Exception) {
+            _uiState.update { it.copy(notice = appContext.getString(R.string.diagnostics_export_failed)) }
+        }
+    }
+
+    /** Copies the last crash's stack trace to the clipboard. */
+    fun copyCrashTrace() {
+        val trace = _uiState.value.lastCrashTrace ?: return
+        try {
+            val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("crash-trace", trace))
+            _uiState.update { it.copy(notice = appContext.getString(R.string.diagnostics_crash_copied)) }
         } catch (_: Exception) {
             _uiState.update { it.copy(notice = appContext.getString(R.string.diagnostics_export_failed)) }
         }
