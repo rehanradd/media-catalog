@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 180 session files (177 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 183 session files (180 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -76,13 +76,13 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - **2026-11-28 — rotated out:** the two oldest session entries (2026-11-28 HDR banding fix; 2026-11-28 projection reset=False upsert fix) — verbatim in `checkpoints/20261128-continuity-rotation-importer-wiring.md`.
 - **2026-11-28 — rotated out:** the oldest session entry (2026-11-28 http_get keep-alive) — verbatim in `checkpoints/20261128-continuity-rotation-probe-schedule.md`.
 - **2026-11-28 — rotated out:** the oldest session entry (2026-11-28 importer domain-resolver wiring) — verbatim in `checkpoints/20261128-continuity-rotation-sweep-hardening.md`.
+- **2026-11-28 — rotated out:** the oldest session entry (2026-11-28 probe schedule + domain map) — verbatim in `checkpoints/20261128-continuity-rotation-dead-host-rebase.md`.
 ## Moved out (reference prose, verbatim)
 
 - ✍️ Incoming Agent Checklist → `../docs/SPEC_INCOMING_AGENT_CHECKLIST.md` (294 lines) — the onboarding procedure, unchanged
 
-## 2026-11-28 - probe schedule + domain map (Phase 1 items 3 + 5)
-- Item 3 ALREADY DONE, no code: radd-domain-probe.timer (daily 10:30) → domain_recheck.py --probe-stale → probe_all_sites + resolve_site chain, live since Branch 4. Fired today 10:40: 8 down, 1 resolved (world4ufree). The plan premise was stale.
-- Item 5: domain map at checkpoints/20261128-domain-map.md — 33 sites (23 active, 8 down, 2 unverifiable), verified vs live registry + posts (461,611); 6 moves since the repo copy froze 23 Nov; down sites hold 79,093 posts (themoviebox first). Follow-ups: re-verify the 8 down (item 8); repo copy 5 days stale. Branch probe-all-sites-schedule (docs only — parent owns the landing).
-
 ## 2026-11-28 - sweep-load hardening (Phase 3 item 12)
 - Two symptoms, two mechanisms: presses failed "database is locked" (sweep holds BEGIN IMMEDIATE while press banks had NO retry); posts 503 is NOT a lock, it is the 10 s query deadline (baseline crosses 10 s under sweep load). Fix: serve pragmas on the sweep writer (64 MiB cache, was 2 MiB) + bounded lock retry (3 attempts, 0.5/1.0 s, only "locked", fresh connection per attempt) in _bank_hubcloud_siblings and both viewer.py banks. 30 s busy_timeout and the deadline untouched. Tests: 7 new, all green; fast_probe 88/88; other modules green; registered in backend-ci.yml. Branch sweep-load-hardening (parent owns the gate/landing; live proof is a press under sweep load).
+
+## 2026-11-28 - dead-host re-verification (Phase 2 item 8, first half)
+- Re-probe (daily timer's exact command, 18:50): 7 sites through the chain, all unresolved:down, 0 resolved. Per-site detail: 7 of 8 still down on day 2, but none is a dead server — all answer (thin 200s, 404s, redirects); the failure mode is "answers but no verifiable content", likely a bot filter on datacenter egress. NO site marked dead; no deletions. animeworld is LIVE again (wp-json, 3 posts) — registry still says down, tomorrow's 10:30 probe marks it active. hdtvb redirects consistently to hdhubs.in (top manual-check candidate); megacartoons WP REST works but no quality marker (possible resolver strictness). Verdicts at checkpoints/20261128-dead-host-reverify.md. Branch dead-host-reverify-20261128 (docs only — parent owns the landing).
