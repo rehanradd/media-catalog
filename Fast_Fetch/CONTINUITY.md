@@ -7,7 +7,7 @@
 
 ## ✅ Open items — index (q3, 2026-10-30; pointers only)
 
-1. **This file is a pointer, not a history** 177 session files (174 dated + 3 undated) cover
+1. **This file is a pointer, not a history** 179 session files (176 dated + 3 undated) cover
 
    every one of them verbatim: [`checkpoints/README.md`](checkpoints/README.md). Nothing was
    deleted, reworded, or summarized. The count is `ls Fast_Fetch/checkpoints/*.md` minus `README.md`,
@@ -74,12 +74,14 @@ The newest are listed here; `Fast_Fetch/checkpoints/README.md` is the complete i
 - **2026-11-24 → 2026-11-21 — rotated out:** seven session-history bullets (DOC-05, PNL-02/03, INF-05, API-03, API-14, catalog pipeline fixes, 1fichier wiring) — verbatim in `checkpoints/20261127-selfheal-b6-durability.md` (Rotated out section).
 - **2026-11-28 — rotated out:** the three oldest session entries (2026-11-26 P2 cast backend; 2026-11-27 self-healing Branch 5 + Branch 6) — verbatim in `checkpoints/20261128-continuity-rotation-hdr-banding.md`.
 - **2026-11-28 — rotated out:** the two oldest session entries (2026-11-28 HDR banding fix; 2026-11-28 projection reset=False upsert fix) — verbatim in `checkpoints/20261128-continuity-rotation-importer-wiring.md`.
+- **2026-11-28 — rotated out:** the oldest session entry (2026-11-28 http_get keep-alive) — verbatim in `checkpoints/20261128-continuity-rotation-probe-schedule.md`.
 ## Moved out (reference prose, verbatim)
 
 - ✍️ Incoming Agent Checklist → `../docs/SPEC_INCOMING_AGENT_CHECKLIST.md` (294 lines) — the onboarding procedure, unchanged
 
-## 2026-11-28 - http_get keep-alive (backend loop Phase 3 item 11)
-- Direct fetches reuse one http.client connection per (scheme, host, port); pool cap 16, stale socket drops + retries once. WARP path unchanged (urllib). Tests: 6 new KeepAliveTests (reuse, redirect, 404, stale retry, cookie drop, pool bound); 6 wiring tests re-pointed to _fetch_once. Bench: 50 GETs 0.08s → 0.02s, 50 → 1 conns. Branch http-keep-alive.
-
 ## 2026-11-28 - importer domain-resolver wiring (backend loop Phase 1 item 1)
 - import_wp_family wired to domain_resolver: _resolved_config re-points base/sitemaps/rest at the registry base (bollyflix gen.in -> io.in; other 4 unchanged); sync_catalog/crawl take --base-url/--registry; empty enumeration retries once via resolve_if_dead; parse_page/parse_rest_post take an optional config. Audit: 27 importers, 6 already wired (castle/dramadog/themoviebox/javmost/megacartoons/missav, 297,598 posts, 64.5%); wp_family was the only wirable remainder (5 registry sites, 0 live posts). Tests: 7 new ResolverWiringTests; wp_family 55/55, javmost 23, megacartoons 13, missav 19, domain_resolver 81/81 — all green. Branch importer-domain-wiring (build only — parent owns the gate/landing).
+
+## 2026-11-28 - probe schedule + domain map (Phase 1 items 3 + 5)
+- Item 3 ALREADY DONE, no code: radd-domain-probe.timer (daily 10:30) → domain_recheck.py --probe-stale → probe_all_sites + resolve_site chain, live since Branch 4. Fired today 10:40: 8 down, 1 resolved (world4ufree). The plan premise was stale.
+- Item 5: domain map at checkpoints/20261128-domain-map.md — 33 sites (23 active, 8 down, 2 unverifiable), verified vs live registry + posts (461,611); 6 moves since the repo copy froze 23 Nov; down sites hold 79,093 posts (themoviebox first). Follow-ups: re-verify the 8 down (item 8); repo copy 5 days stale. Branch probe-all-sites-schedule (docs only — parent owns the landing).
